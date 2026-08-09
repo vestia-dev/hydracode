@@ -1,0 +1,17 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "options": {
+    "typeAware": true,
+    "typeCheck": true,
+  },
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "perf": "warn",
+  },
+  "rules": {
+    // Effect uses `_tag` as its standard tagged-union discriminant.
+    "no-underscore-dangle": "off",
+  },
+  "ignorePatterns": ["node_modules/**", "out/**", "dist/**", "coverage/**"],
+}

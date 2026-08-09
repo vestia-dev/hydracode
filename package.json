@@ -1,0 +1,49 @@
+{
+  "name": "hydracode",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A visual desktop client for coding agents.",
+  "type": "module",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "lint": "oxfmt --write . && oxlint --type-aware --type-check --fix --report-unused-disable-directives --deny-warnings .",
+    "lint:check": "oxfmt --check . && oxlint --type-aware --type-check --report-unused-disable-directives --deny-warnings .",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@effect/platform-node": "4.0.0-beta.101",
+    "@opencode-ai/client": "0.0.0-next-17028",
+    "@pierre/diffs": "1.2.10",
+    "@xyflow/react": "12.11.2",
+    "dompurify": "3.4.13",
+    "effect": "4.0.0-beta.101",
+    "marked": "18.0.9",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@effect/vitest": "4.0.0-beta.101",
+    "@types/node": "24.13.3",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "@vitejs/plugin-react": "5.2.0",
+    "electron": "43.3.0",
+    "electron-vite": "5.0.0",
+    "oxfmt": "0.62.0",
+    "oxlint": "1.77.0",
+    "oxlint-tsgolint": "7.0.2001",
+    "typescript": "7.0.2",
+    "vite": "7.3.6",
+    "vitest": "4.1.10"
+  },
+  "overrides": {
+    "@effect/platform-node-shared": "4.0.0-beta.101"
+  },
+  "trustedDependencies": [
+    "electron"
+  ]
+}
