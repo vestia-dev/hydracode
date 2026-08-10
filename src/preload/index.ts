@@ -6,9 +6,11 @@ const projectListeners = new Set<(update: unknown) => void>()
 const pendingProjectUpdates: Array<unknown> = []
 const updateListeners = new Set<(state: unknown) => void>()
 const paneSplitListeners = new Set<(command: "right" | "down" | "left" | "up") => void>()
+const paneFocusListeners = new Set<(direction: "right" | "down" | "left" | "up") => void>()
 const paneCloseListeners = new Set<() => void>()
 const promptFocusListeners = new Set<() => void>()
 const followLatestListeners = new Set<() => void>()
+const layoutSaveListeners = new Set<() => void>()
 let updateSubscription: Promise<unknown> | undefined
 
 ipcRenderer.on(DesktopChannels.updateState, (_event, state: unknown) => {
@@ -25,6 +27,10 @@ ipcRenderer.on(DesktopChannels.paneSplit, (_event, command: "right" | "down" | "
   for (const listener of paneSplitListeners) listener(command)
 })
 
+ipcRenderer.on(DesktopChannels.paneFocus, (_event, direction: "right" | "down" | "left" | "up") => {
+  for (const listener of paneFocusListeners) listener(direction)
+})
+
 ipcRenderer.on(DesktopChannels.paneClose, () => {
   for (const listener of paneCloseListeners) listener()
 })
@@ -35,6 +41,10 @@ ipcRenderer.on(DesktopChannels.promptFocus, () => {
 
 ipcRenderer.on(DesktopChannels.followLatest, () => {
   for (const listener of followLatestListeners) listener()
+})
+
+ipcRenderer.on(DesktopChannels.layoutSave, () => {
+  for (const listener of layoutSaveListeners) listener()
 })
 
 const desktopApi: HydraCodeDesktopApi = {
@@ -49,6 +59,8 @@ const desktopApi: HydraCodeDesktopApi = {
   createSession: (command) => ipcRenderer.invoke(DesktopChannels.createSession, command),
   submitPrompt: (command) => ipcRenderer.invoke(DesktopChannels.submitPrompt, command),
   interrupt: (command) => ipcRenderer.invoke(DesktopChannels.interrupt, command),
+  listSavedLayouts: (command) => ipcRenderer.invoke(DesktopChannels.listSavedLayouts, command),
+  saveLayout: (command) => ipcRenderer.invoke(DesktopChannels.saveLayout, command),
   checkForUpdates: () => ipcRenderer.invoke(DesktopChannels.updateCheck),
   installUpdate: () => ipcRenderer.invoke(DesktopChannels.updateInstall),
   onUpdateState: (listener) => {
@@ -65,6 +77,10 @@ const desktopApi: HydraCodeDesktopApi = {
     paneSplitListeners.add(listener)
     return () => paneSplitListeners.delete(listener)
   },
+  onPaneFocus: (listener) => {
+    paneFocusListeners.add(listener)
+    return () => paneFocusListeners.delete(listener)
+  },
   onPaneClose: (listener) => {
     paneCloseListeners.add(listener)
     return () => paneCloseListeners.delete(listener)
@@ -76,6 +92,10 @@ const desktopApi: HydraCodeDesktopApi = {
   onFollowLatest: (listener) => {
     followLatestListeners.add(listener)
     return () => followLatestListeners.delete(listener)
+  },
+  onLayoutSave: (listener) => {
+    layoutSaveListeners.add(listener)
+    return () => layoutSaveListeners.delete(listener)
   },
 }
 

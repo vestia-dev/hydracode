@@ -6,7 +6,13 @@ import {
   type SetBundledThemeCommand as SetBundledThemeCommandType,
 } from "./theme"
 import { UpdateState } from "./update"
-import type { PaneSplitCommand } from "./pane"
+import type { PaneDirection, PaneSplitCommand } from "./pane"
+import type {
+  ListSavedLayoutsCommand,
+  ListSavedLayoutsResult,
+  SaveLayoutCommand,
+  SaveLayoutResult,
+} from "./layout"
 import {
   CreateSessionCommand,
   CreateSessionResult,
@@ -80,12 +86,16 @@ export interface HydraCodeDesktopApi {
   readonly createSession: (command: CreateSessionCommand) => Promise<CreateSessionResult>
   readonly submitPrompt: (command: SubmitPromptCommand) => Promise<ProjectCommandResult>
   readonly interrupt: (command: ProjectSessionCommand) => Promise<ProjectCommandResult>
+  readonly listSavedLayouts: (command: ListSavedLayoutsCommand) => Promise<ListSavedLayoutsResult>
+  readonly saveLayout: (command: SaveLayoutCommand) => Promise<SaveLayoutResult>
   readonly checkForUpdates: () => Promise<UpdateState>
   readonly installUpdate: () => Promise<ProjectCommandResult>
   readonly onUpdateState: (listener: (state: unknown) => void) => () => void
   readonly onProjectUpdate: (listener: (update: unknown) => void) => () => void
   readonly onPaneSplit: (listener: (command: PaneSplitCommand) => void) => () => void
+  readonly onPaneFocus: (listener: (direction: PaneDirection) => void) => () => void
   readonly onPaneClose: (listener: () => void) => () => void
   readonly onPromptFocus: (listener: () => void) => () => void
   readonly onFollowLatest: (listener: () => void) => () => void
+  readonly onLayoutSave: (listener: () => void) => () => void
 }

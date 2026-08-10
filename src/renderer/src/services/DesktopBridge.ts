@@ -16,6 +16,15 @@ import { ThemeResult, ProjectSelectionResult } from "../../../shared/ipc"
 import type { BundledThemeID, Theme } from "../../../shared/theme"
 import type { ProjectCatalogItem } from "../../../shared/project"
 import {
+  ListSavedLayoutsResult,
+  SaveLayoutResult,
+  type SaveLayoutCommand,
+  type SavedLayout,
+  type SavedProjectLayouts,
+} from "../../../shared/layout"
+import {
+  PaneDirection,
+  type PaneDirection as PaneDirectionType,
   PaneSplitCommand,
   type PaneSplitCommand as PaneSplitCommandType,
 } from "../../../shared/pane"
@@ -40,6 +49,12 @@ interface DesktopBridgeShape {
   ) => Effect.Effect<Exclude<CreateSessionResult, { readonly _tag: "Failure" }>, DesktopBridgeError>
   readonly submitPrompt: (command: SubmitPromptCommand) => Effect.Effect<void, DesktopBridgeError>
   readonly interrupt: (command: ProjectSessionCommand) => Effect.Effect<void, DesktopBridgeError>
+  readonly listSavedLayouts: (
+    projectID: SavedProjectLayouts["projectID"],
+  ) => Effect.Effect<ReadonlyArray<SavedLayout>, DesktopBridgeError>
+  readonly saveLayout: (
+    command: SaveLayoutCommand,
+  ) => Effect.Effect<SavedLayout, DesktopBridgeError>
   readonly checkForUpdates: Effect.Effect<UpdateState, DesktopBridgeError>
   readonly installUpdate: Effect.Effect<void, DesktopBridgeError>
   readonly subscribeUpdates: (
@@ -47,6 +62,9 @@ interface DesktopBridgeShape {
   ) => Effect.Effect<() => void, DesktopBridgeError>
   readonly subscribePaneSplits: (
     onSplit: (command: PaneSplitCommandType) => void,
+  ) => Effect.Effect<() => void, DesktopBridgeError>
+  readonly subscribePaneFocus: (
+    onFocus: (direction: PaneDirectionType) => void,
   ) => Effect.Effect<() => void, DesktopBridgeError>
   readonly subscribePaneClose: (
     onClose: () => void,
@@ -56,6 +74,9 @@ interface DesktopBridgeShape {
   ) => Effect.Effect<() => void, DesktopBridgeError>
   readonly subscribeFollowLatest: (
     onFollow: () => void,
+  ) => Effect.Effect<() => void, DesktopBridgeError>
+  readonly subscribeLayoutSave: (
+    onSave: () => void,
   ) => Effect.Effect<() => void, DesktopBridgeError>
   readonly watchProject: (
     subscriptionID: string,
@@ -152,6 +173,22 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
       ),
     submitPrompt: (request) => command(() => window.hydracode.submitPrompt(request)),
     interrupt: (request) => command(() => window.hydracode.interrupt(request)),
+    listSavedLayouts: (projectID) =>
+      invoke(() => window.hydracode.listSavedLayouts({ projectID }), ListSavedLayoutsResult).pipe(
+        Effect.flatMap((result) =>
+          result._tag === "Success"
+            ? Effect.succeed(result.layouts)
+            : Effect.fail(new DesktopBridgeError({ message: result.message, cause: result })),
+        ),
+      ),
+    saveLayout: (request) =>
+      invoke(() => window.hydracode.saveLayout(request), SaveLayoutResult).pipe(
+        Effect.flatMap((result) =>
+          result._tag === "Success"
+            ? Effect.succeed(result.layout)
+            : Effect.fail(new DesktopBridgeError({ message: result.message, cause: result })),
+        ),
+      ),
     checkForUpdates: invoke(() => window.hydracode.checkForUpdates(), UpdateState),
     installUpdate: command(() => window.hydracode.installUpdate()),
     subscribeUpdates: (onUpdate) =>
@@ -175,6 +212,18 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
         catch: (cause) =>
           new DesktopBridgeError({
             message: "HydraCode could not subscribe to pane commands.",
+            cause,
+          }),
+      }),
+    subscribePaneFocus: (onFocus) =>
+      Effect.try({
+        try: () =>
+          window.hydracode.onPaneFocus((direction) => {
+            onFocus(Schema.decodeUnknownSync(PaneDirection)(direction))
+          }),
+        catch: (cause) =>
+          new DesktopBridgeError({
+            message: "HydraCode could not subscribe to pane focus commands.",
             cause,
           }),
       }),
@@ -202,6 +251,15 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
         catch: (cause) =>
           new DesktopBridgeError({
             message: "HydraCode could not subscribe to follow-latest commands.",
+            cause,
+          }),
+      }),
+    subscribeLayoutSave: (onSave) =>
+      Effect.try({
+        try: () => window.hydracode.onLayoutSave(onSave),
+        catch: (cause) =>
+          new DesktopBridgeError({
+            message: "HydraCode could not subscribe to layout save commands.",
             cause,
           }),
       }),

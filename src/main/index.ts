@@ -31,6 +31,16 @@ const createProjectWindow = Effect.sync(() => {
 
   window.once("ready-to-show", () => window.show())
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }))
+  window.webContents.on("before-input-event", (event, input) => {
+    if (input.type !== "keyDown" || input.alt || input.shift) return
+    const primaryModifier = process.platform === "darwin" ? input.meta : input.control
+    const secondaryModifier = process.platform === "darwin" ? input.control : input.meta
+    if (!primaryModifier || secondaryModifier) return
+    const direction = paneNavigationDirection(input.key)
+    if (direction === undefined) return
+    event.preventDefault()
+    window.webContents.send(DesktopChannels.paneFocus, direction)
+  })
 
   const rendererUrl = process.env.ELECTRON_RENDERER_URL
   if (rendererUrl !== undefined) {
@@ -46,6 +56,29 @@ const sendPaneSplit = (command: "right" | "down" | "left" | "up") => {
   BrowserWindow.getFocusedWindow()?.webContents.send(DesktopChannels.paneSplit, command)
 }
 
+const paneNavigationDirection = (key: string): "right" | "down" | "left" | "up" | undefined => {
+  switch (key.toLowerCase()) {
+    case "arrowleft":
+    case "h":
+      return "left"
+    case "arrowdown":
+    case "j":
+      return "down"
+    case "arrowup":
+    case "k":
+      return "up"
+    case "arrowright":
+    case "l":
+      return "right"
+    default:
+      return undefined
+  }
+}
+
+const sendPaneFocus = (direction: "right" | "down" | "left" | "up") => {
+  BrowserWindow.getFocusedWindow()?.webContents.send(DesktopChannels.paneFocus, direction)
+}
+
 const sendPaneClose = () => {
   BrowserWindow.getFocusedWindow()?.webContents.send(DesktopChannels.paneClose)
 }
@@ -56,6 +89,10 @@ const sendPromptFocus = () => {
 
 const sendFollowLatest = () => {
   BrowserWindow.getFocusedWindow()?.webContents.send(DesktopChannels.followLatest)
+}
+
+const sendLayoutSave = () => {
+  BrowserWindow.getFocusedWindow()?.webContents.send(DesktopChannels.layoutSave)
 }
 
 const installApplicationMenu = () => {
@@ -94,7 +131,34 @@ const installApplicationMenu = () => {
     {
       label: "File",
       submenu: [
+        {
+          label: "Save Layout",
+          accelerator: "CommandOrControl+S",
+          click: sendLayoutSave,
+        },
+        { type: "separator" },
         ...splitItems,
+        { type: "separator" },
+        {
+          label: "Focus Pane Left",
+          accelerator: "CommandOrControl+Left",
+          click: () => sendPaneFocus("left"),
+        },
+        {
+          label: "Focus Pane Down",
+          accelerator: "CommandOrControl+Down",
+          click: () => sendPaneFocus("down"),
+        },
+        {
+          label: "Focus Pane Up",
+          accelerator: "CommandOrControl+Up",
+          click: () => sendPaneFocus("up"),
+        },
+        {
+          label: "Focus Pane Right",
+          accelerator: "CommandOrControl+Right",
+          click: () => sendPaneFocus("right"),
+        },
         { type: "separator" },
         {
           label: "Focus Prompt",

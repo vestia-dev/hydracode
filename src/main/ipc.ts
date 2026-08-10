@@ -22,6 +22,8 @@ import { DesktopService } from "./services/DesktopService"
 import { ThemeService } from "./services/ThemeService"
 import { UpdateService } from "./services/UpdateService"
 import { ProjectRegistry } from "./services/ProjectRegistry"
+import { ListSavedLayoutsCommand, SaveLayoutCommand } from "../shared/layout"
+import { LayoutService } from "./services/LayoutService"
 
 const updateSubscriptions = new Map<number, () => void>()
 
@@ -143,6 +145,18 @@ export function registerDesktopIpc() {
         registry.interrupt(command.subscriptionID, command.sessionID),
       ),
     )
+  })
+  ipcMain.handle(DesktopChannels.listSavedLayouts, (_event, input: unknown) => {
+    const command = Schema.decodeUnknownSync(ListSavedLayoutsCommand)(input)
+    return MainRuntime.runPromise(LayoutService.use((layouts) => layouts.list(command.projectID)))
+      .then((layouts) => ({ _tag: "Success" as const, layouts }))
+      .catch((cause) => ({ _tag: "Failure" as const, message: failureMessage(cause) }))
+  })
+  ipcMain.handle(DesktopChannels.saveLayout, (_event, input: unknown) => {
+    const command = Schema.decodeUnknownSync(SaveLayoutCommand)(input)
+    return MainRuntime.runPromise(LayoutService.use((layouts) => layouts.save(command)))
+      .then((layout) => ({ _tag: "Success" as const, layout }))
+      .catch((cause) => ({ _tag: "Failure" as const, message: failureMessage(cause) }))
   })
   ipcMain.handle(DesktopChannels.updateSubscribe, (event) =>
     MainRuntime.runPromise(

@@ -12,13 +12,19 @@ import {
   closePane,
   firstPaneID,
   initialPaneLayout,
+  paneInDirection,
+  paneSessionIDs,
+  restorePaneLayout,
+  savePaneLayout,
   setPaneSession,
   splitPane,
   type PaneLayout,
 } from "./projectors/paneLayout"
-import type { PaneSplitCommand } from "../../shared/pane"
+import type { PaneDirection, PaneSplitCommand } from "../../shared/pane"
 import { AppRuntime } from "./runtime"
 import { DesktopBridge } from "./services/DesktopBridge"
+import { DesktopBridgeError } from "./services/DesktopBridge"
+import type { SavedLayout } from "../../shared/layout"
 
 function updateLabel(state: ReturnType<typeof useUpdater>["state"]) {
   switch (state.status) {
@@ -75,6 +81,12 @@ export function App() {
   paneLayoutRef.current = paneLayout
   const activePaneIDRef = useRef(activePaneID)
   activePaneIDRef.current = activePaneID
+  const projectStateRef = useRef(state)
+  projectStateRef.current = state
+  const [savedLayouts, setSavedLayouts] = useState<ReadonlyArray<SavedLayout>>([])
+  const [savedLayoutsError, setSavedLayoutsError] = useState<string | null>(null)
+  const [layoutStatus, setLayoutStatus] = useState<string | null>(null)
+  const layoutSavePending = useRef(false)
   const splitActivePane = useCallback((command: PaneSplitCommand) => {
     const newPaneID = crypto.randomUUID()
     const next = splitPane(
@@ -100,6 +112,12 @@ export function App() {
     setPaneLayout(next)
     setActivePaneID(nextPaneID)
   }, [])
+  const focusPaneInDirection = useCallback((direction: PaneDirection) => {
+    const paneID = paneInDirection(paneLayoutRef.current, activePaneIDRef.current, direction)
+    if (paneID === undefined) return
+    activePaneIDRef.current = paneID
+    setActivePaneID(paneID)
+  }, [])
   const focusActivePrompt = useCallback(() => {
     promptFocusSequence.current += 1
     setPromptFocusRequest({
@@ -114,6 +132,59 @@ export function App() {
       sequence: followLatestSequence.current,
     })
   }, [])
+  const saveCurrentLayout = useCallback(() => {
+    const current = projectStateRef.current
+    if (current._tag !== "Ready" || layoutSavePending.current) return
+    layoutSavePending.current = true
+    setLayoutStatus("Saving layout...")
+    const layout = paneLayoutRef.current
+    const sessionIDs = paneSessionIDs(layout)
+    const titles = sessionIDs.map(
+      (sessionID) =>
+        current.snapshot.sessions.find((session) => session.id === sessionID)?.title ??
+        current.snapshot.recentSessions.find((session) => session.id === sessionID)?.title ??
+        "Session",
+    )
+    const name =
+      titles.length === 0
+        ? "Empty layout"
+        : titles.length <= 2
+          ? titles.join(" + ")
+          : `${titles.slice(0, 2).join(" + ")} + ${titles.length - 2} more`
+    AppRuntime.runFork(
+      DesktopBridge.use((desktop) =>
+        desktop.saveLayout({
+          projectID: current.snapshot.project.id,
+          name,
+          layout: savePaneLayout(layout),
+        }),
+      ).pipe(
+        Effect.tap((saved) =>
+          Effect.sync(() => {
+            layoutSavePending.current = false
+            if (
+              projectStateRef.current._tag !== "Ready" ||
+              projectStateRef.current.snapshot.project.id !== current.snapshot.project.id
+            )
+              return
+            setSavedLayouts((layouts) => [saved, ...layouts.filter((item) => item.id !== saved.id)])
+            setSavedLayoutsError(null)
+            setLayoutStatus("Layout saved")
+          }),
+        ),
+        Effect.catch((error) =>
+          Effect.sync(() => {
+            layoutSavePending.current = false
+            if (
+              projectStateRef.current._tag === "Ready" &&
+              projectStateRef.current.snapshot.project.id === current.snapshot.project.id
+            )
+              setLayoutStatus(error.message)
+          }),
+        ),
+      ),
+    )
+  }, [])
 
   useEffect(() => {
     let remove: ReadonlyArray<() => void> | undefined
@@ -122,9 +193,11 @@ export function App() {
       DesktopBridge.use((desktop) =>
         Effect.all([
           desktop.subscribePaneSplits(splitActivePane),
+          desktop.subscribePaneFocus(focusPaneInDirection),
           desktop.subscribePaneClose(closeActivePane),
           desktop.subscribePromptFocus(focusActivePrompt),
           desktop.subscribeFollowLatest(followActiveLatest),
+          desktop.subscribeLayoutSave(saveCurrentLayout),
         ]),
       ),
     ).then((unsubscribes) => {
@@ -136,7 +209,14 @@ export function App() {
       disposed = true
       for (const unsubscribe of remove ?? []) unsubscribe()
     }
-  }, [closeActivePane, focusActivePrompt, followActiveLatest, splitActivePane])
+  }, [
+    closeActivePane,
+    focusActivePrompt,
+    focusPaneInDirection,
+    followActiveLatest,
+    saveCurrentLayout,
+    splitActivePane,
+  ])
 
   const projectID = state._tag === "Ready" ? state.snapshot.project.id : undefined
   useEffect(() => {
@@ -147,7 +227,61 @@ export function App() {
     activePaneIDRef.current = paneID
     setPaneLayout(layout)
     setActivePaneID(paneID)
+    setLayoutStatus(null)
+    setSavedLayouts([])
+    setSavedLayoutsError(null)
+    layoutSavePending.current = false
+    AppRuntime.runFork(
+      DesktopBridge.use((desktop) => desktop.listSavedLayouts(projectID)).pipe(
+        Effect.tap((layouts) =>
+          Effect.sync(() => {
+            if (
+              projectStateRef.current._tag === "Ready" &&
+              projectStateRef.current.snapshot.project.id === projectID
+            )
+              setSavedLayouts(layouts)
+          }),
+        ),
+        Effect.catch((error) =>
+          Effect.sync(() => {
+            if (
+              projectStateRef.current._tag === "Ready" &&
+              projectStateRef.current.snapshot.project.id === projectID
+            )
+              setSavedLayoutsError(error.message)
+          }),
+        ),
+      ),
+    )
   }, [projectID])
+  const openSavedLayout = useCallback(
+    (saved: SavedLayout) => {
+      const layout = restorePaneLayout(saved.layout)
+      if (layout === undefined)
+        return Effect.fail(
+          new DesktopBridgeError({
+            message: "HydraCode could not restore this saved layout.",
+            cause: saved.layout,
+          }),
+        )
+      return Effect.forEach(paneSessionIDs(layout), selectSession, {
+        concurrency: 4,
+        discard: true,
+      }).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            paneLayoutRef.current = layout
+            const paneID = firstPaneID(layout)
+            activePaneIDRef.current = paneID
+            setPaneLayout(layout)
+            setActivePaneID(paneID)
+            setLayoutStatus(null)
+          }),
+        ),
+      )
+    },
+    [selectSession],
+  )
   const updater = useUpdater()
   const projectName =
     state._tag === "Ready"
@@ -184,12 +318,13 @@ export function App() {
           <span className="project-name">{projectName ?? "HydraCode"}</span>
         </div>
         <div className="header-actions">
-          <span className="connection-state">
-            {state._tag === "Ready"
-              ? "Connected"
-              : state._tag === "Loading"
-                ? "Connecting"
-                : "Not connected"}
+          <span className="connection-state" role={layoutStatus === null ? undefined : "status"}>
+            {layoutStatus ??
+              (state._tag === "Ready"
+                ? "Connected"
+                : state._tag === "Loading"
+                  ? "Connecting"
+                  : "Not connected")}
           </span>
           {updater.state.status === "disabled" ? null : (
             <button
@@ -259,10 +394,13 @@ export function App() {
           followLatestRequest={followLatestRequest}
           promptRetry={promptRetry}
           landingError={landingError}
+          savedLayouts={savedLayouts}
+          savedLayoutsError={savedLayoutsError}
           setActivePane={setActivePaneID}
           setLayout={setPaneLayout}
           selectSession={selectSession}
           createSession={createSession}
+          openSavedLayout={openSavedLayout}
           submitPrompt={submitPrompt}
           interruptSession={interruptSession}
         />

@@ -1,4 +1,5 @@
-import type { PaneSplitCommand } from "../../../shared/pane"
+import type { PaneDirection, PaneSplitCommand } from "../../../shared/pane"
+import type { SavedPaneLayout, SavedPaneNode } from "../../../shared/layout"
 
 export interface PaneLeaf {
   readonly _tag: "Pane"
@@ -19,8 +20,152 @@ export type PaneLayout = PaneLeaf | PaneSplit
 
 export const initialPaneLayout = (id: string): PaneLayout => ({ _tag: "Pane", id })
 
+export function savePaneLayout(layout: PaneLayout): SavedPaneLayout {
+  const nodes: SavedPaneNode[] = []
+  const visit = (node: PaneLayout) => {
+    if (node._tag === "Pane") {
+      nodes.push(
+        node.sessionID === undefined
+          ? { _tag: "Pane", id: node.id }
+          : { _tag: "Pane", id: node.id, sessionID: node.sessionID },
+      )
+      return
+    }
+    nodes.push({
+      _tag: "Split",
+      id: node.id,
+      direction: node.direction,
+      ratio: node.ratio,
+      first: node.first.id,
+      second: node.second.id,
+    })
+    visit(node.first)
+    visit(node.second)
+  }
+  visit(layout)
+  return { rootID: layout.id, nodes }
+}
+
+export function restorePaneLayout(saved: SavedPaneLayout): PaneLayout | undefined {
+  const nodes = new Map(saved.nodes.map((node) => [node.id, node]))
+  if (nodes.size !== saved.nodes.length) return undefined
+  const visiting = new Set<string>()
+  const visited = new Set<string>()
+  const visit = (id: string): PaneLayout | undefined => {
+    if (visiting.has(id)) return undefined
+    const node = nodes.get(id)
+    if (node === undefined) return undefined
+    visiting.add(id)
+    if (node._tag === "Pane") {
+      visiting.delete(id)
+      visited.add(id)
+      return node.sessionID === undefined
+        ? { _tag: "Pane", id: node.id }
+        : { _tag: "Pane", id: node.id, sessionID: node.sessionID }
+    }
+    if (!Number.isFinite(node.ratio) || node.ratio < 0.15 || node.ratio > 0.85) return undefined
+    const first = visit(node.first)
+    const second = visit(node.second)
+    visiting.delete(id)
+    if (first === undefined || second === undefined) return undefined
+    visited.add(id)
+    return {
+      _tag: "Split",
+      id: node.id,
+      direction: node.direction,
+      ratio: node.ratio,
+      first,
+      second,
+    }
+  }
+  const layout = visit(saved.rootID)
+  return layout !== undefined && visited.size === nodes.size ? layout : undefined
+}
+
+export function paneSessionIDs(layout: PaneLayout): ReadonlyArray<string> {
+  if (layout._tag === "Pane") return layout.sessionID === undefined ? [] : [layout.sessionID]
+  return Array.from(new Set([...paneSessionIDs(layout.first), ...paneSessionIDs(layout.second)]))
+}
+
+export function paneCount(layout: PaneLayout): number {
+  return layout._tag === "Pane" ? 1 : paneCount(layout.first) + paneCount(layout.second)
+}
+
 export function firstPaneID(layout: PaneLayout): string {
   return layout._tag === "Pane" ? layout.id : firstPaneID(layout.first)
+}
+
+interface PaneBounds {
+  readonly id: string
+  readonly x: number
+  readonly y: number
+  readonly width: number
+  readonly height: number
+}
+
+export function paneInDirection(
+  layout: PaneLayout,
+  paneID: string,
+  direction: PaneDirection,
+): string | undefined {
+  const panes: PaneBounds[] = []
+  const collect = (node: PaneLayout, x: number, y: number, width: number, height: number) => {
+    if (node._tag === "Pane") {
+      panes.push({ id: node.id, x, y, width, height })
+      return
+    }
+    if (node.direction === "horizontal") {
+      const firstWidth = width * node.ratio
+      collect(node.first, x, y, firstWidth, height)
+      collect(node.second, x + firstWidth, y, width - firstWidth, height)
+    } else {
+      const firstHeight = height * node.ratio
+      collect(node.first, x, y, width, firstHeight)
+      collect(node.second, x, y + firstHeight, width, height - firstHeight)
+    }
+  }
+  collect(layout, 0, 0, 1, 1)
+  const source = panes.find((pane) => pane.id === paneID)
+  if (source === undefined) return undefined
+
+  const horizontal = direction === "left" || direction === "right"
+  const sourceStart = horizontal ? source.y : source.x
+  const sourceEnd = sourceStart + (horizontal ? source.height : source.width)
+  const sourceCenter = (sourceStart + sourceEnd) / 2
+  const epsilon = 1e-9
+  return panes
+    .filter((pane) => {
+      if (pane.id === paneID) return false
+      if (direction === "left") return pane.x + pane.width <= source.x + epsilon
+      if (direction === "right") return pane.x >= source.x + source.width - epsilon
+      if (direction === "up") return pane.y + pane.height <= source.y + epsilon
+      return pane.y >= source.y + source.height - epsilon
+    })
+    .map((pane) => {
+      const start = horizontal ? pane.y : pane.x
+      const end = start + (horizontal ? pane.height : pane.width)
+      const perpendicularGap = Math.max(0, sourceStart - end, start - sourceEnd)
+      const primaryGap =
+        direction === "left"
+          ? source.x - (pane.x + pane.width)
+          : direction === "right"
+            ? pane.x - (source.x + source.width)
+            : direction === "up"
+              ? source.y - (pane.y + pane.height)
+              : pane.y - (source.y + source.height)
+      return {
+        id: pane.id,
+        perpendicularGap,
+        primaryGap,
+        centerDistance: Math.abs((start + end) / 2 - sourceCenter),
+      }
+    })
+    .toSorted(
+      (left, right) =>
+        left.perpendicularGap - right.perpendicularGap ||
+        left.primaryGap - right.primaryGap ||
+        left.centerDistance - right.centerDistance,
+    )[0]?.id
 }
 
 export function adjacentPaneID(layout: PaneLayout, paneID: string): string | undefined {

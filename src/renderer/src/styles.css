@@ -703,6 +703,10 @@ div.project-landing__status p {
   margin-top: 38px;
 }
 
+.session-landing__saved-layouts {
+  margin-top: 30px;
+}
+
 .session-landing__history-heading {
   display: flex;
   align-items: center;
@@ -772,6 +776,45 @@ div.project-landing__status p {
   font-weight: 570;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.session-landing__layout .session-landing__session-title {
+  flex: 1 1 auto;
+}
+
+.layout-preview__split,
+.layout-preview__pane {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+}
+
+.layout-preview__split {
+  gap: 2px;
+}
+
+.session-landing__layout > .layout-preview__split,
+.session-landing__layout > .layout-preview__pane {
+  flex: 0 0 54px;
+  width: 54px;
+  height: 34px;
+  padding: 2px;
+  border: 1px solid var(--color-borderStrong);
+  border-radius: var(--radius-small);
+  background: var(--color-background);
+}
+
+.layout-preview__split--horizontal {
+  grid-auto-flow: column;
+}
+
+.layout-preview__split--vertical {
+  grid-auto-flow: row;
+}
+
+.layout-preview__pane {
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--color-accent) 25%, var(--color-surfaceMuted));
 }
 
 .session-landing__session-meta {

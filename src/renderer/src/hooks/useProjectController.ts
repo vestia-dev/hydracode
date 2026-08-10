@@ -256,7 +256,7 @@ export function useProjectController() {
   )
 
   const selectSession = useCallback(
-    (sessionID: SessionView["id"]) =>
+    (sessionID: string) =>
       Effect.gen(function* () {
         const id = subscriptionID.current
         if (id === null)

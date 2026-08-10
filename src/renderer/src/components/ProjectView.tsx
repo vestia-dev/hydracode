@@ -6,6 +6,7 @@ import { groupSessionFamilies } from "../projectors/projectSessions"
 import { setPaneSession, setSplitRatio, type PaneLayout } from "../projectors/paneLayout"
 import { SessionLanding } from "./SessionLanding"
 import { SessionPane } from "./SessionPane"
+import type { SavedLayout } from "../../../shared/layout"
 
 interface ProjectViewProps {
   readonly snapshot: ProjectSnapshot
@@ -14,6 +15,8 @@ interface ProjectViewProps {
   readonly promptFocusRequest: { readonly paneID: string; readonly sequence: number } | null
   readonly followLatestRequest: { readonly paneID: string; readonly sequence: number } | null
   readonly landingError: string | null
+  readonly savedLayouts: ReadonlyArray<SavedLayout>
+  readonly savedLayoutsError: string | null
   readonly setActivePane: (paneID: string) => void
   readonly setLayout: Dispatch<SetStateAction<PaneLayout>>
   readonly selectSession: (
@@ -22,6 +25,9 @@ interface ProjectViewProps {
   readonly createSession: (
     text: string,
     selectCreated?: (sessionID: SessionView["id"] | undefined) => void,
+  ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
+  readonly openSavedLayout: (
+    layout: SavedLayout,
   ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
   readonly submitPrompt: (
     sessionID: SessionView["id"],
@@ -128,8 +134,11 @@ export function ProjectView(props: ProjectViewProps) {
             <SessionLanding
               snapshot={props.snapshot}
               initialError={props.landingError}
+              savedLayouts={props.savedLayouts}
+              savedLayoutsError={props.savedLayoutsError}
               createSession={createInPane}
               selectSession={selectInPane}
+              openSavedLayout={props.openSavedLayout}
               focusRequest={
                 props.promptFocusRequest?.paneID === layout.id
                   ? props.promptFocusRequest.sequence
