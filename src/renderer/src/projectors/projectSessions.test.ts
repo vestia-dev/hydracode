@@ -4,7 +4,7 @@ import {
   groupSessionFamilies,
   matchSubagentLaunchers,
   visibleSessionFamily,
-} from "./workspaceSessions"
+} from "./projectSessions"
 
 const sessions = [
   { id: "other" },

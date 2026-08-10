@@ -1,10 +1,11 @@
-import { NodeFileSystem } from "@effect/platform-node"
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem"
 import { Service as LocalOpenCodeService } from "@opencode-ai/client/effect/service"
 import { Effect } from "effect"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { afterEach, expect, it, vi } from "vitest"
 import { OpenCodeService, OpenCodeServiceLive } from "./OpenCodeService"
+import { openCodeExecutable } from "./openCodeRuntime"
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -22,7 +23,17 @@ it("starts the OpenCode V2 service", async () => {
   )
 
   expect(connection).toEqual({ url: "http://127.0.0.1:4096" })
-  expect(ensure).toHaveBeenCalledWith({ command: ["opencode2", "serve", "--service"] })
+  const executable = openCodeExecutable({
+    platform: process.platform,
+    arch: process.arch,
+    isPackaged: false,
+    resourcesPath: "",
+    projectPath: process.cwd(),
+  })
+  expect(ensure).toHaveBeenCalledWith({
+    command: [executable, "serve", "--service"],
+    version: "0.0.0-next-17028",
+  })
 })
 
 it("finds the user-level V2 service when XDG state belongs to OpenCode Desktop", async () => {
@@ -42,7 +53,10 @@ it("finds the user-level V2 service when XDG state belongs to OpenCode Desktop",
   )
 
   expect(connection).toEqual(endpoint)
-  expect(discover).toHaveBeenNthCalledWith(1)
-  expect(discover).toHaveBeenNthCalledWith(2, { file: defaultServiceFile })
+  expect(discover).toHaveBeenNthCalledWith(1, { version: "0.0.0-next-17028" })
+  expect(discover).toHaveBeenNthCalledWith(2, {
+    file: defaultServiceFile,
+    version: "0.0.0-next-17028",
+  })
   expect(ensure).not.toHaveBeenCalled()
 })

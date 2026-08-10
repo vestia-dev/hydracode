@@ -1,13 +1,16 @@
 {
   "name": "hydracode",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "A visual desktop client for coding agents.",
+  "author": "Vestia",
   "type": "module",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "package:mac": "bun run build && electron-builder --mac --arm64 --config electron-builder.config.ts",
+    "package:mac:dir": "bun run build && electron-builder --mac --arm64 --dir --config electron-builder.config.ts",
     "preview": "electron-vite preview",
     "lint": "oxfmt --write . && oxlint --type-aware --type-check --fix --report-unused-disable-directives --deny-warnings .",
     "lint:check": "oxfmt --check . && oxlint --type-aware --type-check --report-unused-disable-directives --deny-warnings .",
@@ -21,6 +24,7 @@
     "@xyflow/react": "12.11.2",
     "dompurify": "3.4.13",
     "effect": "4.0.0-beta.101",
+    "electron-updater": "6.8.9",
     "marked": "18.0.9",
     "react": "19.2.8",
     "react-dom": "19.2.8"
@@ -32,6 +36,7 @@
     "@types/react-dom": "19.2.4",
     "@vitejs/plugin-react": "5.2.0",
     "electron": "43.3.0",
+    "electron-builder": "26.15.3",
     "electron-vite": "5.0.0",
     "oxfmt": "0.62.0",
     "oxlint": "1.77.0",
@@ -39,6 +44,14 @@
     "typescript": "7.0.2",
     "vite": "7.3.6",
     "vitest": "4.1.10"
+  },
+  "optionalDependencies": {
+    "@opencode-ai/cli-darwin-arm64": "0.0.0-next-17028",
+    "@opencode-ai/cli-darwin-x64-baseline": "0.0.0-next-17028",
+    "@opencode-ai/cli-linux-arm64": "0.0.0-next-17028",
+    "@opencode-ai/cli-linux-x64-baseline": "0.0.0-next-17028",
+    "@opencode-ai/cli-windows-arm64": "0.0.0-next-17028",
+    "@opencode-ai/cli-windows-x64-baseline": "0.0.0-next-17028"
   },
   "overrides": {
     "@effect/platform-node-shared": "4.0.0-beta.101"

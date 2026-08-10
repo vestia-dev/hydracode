@@ -4,8 +4,9 @@ import { Effect } from "effect"
 import { DefaultTheme } from "../shared/theme"
 import { registerDesktopIpc } from "./ipc"
 import { MainRuntime } from "./runtime"
+import { UpdateService } from "./services/UpdateService"
 
-const createWorkspaceWindow = Effect.sync(() => {
+const createProjectWindow = Effect.sync(() => {
   const window = new BrowserWindow({
     width: 1440,
     height: 960,
@@ -37,11 +38,18 @@ const createWorkspaceWindow = Effect.sync(() => {
 const start = Effect.gen(function* () {
   yield* Effect.promise(() => app.whenReady())
   registerDesktopIpc()
-  yield* createWorkspaceWindow
+  yield* createProjectWindow
+
+  MainRuntime.runFork(UpdateService.use((updates) => updates.checkSilently))
+  const updateTimer = setInterval(
+    () => MainRuntime.runFork(UpdateService.use((updates) => updates.checkSilently)),
+    10 * 60 * 1000,
+  )
+  updateTimer.unref()
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      Effect.runSync(createWorkspaceWindow)
+      Effect.runSync(createProjectWindow)
     }
   })
 
@@ -50,6 +58,7 @@ const start = Effect.gen(function* () {
   })
 
   app.on("will-quit", () => {
+    clearInterval(updateTimer)
     void MainRuntime.dispose()
   })
 })

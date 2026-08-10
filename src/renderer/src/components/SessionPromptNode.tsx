@@ -15,19 +15,23 @@ const initialSubmissionState: SubmissionState = { _tag: "Idle" }
 
 export interface SessionPromptNodeData extends Record<string, unknown> {
   readonly agentRunning: boolean
+  readonly promptPending: boolean
   readonly submitPrompt: (text: string) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
+  readonly retryPrompt?: { readonly text: string; readonly message: string }
 }
 
 export type SessionPromptFlowNode = Node<SessionPromptNodeData, "sessionPrompt">
 
 export function SessionPromptNode({ data }: NodeProps<SessionPromptFlowNode>) {
-  const { agentRunning, submitPrompt } = data
+  const { agentRunning, promptPending, submitPrompt } = data
   const [text, setText] = useState("")
   const [submission, setSubmission] = useState<SubmissionState>(initialSubmissionState)
+  const appliedRetry = useRef<typeof data.retryPrompt>(undefined)
   const sawRunning = useRef(false)
   const submissionFiber = useRef<Fiber.Fiber<unknown, unknown> | null>(null)
   const locked =
     agentRunning ||
+    promptPending ||
     submission._tag === "Submitting" ||
     (submission._tag === "Submitted" && !sawRunning.current)
 
@@ -38,6 +42,13 @@ export function SessionPromptNode({ data }: NodeProps<SessionPromptFlowNode>) {
       setSubmission(initialSubmissionState)
     }
   }, [agentRunning, submission._tag])
+
+  useEffect(() => {
+    if (data.retryPrompt === undefined || appliedRetry.current === data.retryPrompt) return
+    appliedRetry.current = data.retryPrompt
+    setText(data.retryPrompt.text)
+    setSubmission({ _tag: "Error", message: data.retryPrompt.message })
+  }, [data.retryPrompt])
 
   const submit = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
@@ -80,11 +91,12 @@ export function SessionPromptNode({ data }: NodeProps<SessionPromptFlowNode>) {
     [],
   )
 
-  const placeholder = agentRunning
-    ? "Agent is working…"
-    : submission._tag === "Submitted"
-      ? "Prompt sent…"
-      : "What should the agent do next?"
+  const placeholder =
+    agentRunning || promptPending
+      ? "Agent is working…"
+      : submission._tag === "Submitted"
+        ? "Prompt sent…"
+        : "What should the agent do next?"
 
   return (
     <article className={`event-node prompt-node${locked ? " prompt-node--loading" : ""}`}>
@@ -114,7 +126,9 @@ export function SessionPromptNode({ data }: NodeProps<SessionPromptFlowNode>) {
       </form>
       {locked ? (
         <LoadingIndicator
-          label={submission._tag === "Submitting" ? "Sending prompt" : "Agent working"}
+          label={
+            submission._tag === "Submitting" || promptPending ? "Sending prompt" : "Agent working"
+          }
         />
       ) : null}
       {submission._tag === "Error" ? (

@@ -1,22 +1,80 @@
 import { Background, BackgroundVariant, ReactFlow } from "@xyflow/react"
-import { WorkspaceView } from "./components/WorkspaceView"
-import { useWorkspaceController } from "./hooks/useWorkspaceController"
+import { ProjectView } from "./components/ProjectView"
+import { ProjectLanding } from "./components/ProjectLanding"
+import { SessionLanding } from "./components/SessionLanding"
+import { useUpdater } from "./hooks/useUpdater"
+import { useProjectController } from "./hooks/useProjectController"
+import { projectDisplayName, projectInitial } from "./projectors/projectPresentation"
+
+function updateLabel(state: ReturnType<typeof useUpdater>["state"]) {
+  switch (state.status) {
+    case "checking":
+      return "Checking…"
+    case "downloading":
+      return `Downloading ${state.version}…`
+    case "ready":
+      return `Restart for ${state.version}`
+    case "installing":
+      return "Restarting…"
+    case "up-to-date":
+      return "Up to date"
+    case "error":
+      return "Update failed"
+    default:
+      return "Check for updates"
+  }
+}
 
 export function App() {
-  const { state, openWorkspace, submitPrompt, interruptSession } = useWorkspaceController()
-  const directory =
+  const {
+    state,
+    promptRetry,
+    landingError,
+    catalog,
+    loadProjects,
+    newProject,
+    openProject,
+    showProjects,
+    selectSession,
+    createSession,
+    showSessionLanding,
+    submitPrompt,
+    interruptSession,
+  } = useProjectController()
+  const updater = useUpdater()
+  const projectName =
     state._tag === "Ready"
-      ? state.snapshot.directory
+      ? projectDisplayName(state.snapshot.project.name, state.snapshot.location.directory)
       : state._tag === "Loading"
-        ? state.directory
+        ? projectDisplayName(undefined, state.location.directory)
         : null
+  const projectIcon =
+    state._tag === "Ready"
+      ? (state.snapshot.project.icon?.override ?? state.snapshot.project.icon?.url)
+      : undefined
+  const projectColor = state._tag === "Ready" ? state.snapshot.project.icon?.color : undefined
+  const creatingSession =
+    state._tag === "Ready" && state.snapshot.sessions.some((session) => session.provisional)
 
   return (
-    <main className="workspace-shell">
-      <header className="workspace-header">
-        <div>
-          <span className="product-name">HydraCode</span>
-          <span className="workspace-path">{directory ?? "No workspace open"}</span>
+    <main className="project-shell">
+      <header className="project-header">
+        <div
+          className="project-identity"
+          title={state._tag === "Ready" ? state.snapshot.location.directory : undefined}
+        >
+          <span
+            className="project-icon"
+            style={{ backgroundColor: projectColor }}
+            aria-hidden="true"
+          >
+            {projectIcon === undefined ? (
+              <span>{projectInitial(projectName ?? "HydraCode")}</span>
+            ) : (
+              <img src={projectIcon} alt="" />
+            )}
+          </span>
+          <span className="project-name">{projectName ?? "HydraCode"}</span>
         </div>
         <div className="header-actions">
           <span className="connection-state">
@@ -26,20 +84,62 @@ export function App() {
                 ? "Connecting"
                 : "Not connected"}
           </span>
-          <button type="button" className="open-workspace-button" onClick={openWorkspace}>
-            Open workspace
-          </button>
+          {updater.state.status === "disabled" ? null : (
+            <button
+              type="button"
+              className="update-button"
+              disabled={
+                updater.state.status === "checking" ||
+                updater.state.status === "downloading" ||
+                updater.state.status === "installing"
+              }
+              title={updater.state.status === "error" ? updater.state.message : undefined}
+              onClick={updater.state.status === "ready" ? updater.install : updater.check}
+            >
+              {updateLabel(updater.state)}
+            </button>
+          )}
+          {state._tag === "Ready" && state.screen === "session" ? (
+            <button
+              type="button"
+              className="open-project-button"
+              disabled={creatingSession}
+              onClick={showSessionLanding}
+            >
+              New session
+            </button>
+          ) : null}
+          {state._tag === "Ready" ? (
+            <button
+              type="button"
+              className="open-project-button"
+              disabled={creatingSession}
+              onClick={showProjects}
+            >
+              Projects
+            </button>
+          ) : null}
         </div>
       </header>
 
       {state._tag === "Ready" ? (
-        <WorkspaceView
-          snapshot={state.snapshot}
-          submitPrompt={submitPrompt}
-          interruptSession={interruptSession}
-        />
-      ) : (
-        <section className="session-pane" aria-label="Workspace status">
+        state.screen === "landing" ? (
+          <SessionLanding
+            snapshot={state.snapshot}
+            initialError={landingError}
+            createSession={createSession}
+            selectSession={selectSession}
+          />
+        ) : (
+          <ProjectView
+            snapshot={state.snapshot}
+            promptRetry={promptRetry}
+            submitPrompt={submitPrompt}
+            interruptSession={interruptSession}
+          />
+        )
+      ) : state._tag === "Loading" ? (
+        <section className="session-pane" aria-label="Project status">
           <ReactFlow nodes={[]} edges={[]} fitView proOptions={{ hideAttribution: true }}>
             <Background
               variant={BackgroundVariant.Dots}
@@ -53,27 +153,18 @@ export function App() {
             <span className="empty-mark" aria-hidden="true">
               H
             </span>
-            <h1>
-              {state._tag === "Loading"
-                ? "Connecting to OpenCode"
-                : state._tag === "Error"
-                  ? "Could not open workspace"
-                  : "Open a workspace"}
-            </h1>
-            <p>
-              {state._tag === "Error"
-                ? state.message
-                : state._tag === "Loading"
-                  ? "Loading sessions and their agent history…"
-                  : "Connect HydraCode to an OpenCode workspace to see its sessions."}
-            </p>
-            {state._tag === "Idle" || state._tag === "Error" ? (
-              <button type="button" className="primary-button" onClick={openWorkspace}>
-                Choose folder
-              </button>
-            ) : null}
+            <h1>Connecting to OpenCode</h1>
+            <p>Loading sessions and their agent history…</p>
           </div>
         </section>
+      ) : (
+        <ProjectLanding
+          catalog={catalog}
+          error={state._tag === "Error" ? state.message : undefined}
+          openProject={openProject}
+          newProject={newProject}
+          retry={loadProjects}
+        />
       )}
     </main>
   )

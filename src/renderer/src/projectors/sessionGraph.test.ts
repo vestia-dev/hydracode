@@ -2,7 +2,6 @@ import type { SessionMessage } from "@opencode-ai/client/effect"
 import { expect, it } from "@effect/vitest"
 import { Brand, DateTime, Effect } from "effect"
 import { classifyToolCall, projectMessages } from "./sessionGraph"
-import { readBranchPositions, spokeOffset, writeBranchPositions } from "./sessionLayout"
 import { spokePath } from "./spokePath"
 
 function timestamp(value: number) {
@@ -65,6 +64,15 @@ function assistantMessage(
   } satisfies SessionMessage.Assistant
 }
 
+function systemMessage(id: string, created: number) {
+  return {
+    id: messageID(id),
+    type: "system",
+    text: "Session context refreshed.",
+    time: { created: timestamp(created) },
+  } satisfies SessionMessage.System
+}
+
 function effectSessionMessages() {
   return [
     userMessage(),
@@ -107,35 +115,27 @@ function effectSessionMessages() {
   ]
 }
 
-it.effect("projects a consecutive assistant run as one Agent with read groups per message", () =>
+it.effect("projects a user prompt and consecutive assistant run as one round", () =>
   Effect.sync(() => {
     const graph = projectMessages(effectSessionMessages())
-    const agentNode = graph.nodes.find((node) => node.kind === "agent")
-    const toolGroups = graph.nodes.filter((node) => node.kind === "tool-group")
+    const roundNode = graph.nodes.find((node) => node.kind === "round")
+    const tools = graph.nodes.find((node) => node.kind === "round-tools")?.roundTools
 
-    expect(graph.nodes.map((node) => node.kind)).toEqual([
-      "input",
-      "agent",
-      "tool-group",
-      "tool-group",
-      "tool-group",
-    ])
-    expect(graph.nodes[0]?.title).toBe("You")
-    expect(agentNode?.agent?.messageIDs).toEqual([
+    expect(graph.nodes.map((node) => node.kind)).toEqual(["round", "round-tools"])
+    expect(roundNode?.round?.input?.text).toBe("What is in this project?")
+    expect(roundNode?.agent?.messageIDs).toEqual([
       "message-assistant-1",
       "message-assistant-2",
       "message-assistant-3",
       "message-assistant-4",
     ])
-    expect(toolGroups.map((node) => node.toolGroup?.messageIndex)).toEqual([0, 1, 2])
-    expect(toolGroups.map((node) => node.toolGroup?.calls.length)).toEqual([3, 5, 2])
-    expect(toolGroups.map((node) => node.toolGroup?.direction)).toEqual(["read", "read", "read"])
-    expect(toolGroups[1]?.toolGroup?.calls[0]).toMatchObject({
+    expect(tools?.calls).toHaveLength(10)
+    expect(tools?.calls[3]).toMatchObject({
       name: "read",
       input: { filePath: "one.ts" },
       detail: "one.ts",
     })
-    expect(toolGroups[1]?.toolGroup?.calls[4]).toMatchObject({
+    expect(tools?.calls[7]).toMatchObject({
       name: "grep",
       input: { pattern: "Layer" },
       detail: "Layer",
@@ -143,10 +143,40 @@ it.effect("projects a consecutive assistant run as one Agent with read groups pe
   }),
 )
 
-it.effect("keeps commentary, reasoning, and response inside the Agent exactly once", () =>
+it.effect("hides system messages without splitting their surrounding round", () =>
+  Effect.sync(() => {
+    const graph = projectMessages([
+      userMessage(),
+      assistantMessage(
+        "message-assistant-1",
+        [tool("call-subagent-1", "subagent", { agent: "general" }, 2_010)],
+        2_000,
+      ),
+      systemMessage("message-system", 3_000),
+      assistantMessage(
+        "message-assistant-2",
+        [tool("call-subagent-2", "subagent", { agent: "general" }, 4_010)],
+        4_000,
+      ),
+      assistantMessage(
+        "message-assistant-3",
+        [tool("call-subagent-3", "subagent", { agent: "general" }, 5_010)],
+        5_000,
+      ),
+    ])
+
+    expect(graph.nodes.filter((node) => node.kind === "round")).toHaveLength(1)
+    expect(graph.nodes.find((node) => node.kind === "round-tools")?.roundTools?.calls).toHaveLength(
+      3,
+    )
+    expect(graph.nodes.some((node) => node.kind === "system")).toBe(false)
+  }),
+)
+
+it.effect("keeps commentary, reasoning, and response inside the round exactly once", () =>
   Effect.sync(() => {
     const graph = projectMessages(effectSessionMessages())
-    const narratives = graph.nodes.find((node) => node.kind === "agent")?.agent?.narratives
+    const narratives = graph.nodes.find((node) => node.kind === "round")?.agent?.narratives
 
     expect(narratives?.map((item) => item.kind)).toEqual(["commentary", "reasoning", "response"])
     expect(narratives?.map((item) => item.detail)).toEqual([
@@ -154,6 +184,47 @@ it.effect("keeps commentary, reasoning, and response inside the Agent exactly on
       "Check the package structure.",
       "This is an Effect project.",
     ])
+  }),
+)
+
+it.effect("retains chronological round history with message-level provenance", () =>
+  Effect.sync(() => {
+    const graph = projectMessages(effectSessionMessages())
+    const history = graph.nodes.find((node) => node.kind === "round")?.round?.history
+
+    expect(history?.map((item) => item.kind)).toEqual([
+      "user",
+      "commentary",
+      "tool",
+      "tool",
+      "tool",
+      "tool",
+      "tool",
+      "tool",
+      "tool",
+      "tool",
+      "reasoning",
+      "tool",
+      "tool",
+      "response",
+    ])
+    expect(history?.[0]?.provenance.messageIDs).toEqual(["message-user"])
+    expect(history?.at(-1)?.provenance.messageIDs).toEqual(["message-assistant-4"])
+  }),
+)
+
+it.effect("keeps a stable round identity before assistant work arrives", () =>
+  Effect.sync(() => {
+    const pending = projectMessages([userMessage()])
+    const completed = projectMessages([
+      userMessage(),
+      assistantMessage("message-assistant", [{ type: "text", text: "Done" }], 2_000),
+    ])
+
+    expect(pending.nodes[0]?.id).toBe("round:message-user")
+    expect(completed.nodes[0]?.id).toBe("round:message-user")
+    expect(pending.nodes[0]?.round?.agent).toBeUndefined()
+    expect(completed.nodes[0]?.round?.agent?.messageIDs).toEqual(["message-assistant"])
   }),
 )
 
@@ -170,14 +241,14 @@ it.effect("preserves message whitespace so Markdown structure reaches the render
       assistantMessage("message-assistant-markdown", [{ type: "text", text: markdown }], 2_000),
     ])
 
-    expect(graph.nodes.find((node) => node.kind === "input")?.detail).toBe(markdown)
-    expect(graph.nodes.find((node) => node.kind === "agent")?.agent?.narratives[0]?.detail).toBe(
+    expect(graph.nodes.find((node) => node.kind === "round")?.round?.input?.text).toBe(markdown)
+    expect(graph.nodes.find((node) => node.kind === "round")?.agent?.narratives[0]?.detail).toBe(
       markdown,
     )
   }),
 )
 
-it.effect("branches reads upward in message order and writes downward in message order", () =>
+it.effect("projects every tool call into one chronological round list", () =>
   Effect.sync(() => {
     const graph = projectMessages([
       userMessage(),
@@ -200,36 +271,17 @@ it.effect("branches reads upward in message order and writes downward in message
     ])
 
     expect(graph.edges.map((edge) => [edge.kind, edge.source, edge.target])).toEqual([
-      ["timeline", "message-user", "agent:message-assistant-1"],
-      ["read", "agent:message-assistant-1", "tool-group:message-assistant-1:read"],
-      ["read", "agent:message-assistant-1", "tool-group:message-assistant-2:read"],
-      ["write", "agent:message-assistant-1", "tool-group:message-assistant-1:write"],
-      ["write", "agent:message-assistant-1", "tool-group:message-assistant-2:write"],
+      ["tools", "round:message-user", "round:message-user:tools"],
     ])
-
-    const anchor = { x: 252, y: 480 }
-    const nodeDistance = { horizontal: 32, vertical: 24 }
-    const branchSizes = [
-      { width: 240, height: 78 },
-      { width: 240, height: 109 },
-    ]
-    expect(readBranchPositions(anchor, 300, branchSizes, nodeDistance)).toEqual([
-      { x: 146, y: 347 },
-      { x: 418, y: 347 },
-    ])
-    expect(writeBranchPositions(anchor, 300, 220, branchSizes, nodeDistance)).toEqual([
-      { x: 146, y: 724 },
-      { x: 418, y: 724 },
-    ])
-    expect(Array.from({ length: 3 }, (_, index) => spokeOffset(index, 3))).toEqual([
-      "25%",
-      "50%",
-      "75%",
-    ])
+    expect(
+      graph.nodes
+        .find((node) => node.kind === "round-tools")
+        ?.roundTools?.calls.map((call) => call.name),
+    ).toEqual(["read", "apply_patch", "grep", "shell"])
   }),
 )
 
-it.effect("splits read and write calls from the same assistant message into two groups", () =>
+it.effect("keeps mixed read and write calls in the same round list", () =>
   Effect.sync(() => {
     const graph = projectMessages([
       assistantMessage(
@@ -244,14 +296,30 @@ it.effect("splits read and write calls from the same assistant message into two 
         1_000,
       ),
     ])
-    const groups = graph.nodes.flatMap((node) =>
-      node.toolGroup === undefined ? [] : [node.toolGroup],
-    )
+    const calls = graph.nodes.find((node) => node.kind === "round-tools")?.roundTools?.calls
 
-    expect(groups.map((group) => group.direction)).toEqual(["read", "write"])
-    expect(groups[0]?.calls.map((call) => call.name)).toEqual(["read", "shell"])
-    expect(groups[1]?.calls.map((call) => call.name)).toEqual(["edit", "shell"])
-    expect(groups.every((group) => group.messageID === "message-assistant")).toBe(true)
+    expect(calls?.map((call) => call.name)).toEqual(["read", "shell", "edit", "shell"])
+    expect(calls?.every((call) => call.provenance.messageIDs[0] === "message-assistant")).toBe(true)
+  }),
+)
+
+it.effect("keeps skill and apply_patch calls together in their original order", () =>
+  Effect.sync(() => {
+    const graph = projectMessages([
+      assistantMessage(
+        "message-assistant",
+        [
+          tool("call-skill", "skill", { name: "customize-opencode" }, 1_010),
+          tool("call-patch", "apply_patch", { patchText: "*** Begin Patch" }, 1_020),
+        ],
+        1_000,
+      ),
+    ])
+    expect(
+      graph.nodes
+        .find((node) => node.kind === "round-tools")
+        ?.roundTools?.calls.map((call) => call.name),
+    ).toEqual(["skill", "apply_patch"])
   }),
 )
 
@@ -260,7 +328,14 @@ it.effect("classifies shell conservatively and defaults unknown tools to actions
     expect(classifyToolCall("task", { subagent_type: "explore" })).toBe("subagent")
     expect(classifyToolCall("subagent", { agent: "general" })).toBe("subagent")
     expect(classifyToolCall("webfetch", { url: "https://example.com" })).toBe("read")
+    expect(classifyToolCall("skill", { name: "frontend-design" })).toBe("read")
     expect(classifyToolCall("shell", { command: "git status && rg TODO src" })).toBe("read")
+    expect(classifyToolCall("shell", { command: "npm view effect version" })).toBe("read")
+    expect(classifyToolCall("shell", { command: "npm install --help" })).toBe("read")
+    expect(classifyToolCall("shell", { command: "some-command --help" })).toBe("read")
+    expect(classifyToolCall("shell", { command: "some-command --help && touch output" })).toBe(
+      "write",
+    )
     expect(classifyToolCall("shell", { command: "rg TODO src > todos.txt" })).toBe("write")
     expect(classifyToolCall("shell", { command: "bun test" })).toBe("write")
     expect(classifyToolCall("apply_patch", { patchText: "*** Begin Patch" })).toBe("write")
@@ -268,7 +343,7 @@ it.effect("classifies shell conservatively and defaults unknown tools to actions
   }),
 )
 
-it.effect("projects task calls as linked subagent branches", () =>
+it.effect("retains subagent session IDs on the unified tool list", () =>
   Effect.sync(() => {
     const graph = projectMessages([
       assistantMessage(
@@ -285,16 +360,27 @@ it.effect("projects task calls as linked subagent branches", () =>
         1_000,
       ),
     ])
-    const group = graph.nodes.find((node) => node.toolGroup?.direction === "subagent")
+    const tools = graph.nodes.find((node) => node.kind === "round-tools")
 
-    expect(group?.title).toBe("Subagent")
-    expect(group?.toolGroup?.calls[0]?.subagentSessionID).toBe("session-child")
+    expect(tools?.roundTools?.calls[0]?.subagentSessionID).toBe("session-child")
     expect(graph.edges).toContainEqual({
-      id: `agent:message-assistant-task->${group?.id}`,
-      source: "agent:message-assistant-task",
-      target: group?.id,
-      kind: "subagent",
+      id: "round:message-assistant-task->round:message-assistant-task:tools",
+      source: "round:message-assistant-task",
+      target: "round:message-assistant-task:tools",
+      kind: "tools",
     })
+  }),
+)
+
+it.effect("creates one stable tool list across assistant messages", () =>
+  Effect.sync(() => {
+    const first = projectMessages(effectSessionMessages())
+    const second = projectMessages(effectSessionMessages())
+    const tools = first.nodes.find((node) => node.kind === "round-tools")
+
+    expect(tools?.id).toBe("round:message-user:tools")
+    expect(tools?.roundTools?.calls).toHaveLength(10)
+    expect(second.nodes.find((node) => node.kind === "round-tools")?.id).toBe(tools?.id)
   }),
 )
 
@@ -327,7 +413,8 @@ it.effect("projects authoritative apply_patch metadata for diff rendering", () =
         1_000,
       ),
     ])
-    const call = graph.nodes.find((node) => node.toolGroup !== undefined)?.toolGroup?.calls[0]
+    const call = graph.nodes.find((node) => node.kind === "round-tools")?.roundTools?.calls[0]
+    const artifacts = graph.nodes.find((node) => node.kind === "round-artifacts")?.roundArtifacts
 
     expect(call?.detail).toBe("1 file · +1 -1")
     expect(call?.diff).toEqual({
@@ -341,10 +428,17 @@ it.effect("projects authoritative apply_patch metadata for diff rendering", () =
         },
       ],
     })
+    expect(artifacts?.diff).toEqual(call?.diff)
+    expect(graph.edges).toContainEqual({
+      id: "round:message-assistant-patch->round:message-assistant-patch:artifacts",
+      source: "round:message-assistant-patch",
+      target: "round:message-assistant-patch:artifacts",
+      kind: "artifacts",
+    })
   }),
 )
 
-it.effect("retains grouped provenance and tool timing", () =>
+it.effect("retains unified tool provenance and timing", () =>
   Effect.sync(() => {
     const graph = projectMessages([
       assistantMessage(
@@ -353,15 +447,15 @@ it.effect("retains grouped provenance and tool timing", () =>
         1_000,
       ),
     ])
-    const group = graph.nodes.find((node) => node.kind === "tool-group")
+    const tools = graph.nodes.find((node) => node.kind === "round-tools")
 
-    expect(group?.provenance).toEqual({
+    expect(tools?.provenance).toEqual({
       source: "derived",
       messageIDs: ["message-assistant"],
       contentIndexes: [0],
       toolCallIDs: ["call-read"],
     })
-    expect(group?.toolGroup?.calls[0]?.time).toEqual({
+    expect(tools?.roundTools?.calls[0]?.time).toEqual({
       created: 1_010,
       started: 1_011,
       completed: 1_030,
@@ -369,16 +463,37 @@ it.effect("retains grouped provenance and tool timing", () =>
   }),
 )
 
-it.effect("routes spokes through a source-side corridor with rounded bends", () =>
+it.effect("draws direct spokes between source and target handles", () =>
   Effect.sync(() => {
-    expect(spokePath({ sourceX: 100, sourceY: 200, targetX: 40, targetY: 100 })).toBe(
-      "M 100 200 L 100 192 Q 100 184 92 184 L 48 184 Q 40 184 40 176 L 40 100",
-    )
-    expect(spokePath({ sourceX: 100, sourceY: 200, targetX: 160, targetY: 300 })).toBe(
-      "M 100 200 L 100 208 Q 100 216 108 216 L 152 216 Q 160 216 160 224 L 160 300",
-    )
-    expect(spokePath({ sourceX: 100, sourceY: 200, targetX: 100, targetY: 100 })).toBe(
-      "M 100 200 L 100 100",
-    )
+    expect(
+      spokePath({
+        sourceX: 100,
+        sourceY: 200,
+        sourcePosition: "top",
+        targetX: 40,
+        targetY: 100,
+        targetPosition: "bottom",
+      }),
+    ).toBe("M 100 200 L 40 100")
+    expect(
+      spokePath({
+        sourceX: 100,
+        sourceY: 200,
+        sourcePosition: "right",
+        targetX: 160,
+        targetY: 300,
+        targetPosition: "top",
+      }),
+    ).toBe("M 100 200 L 160 300")
+    expect(
+      spokePath({
+        sourceX: 100,
+        sourceY: 200,
+        sourcePosition: "top",
+        targetX: 100,
+        targetY: 100,
+        targetPosition: "bottom",
+      }),
+    ).toBe("M 100 200 L 100 100")
   }),
 )

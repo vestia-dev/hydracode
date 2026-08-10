@@ -10,7 +10,7 @@ export class DesktopServiceError extends Schema.TaggedErrorClass<DesktopServiceE
 ) {}
 
 interface DesktopServiceShape {
-  readonly selectWorkspace: Effect.Effect<string | null, DesktopServiceError>
+  readonly selectProject: Effect.Effect<string | null, DesktopServiceError>
 }
 
 export class DesktopService extends Context.Service<DesktopService, DesktopServiceShape>()(
@@ -20,16 +20,16 @@ export class DesktopService extends Context.Service<DesktopService, DesktopServi
 export const DesktopServiceLive = Layer.succeed(
   DesktopService,
   DesktopService.of({
-    selectWorkspace: Effect.tryPromise({
+    selectProject: Effect.tryPromise({
       try: () =>
         dialog.showOpenDialog({
-          title: "Open a workspace",
-          buttonLabel: "Open workspace",
+          title: "Open a project",
+          buttonLabel: "Open project",
           properties: ["openDirectory", "createDirectory"],
         }),
       catch: (cause) =>
         new DesktopServiceError({
-          message: "HydraCode could not open the workspace picker.",
+          message: "HydraCode could not open the project picker.",
           cause,
         }),
     }).pipe(Effect.map((result) => (result.canceled ? null : (result.filePaths[0] ?? null)))),

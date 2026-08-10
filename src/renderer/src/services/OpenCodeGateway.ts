@@ -1,7 +1,9 @@
 import type { Session } from "@opencode-ai/client/effect"
 import { Schema } from "effect"
 import type { SemanticGraph } from "../domain/graph"
-import type { WorkspaceSessionExecution } from "../../../shared/workspace"
+import type { OptimisticPrompt } from "../projectors/optimisticPrompts"
+import type { ProjectSessionExecution } from "../../../shared/project"
+import type { AbsolutePath, Location, Project } from "@opencode-ai/client/effect"
 
 export interface SessionView {
   readonly id: Session.ID
@@ -10,13 +12,30 @@ export interface SessionView {
   readonly title: string
   readonly active: boolean
   readonly synchronized: boolean
-  readonly execution: WorkspaceSessionExecution
+  readonly execution: ProjectSessionExecution
+  readonly provisional: boolean
+  readonly authoritativeGraph: SemanticGraph
+  readonly optimisticPrompts: ReadonlyArray<OptimisticPrompt>
   readonly graph: SemanticGraph
 }
 
-export interface WorkspaceSnapshot {
-  readonly directory: string
+export interface SessionSummary {
+  readonly id: Session.ID
+  readonly created: number
+  readonly title: string
+  readonly active: boolean
+}
+
+export interface ProjectSnapshot {
+  readonly project: {
+    readonly id: Project.ID
+    readonly canonical: AbsolutePath
+    readonly name?: string | undefined
+    readonly icon?: Project.Icon | undefined
+  }
+  readonly location: Location.Ref
   readonly sessions: ReadonlyArray<SessionView>
+  readonly recentSessions: ReadonlyArray<SessionSummary>
 }
 
 export class OpenCodeGatewayError extends Schema.TaggedErrorClass<OpenCodeGatewayError>()(

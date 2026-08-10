@@ -3,10 +3,13 @@ import { DateTime } from "effect"
 import type {
   GraphAgent,
   GraphArtifact,
-  GraphMessageToolGroup,
   GraphNarrativeItem,
   GraphNodeStatus,
   GraphProvenance,
+  GraphRound,
+  GraphRoundArtifacts,
+  GraphRoundHistoryItem,
+  GraphRoundTools,
   GraphTime,
   GraphToolCall,
   GraphToolDirection,
@@ -26,12 +29,14 @@ const READ_TOOLS = new Set([
   "lsp",
   "read",
   "readmcpresource",
+  "skill",
   "webfetch",
   "websearch",
 ])
 const SHELL_TOOLS = new Set(["bash", "shell"])
 const READ_ONLY_SHELL_COMMAND =
-  /^(?:pwd\b|ls\b|find\b|rg\b|grep\b|cat\b|head\b|tail\b|wc\b|which\b|type\b|stat\b|file\b|jq\b|awk\b|sort\b|uniq\b|sed\b|git\s+(?:status|diff|log|show)\b)/u
+  /^(?:pwd\b|ls\b|find\b|rg\b|grep\b|cat\b|head\b|tail\b|wc\b|which\b|type\b|stat\b|file\b|jq\b|awk\b|sort\b|uniq\b|sed\b|git\s+(?:status|diff|log|show)\b|npm\s+(?:view|info|show)\b)/u
+const HELP_ONLY_SHELL_COMMAND = /^(?!.*(?:`|\$\(|[<>]))\S+(?:\s+\S+)*\s+--help\s*$/u
 const MUTATING_SHELL_COMMAND =
   /(?:^|\s)(?:rm|mv|cp|mkdir|touch|chmod|chown|truncate|install)\b|(?:^|\s)(?:npm|pnpm|yarn|bun)\s+(?:add|install|remove|update|upgrade)\b|(?:^|\s)git\s+(?:add|commit|checkout|switch|reset|restore|clean|merge|rebase|push|pull)\b|(?:^|\s)sed\s+-[^\s]*i\b|(?:^|[^<])>{1,2}(?:[^>]|$)/u
 
@@ -137,12 +142,18 @@ function shellCommand(input: string | Readonly<Record<string, unknown>>) {
 }
 
 function isClearlyReadOnlyShell(command: string) {
-  if (MUTATING_SHELL_COMMAND.test(command)) return false
   const segments = command
     .split(/&&|\|\||[;|\n]/u)
     .map((segment) => segment.trim())
     .filter((segment) => segment !== "")
-  return segments.length > 0 && segments.every((segment) => READ_ONLY_SHELL_COMMAND.test(segment))
+  return (
+    segments.length > 0 &&
+    segments.every(
+      (segment) =>
+        HELP_ONLY_SHELL_COMMAND.test(segment) ||
+        (!MUTATING_SHELL_COMMAND.test(segment) && READ_ONLY_SHELL_COMMAND.test(segment)),
+    )
+  )
 }
 
 export function classifyToolCall(
@@ -242,29 +253,6 @@ function groupTime(calls: ReadonlyArray<GraphToolCall>): GraphTime {
   }
 }
 
-function messageToolGroup(
-  message: SessionMessage.Assistant,
-  messageIndex: number,
-  direction: GraphToolDirection,
-  calls: ReadonlyArray<GraphToolCall>,
-): GraphMessageToolGroup {
-  return {
-    id: `tool-group:${message.id}:${direction}`,
-    messageID: message.id,
-    messageIndex,
-    direction,
-    calls,
-    status: aggregateStatus(calls.map((call) => call.status)),
-    provenance: provenance(
-      message.id,
-      calls.flatMap((call) => call.provenance.contentIndexes),
-      calls.flatMap((call) => call.provenance.toolCallIDs),
-      "derived",
-    ),
-    time: groupTime(calls),
-  }
-}
-
 function agentTime(messages: ReadonlyArray<SessionMessage.Assistant>): GraphTime {
   const created = Math.min(...messages.map((message) => timeValue(message.time.created)))
   const completions = messages.flatMap((message) =>
@@ -285,96 +273,182 @@ function summarizeAgent(messageCount: number, narrativeCount: number, errorCount
   return parts.join(" · ")
 }
 
-function assistantSegment(messages: ReadonlyArray<SessionMessage.Assistant>) {
+function roundNode(
+  input: SessionMessage.User | undefined,
+  messages: ReadonlyArray<SessionMessage.Assistant>,
+) {
   const first = messages[0]
-  if (first === undefined) throw new Error("An assistant segment cannot be empty")
+  if (input === undefined && first === undefined) throw new Error("A round cannot be empty")
 
-  const runID = `agent:${first.id}`
+  const runID = `round:${input?.id ?? first?.id}`
   const narratives: Array<GraphNarrativeItem> = []
-  const callsByMessage = new Map<string, Record<GraphToolDirection, Array<GraphToolCall>>>()
+  const history: Array<GraphRoundHistoryItem> =
+    input === undefined
+      ? []
+      : [
+          {
+            id: input.id,
+            kind: "user",
+            title: "Prompt",
+            detail: input.text,
+            status: "completed",
+            provenance: provenance(input.id),
+            time: messageTime(input),
+          },
+        ]
+  const calls: Array<GraphToolCall> = []
   const allStatuses: Array<GraphNodeStatus> = []
 
   messages.forEach((message) => {
-    const calls: Record<GraphToolDirection, Array<GraphToolCall>> = {
-      read: [],
-      write: [],
-      subagent: [],
-    }
     message.content.forEach((content, contentIndex) => {
       if (content.type === "tool") {
         const call = toolCall(message, content, contentIndex)
-        calls[classifyToolCall(content.name, toolInputValue(content))].push(call)
+        calls.push(call)
         allStatuses.push(call.status)
+        history.push({
+          id: call.id,
+          kind: "tool",
+          title: call.name,
+          detail: call.result === undefined ? call.detail : `${call.detail}\n\n${call.result}`,
+          status: call.status,
+          provenance: call.provenance,
+          time: call.time,
+        })
         return
       }
       const narrative = narrativeItem(message, content, contentIndex)
       narratives.push(narrative)
       allStatuses.push(narrative.status)
+      history.push({ ...narrative, kind: narrative.kind })
     })
-    callsByMessage.set(message.id, calls)
     if (message.content.length === 0) {
       allStatuses.push(message.time.completed === undefined ? "running" : "completed")
     }
-    if (message.error !== undefined) allStatuses.push("error")
+    if (message.error !== undefined) {
+      allStatuses.push("error")
+      history.push({
+        id: `${message.id}:error`,
+        kind: "error",
+        title: "Error",
+        detail: compactText(message.error.message),
+        status: "error",
+        provenance: provenance(message.id),
+      })
+    }
   })
 
   const messageIDs = messages.map((message) => message.id)
   const errors = messages.flatMap((message) =>
     message.error === undefined ? [] : [compactText(message.error.message)],
   )
-  const agent: GraphAgent = {
-    messageIDs,
-    agents: unique(messages.map((message) => message.agent)),
-    models: unique(messages.map((message) => `${message.model.providerID}/${message.model.id}`)),
-    narratives,
-    errors,
-    provenance: provenance(messageIDs, [], [], "derived"),
-    time: agentTime(messages),
+  const agent: GraphAgent | undefined =
+    messages.length === 0
+      ? undefined
+      : {
+          messageIDs,
+          agents: unique(messages.map((message) => message.agent)),
+          models: unique(
+            messages.map((message) => `${message.model.providerID}/${message.model.id}`),
+          ),
+          narratives,
+          errors,
+          provenance: provenance(messageIDs, [], [], "derived"),
+          time: agentTime(messages),
+        }
+  const round: GraphRound = {
+    ...(input === undefined
+      ? {}
+      : {
+          input: {
+            messageID: input.id,
+            text: input.text,
+            provenance: provenance(input.id),
+            time: messageTime(input),
+          },
+        }),
+    ...(agent === undefined ? {} : { agent }),
+    history,
   }
+  const roundProvenance = provenance(
+    [...(input === undefined ? [] : [input.id]), ...messageIDs],
+    [],
+    [],
+    "derived",
+  )
+  const roundTime = agent?.time ?? (input === undefined ? undefined : messageTime(input))
   const agentNode: SemanticGraphNode = {
     id: runID,
-    kind: "agent",
-    title: "Agent",
-    detail: summarizeAgent(messages.length, narratives.length, errors.length),
-    status: aggregateStatus(allStatuses),
+    kind: "round",
+    title: "Round",
+    detail:
+      agent === undefined
+        ? "Waiting for the agent"
+        : summarizeAgent(messages.length, narratives.length, errors.length),
+    status: agent === undefined ? "idle" : aggregateStatus(allStatuses),
     artifacts: [],
-    provenance: agent.provenance,
-    time: agent.time,
+    provenance: roundProvenance,
+    ...(roundTime === undefined ? {} : { time: roundTime }),
     agentRunID: runID,
-    agent,
+    ...(agent === undefined ? {} : { agent }),
+    round,
   }
 
-  const branchNodes: Record<GraphToolDirection, Array<SemanticGraphNode>> = {
-    read: [],
-    write: [],
-    subagent: [],
-  }
-  messages.forEach((message, messageIndex) => {
-    const messageCalls = callsByMessage.get(message.id)
-    if (messageCalls === undefined) return
-    for (const direction of ["read", "write", "subagent"] as const) {
-      const calls = messageCalls[direction]
-      if (calls.length === 0) continue
-      const group = messageToolGroup(message, messageIndex, direction, calls)
-      const destination = branchNodes[direction]
-      destination.push({
-        id: group.id,
-        kind: "tool-group",
-        title:
-          direction === "read" ? "Reads" : direction === "write" ? "Writes & actions" : "Subagent",
-        detail: calls.map((call) => call.name).join(" · "),
-        status: group.status,
-        artifacts: uniqueArtifacts(calls),
-        provenance: group.provenance,
-        time: group.time,
-        agentRunID: runID,
-        branchIndex: destination.length,
-        toolGroup: group,
-      })
+  const sideNodes: Array<SemanticGraphNode> = []
+  if (calls.length > 0) {
+    const tools: GraphRoundTools = {
+      id: `${runID}:tools`,
+      calls,
+      provenance: provenance(
+        unique(calls.flatMap((call) => call.provenance.messageIDs)),
+        unique(calls.flatMap((call) => call.provenance.contentIndexes)),
+        calls.flatMap((call) => call.provenance.toolCallIDs),
+        "derived",
+      ),
+      time: groupTime(calls),
     }
-  })
+    sideNodes.push({
+      id: tools.id,
+      kind: "round-tools",
+      title: "Tools",
+      detail: `${calls.length} tool calls`,
+      status: aggregateStatus(calls.map((call) => call.status)),
+      artifacts: [],
+      provenance: tools.provenance,
+      time: tools.time,
+      agentRunID: runID,
+      roundTools: tools,
+    })
+  }
 
-  return [agentNode, ...branchNodes.read, ...branchNodes.write, ...branchNodes.subagent]
+  const diffFiles = calls.flatMap((call) => call.diff?.files ?? [])
+  if (diffFiles.length > 0) {
+    const artifactCalls = calls.filter((call) => call.diff !== undefined)
+    const artifacts: GraphRoundArtifacts = {
+      id: `${runID}:artifacts`,
+      diff: { files: diffFiles },
+      provenance: provenance(
+        unique(artifactCalls.flatMap((call) => call.provenance.messageIDs)),
+        unique(artifactCalls.flatMap((call) => call.provenance.contentIndexes)),
+        artifactCalls.flatMap((call) => call.provenance.toolCallIDs),
+        "derived",
+      ),
+      time: groupTime(artifactCalls),
+    }
+    sideNodes.push({
+      id: artifacts.id,
+      kind: "round-artifacts",
+      title: "Changes",
+      detail: `${diffFiles.length} changed ${diffFiles.length === 1 ? "file" : "files"}`,
+      status: aggregateStatus(artifactCalls.map((call) => call.status)),
+      artifacts: uniqueArtifacts(artifactCalls),
+      provenance: artifacts.provenance,
+      time: artifacts.time,
+      agentRunID: runID,
+      roundArtifacts: artifacts,
+    })
+  }
+
+  return [agentNode, ...sideNodes]
 }
 
 function messageNode(
@@ -391,7 +465,7 @@ function messageNode(
       return {
         ...common,
         kind: "input",
-        title: "You",
+        title: "Prompt",
         detail: message.text,
         status: "completed",
       }
@@ -470,23 +544,20 @@ function messageNode(
 
 function branchEdges(nodes: ReadonlyArray<SemanticGraphNode>): ReadonlyArray<SemanticGraphEdge> {
   const edges: Array<SemanticGraphEdge> = []
-  const agentNodes = nodes.filter((node) => node.kind === "agent")
+  const agentNodes = nodes.filter((node) => node.kind === "round")
   for (const agentNode of agentNodes) {
-    for (const direction of ["read", "write", "subagent"] as const) {
-      const branchNodes = nodes
-        .filter(
-          (node) =>
-            node.toolGroup?.direction === direction && node.agentRunID === agentNode.agentRunID,
-        )
-        .toSorted((left, right) => (left.branchIndex ?? 0) - (right.branchIndex ?? 0))
-      for (const target of branchNodes) {
-        edges.push({
-          id: `${agentNode.id}->${target.id}`,
-          source: agentNode.id,
-          target: target.id,
-          kind: direction,
-        })
-      }
+    const sideNodes = nodes.filter(
+      (node) =>
+        (node.kind === "round-tools" || node.kind === "round-artifacts") &&
+        node.agentRunID === agentNode.agentRunID,
+    )
+    for (const sideNode of sideNodes) {
+      edges.push({
+        id: `${agentNode.id}->${sideNode.id}`,
+        source: agentNode.id,
+        target: sideNode.id,
+        kind: sideNode.kind === "round-tools" ? "tools" : "artifacts",
+      })
     }
   }
   return edges
@@ -498,6 +569,22 @@ export function projectMessages(messages: ReadonlyArray<SessionMessage.Info>): S
   for (let index = 0; index < messages.length;) {
     const message = messages[index]
     if (message === undefined) break
+    if (message.type === "user") {
+      const assistantMessages: Array<SessionMessage.Assistant> = []
+      index += 1
+      while (index < messages.length) {
+        const candidate = messages[index]
+        if (candidate?.type === "assistant") assistantMessages.push(candidate)
+        else if (candidate?.type !== "system") break
+        index += 1
+      }
+      nodes.push(...roundNode(message, assistantMessages))
+      continue
+    }
+    if (message.type === "system") {
+      index += 1
+      continue
+    }
     if (message.type !== "assistant") {
       nodes.push(messageNode(message))
       index += 1
@@ -507,14 +594,16 @@ export function projectMessages(messages: ReadonlyArray<SessionMessage.Info>): S
     const assistantMessages: Array<SessionMessage.Assistant> = []
     while (index < messages.length) {
       const candidate = messages[index]
-      if (candidate?.type !== "assistant") break
-      assistantMessages.push(candidate)
+      if (candidate?.type === "assistant") assistantMessages.push(candidate)
+      else if (candidate?.type !== "system") break
       index += 1
     }
-    nodes.push(...assistantSegment(assistantMessages))
+    nodes.push(...roundNode(undefined, assistantMessages))
   }
 
-  const timelineNodes = nodes.filter((node) => node.kind !== "tool-group")
+  const timelineNodes = nodes.filter(
+    (node) => node.kind !== "round-tools" && node.kind !== "round-artifacts",
+  )
   const timelineEdges: Array<SemanticGraphEdge> = timelineNodes.slice(1).map((target, index) => {
     const source = timelineNodes[index]
     if (source === undefined) throw new Error("A graph edge must have a source node")

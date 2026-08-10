@@ -1,7 +1,8 @@
 export type GraphNodeKind =
   | "input"
-  | "agent"
-  | "tool-group"
+  | "round"
+  | "round-tools"
+  | "round-artifacts"
   | "tool"
   | "system"
   | "shell"
@@ -77,15 +78,41 @@ export interface GraphAgent {
   readonly time: GraphTime
 }
 
+export interface GraphRoundInput {
+  readonly messageID: string
+  readonly text: string
+  readonly provenance: GraphProvenance
+  readonly time: GraphTime
+}
+
+export interface GraphRoundHistoryItem {
+  readonly id: string
+  readonly kind: "user" | "commentary" | "reasoning" | "response" | "tool" | "error"
+  readonly title: string
+  readonly detail: string
+  readonly status: GraphNodeStatus
+  readonly provenance: GraphProvenance
+  readonly time?: GraphTime
+}
+
+export interface GraphRound {
+  readonly input?: GraphRoundInput
+  readonly agent?: GraphAgent
+  readonly history: ReadonlyArray<GraphRoundHistoryItem>
+}
+
 export type GraphToolDirection = "read" | "write" | "subagent"
 
-export interface GraphMessageToolGroup {
+export interface GraphRoundTools {
   readonly id: string
-  readonly messageID: string
-  readonly messageIndex: number
-  readonly direction: GraphToolDirection
   readonly calls: ReadonlyArray<GraphToolCall>
-  readonly status: GraphNodeStatus
+  readonly provenance: GraphProvenance
+  readonly time: GraphTime
+}
+
+export interface GraphRoundArtifacts {
+  readonly id: string
+  readonly diff: GraphToolDiff
   readonly provenance: GraphProvenance
   readonly time: GraphTime
 }
@@ -100,16 +127,17 @@ export interface SemanticGraphNode {
   readonly provenance: GraphProvenance
   readonly time?: GraphTime
   readonly agentRunID?: string
-  readonly branchIndex?: number
   readonly agent?: GraphAgent
-  readonly toolGroup?: GraphMessageToolGroup
+  readonly round?: GraphRound
+  readonly roundTools?: GraphRoundTools
+  readonly roundArtifacts?: GraphRoundArtifacts
 }
 
 export interface SemanticGraphEdge {
   readonly id: string
   readonly source: string
   readonly target: string
-  readonly kind: "timeline" | "read" | "write" | "subagent"
+  readonly kind: "timeline" | "read" | "write" | "subagent" | "tools" | "artifacts"
 }
 
 export interface SemanticGraph {

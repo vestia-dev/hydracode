@@ -14,11 +14,20 @@ export function SessionSpokeEdge({
   markerStart,
   sourceX,
   sourceY,
+  sourcePosition,
   style,
   targetX,
   targetY,
+  targetPosition,
 }: EdgeProps<SessionSpokeFlowEdge>) {
-  const path = spokePath({ sourceX, sourceY, targetX, targetY })
+  const path = spokePath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+  })
   return (
     <g
       className={data?.toggleBranch === undefined ? undefined : "branch-edge-toggle"}

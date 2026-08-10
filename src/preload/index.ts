@@ -2,27 +2,43 @@ import { contextBridge, ipcRenderer } from "electron"
 import { DesktopChannels } from "../shared/desktopChannels"
 import type { HydraCodeDesktopApi } from "../shared/ipc"
 
-const workspaceListeners = new Set<(update: unknown) => void>()
-const pendingWorkspaceUpdates: Array<unknown> = []
+const projectListeners = new Set<(update: unknown) => void>()
+const pendingProjectUpdates: Array<unknown> = []
+const updateListeners = new Set<(state: unknown) => void>()
+let updateSubscription: Promise<unknown> | undefined
 
-ipcRenderer.on(DesktopChannels.workspaceUpdate, (_event, update: unknown) => {
-  pendingWorkspaceUpdates.push(update)
-  if (pendingWorkspaceUpdates.length > 512) pendingWorkspaceUpdates.shift()
-  for (const listener of workspaceListeners) listener(update)
+ipcRenderer.on(DesktopChannels.updateState, (_event, state: unknown) => {
+  for (const listener of updateListeners) listener(state)
+})
+
+ipcRenderer.on(DesktopChannels.projectUpdate, (_event, update: unknown) => {
+  pendingProjectUpdates.push(update)
+  if (pendingProjectUpdates.length > 512) pendingProjectUpdates.shift()
+  for (const listener of projectListeners) listener(update)
 })
 
 const desktopApi: HydraCodeDesktopApi = {
   platform: process.platform,
   loadTheme: () => ipcRenderer.invoke(DesktopChannels.loadTheme),
-  selectWorkspace: () => ipcRenderer.invoke(DesktopChannels.selectWorkspace),
-  openWorkspace: (command) => ipcRenderer.invoke(DesktopChannels.openWorkspace, command),
-  closeWorkspace: (command) => ipcRenderer.invoke(DesktopChannels.closeWorkspace, command),
+  selectProject: () => ipcRenderer.invoke(DesktopChannels.selectProject),
+  listProjects: () => ipcRenderer.invoke(DesktopChannels.listProjects),
+  openProject: (command) => ipcRenderer.invoke(DesktopChannels.openProject, command),
+  closeProject: (command) => ipcRenderer.invoke(DesktopChannels.closeProject, command),
+  selectSession: (command) => ipcRenderer.invoke(DesktopChannels.selectSession, command),
+  createSession: (command) => ipcRenderer.invoke(DesktopChannels.createSession, command),
   submitPrompt: (command) => ipcRenderer.invoke(DesktopChannels.submitPrompt, command),
   interrupt: (command) => ipcRenderer.invoke(DesktopChannels.interrupt, command),
-  onWorkspaceUpdate: (listener) => {
-    workspaceListeners.add(listener)
-    for (const update of pendingWorkspaceUpdates) listener(update)
-    return () => workspaceListeners.delete(listener)
+  checkForUpdates: () => ipcRenderer.invoke(DesktopChannels.updateCheck),
+  installUpdate: () => ipcRenderer.invoke(DesktopChannels.updateInstall),
+  onUpdateState: (listener) => {
+    updateListeners.add(listener)
+    updateSubscription ??= ipcRenderer.invoke(DesktopChannels.updateSubscribe)
+    return () => updateListeners.delete(listener)
+  },
+  onProjectUpdate: (listener) => {
+    projectListeners.add(listener)
+    for (const update of pendingProjectUpdates) listener(update)
+    return () => projectListeners.delete(listener)
   },
 }
 

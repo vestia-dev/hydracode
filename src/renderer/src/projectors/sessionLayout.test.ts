@@ -1,10 +1,14 @@
 import { expect, it } from "@effect/vitest"
 import { Effect } from "effect"
 import {
-  readBranchPositions,
+  collapsedSubagentPosition,
+  horizontalRoundSideNodePosition,
+  roundSideNodePosition,
+  roundTimelineDistance,
+  splitRoundToolsX,
+  splitRoundToolsWidth,
   subagentTimelinePosition,
   timelinePositions,
-  writeBranchPositions,
 } from "./sessionLayout"
 
 const distance = { horizontal: 32, vertical: 24 }
@@ -19,37 +23,98 @@ it.effect("uses horizontal distance as the edge-to-edge timeline gap", () =>
   }),
 )
 
-it.effect("uses horizontal and vertical distances for branches", () =>
+it.effect("increases round timeline spacing by fifty percent", () =>
   Effect.sync(() => {
-    const anchor = { x: 100, y: 480 }
-    const sizes = [
-      { width: 100, height: 60 },
-      { width: 120, height: 80 },
-    ]
-
-    expect(readBranchPositions(anchor, 300, sizes, distance)).toEqual([
-      { x: 124, y: 376 },
-      { x: 256, y: 376 },
-    ])
-    expect(writeBranchPositions(anchor, 300, 96, sizes, distance)).toEqual([
-      { x: 124, y: 600 },
-      { x: 256, y: 600 },
-    ])
+    expect(roundTimelineDistance(distance)).toEqual({ horizontal: 48, vertical: 24 })
   }),
 )
 
-it.effect("places subagent timelines in compact lanes above their originating agent", () =>
+it.effect("aligns round side nodes directly above and below the round", () =>
   Effect.sync(() => {
-    expect(subagentTimelinePosition({ x: 300, y: 480 }, 420, 220, 200, [], distance)).toEqual({
-      x: 400,
-      y: 232,
+    const roundPosition = { x: 300, y: 480 }
+    const roundSize = { width: 420, height: 120 }
+
+    expect(roundSideNodePosition(roundPosition, roundSize, 240, 24, "top")).toEqual({
+      x: 300,
+      y: 216,
     })
-    expect(subagentTimelinePosition({ x: 300, y: 480 }, 420, 220, 120, [200], distance)).toEqual({
-      x: 400,
-      y: 64,
+    expect(roundSideNodePosition(roundPosition, roundSize, 360, 24, "bottom")).toEqual({
+      x: 300,
+      y: 624,
     })
+  }),
+)
+
+it.effect("places subagent tools left and outputs right of their round", () =>
+  Effect.sync(() => {
+    const roundPosition = { x: 300, y: 480 }
+    const roundSize = { width: 420, height: 120 }
+
     expect(
-      subagentTimelinePosition({ x: 300, y: 480 }, 420, 220, 160, [200, 120], distance),
-    ).toEqual({ x: 400, y: -144 })
+      horizontalRoundSideNodePosition(
+        roundPosition,
+        roundSize,
+        { width: 240, height: 180 },
+        32,
+        "left",
+      ),
+    ).toEqual({ x: 28, y: 480 })
+    expect(
+      horizontalRoundSideNodePosition(
+        roundPosition,
+        roundSize,
+        { width: 420, height: 300 },
+        32,
+        "right",
+      ),
+    ).toEqual({ x: 752, y: 480 })
+  }),
+)
+
+it.effect("uses the left half of a round for tools when a subagent occupies the right lane", () =>
+  Effect.sync(() => {
+    const toolsWidth = splitRoundToolsWidth(420, 32)
+    expect(toolsWidth).toBe(194)
+    expect(splitRoundToolsX({ x: 300, y: 480 }, 420, toolsWidth)).toBe(308)
+  }),
+)
+
+it.effect("places a content-sized collapsed subagent beside tools", () =>
+  Effect.sync(() => {
+    const toolsWidth = splitRoundToolsWidth(420, 32)
+    expect(
+      collapsedSubagentPosition(
+        { x: 300, y: 480 },
+        420,
+        { x: 308, y: 240 },
+        { width: toolsWidth, height: 96 },
+        { width: toolsWidth, height: 66 },
+      ),
+    ).toEqual({ x: 518, y: 270 })
+  }),
+)
+
+it.effect("places subagent timelines in a right-hand lane above their originating round", () =>
+  Effect.sync(() => {
+    expect(
+      subagentTimelinePosition(
+        { x: 300, y: 480 },
+        { width: 420, height: 120 },
+        { x: 300, y: 240 },
+        { width: 220, height: 200 },
+        [],
+        distance,
+      ),
+    ).toEqual({ x: 505, y: 16 })
+    expect(
+      subagentTimelinePosition(
+        { x: 300, y: 480 },
+        { width: 420, height: 120 },
+        { x: 300, y: 240 },
+        { width: 220, height: 120 },
+        [200],
+        distance,
+      ),
+    ).toEqual({ x: 505, y: -128 })
   }),
 )

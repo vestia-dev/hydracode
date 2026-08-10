@@ -26,13 +26,14 @@ it.effect("connects the composer after the last timeline node and ignores tool b
   Effect.sync(() => {
     const projection = projectPromptComposer("session-1", [
       node("you-1", "input"),
-      node("agent-1", "agent"),
-      node("read-group", "tool-group"),
+      node("round-1", "round"),
+      node("round-tools", "round-tools"),
+      node("round-artifacts", "round-artifacts"),
     ])
 
     expect(projection).toEqual({
-      id: "prompt-composer:session-1:agent-1",
-      precedingNodeID: "agent-1",
+      id: "prompt-composer:session-1:round-1",
+      precedingNodeID: "round-1",
     })
   }),
 )

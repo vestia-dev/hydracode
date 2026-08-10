@@ -136,11 +136,13 @@ function PatchFile({ file, open, toggle }: PatchFileProps) {
 interface ToolPatchDiffProps {
   readonly diff: GraphToolDiff
   readonly open: boolean
+  readonly expandAll?: boolean
 }
 
-export function ToolPatchDiff({ diff, open }: ToolPatchDiffProps) {
+export function ToolPatchDiff({ diff, open, expandAll = false }: ToolPatchDiffProps) {
   const [hasOpened, setHasOpened] = useState(open)
   const [openFiles, setOpenFiles] = useState<ReadonlySet<string>>(() => {
+    if (expandAll) return new Set(diff.files.map((file) => file.path))
     const firstVisible = diff.files.find((file) => file.status !== "deleted") ?? diff.files[0]
     return firstVisible === undefined ? new Set() : new Set([firstVisible.path])
   })

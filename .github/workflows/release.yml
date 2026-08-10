@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  macos-arm64:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+
+      - run: bun install --frozen-lockfile
+      - run: bun run lint:check
+      - run: bun run test
+
+      - name: Verify release version
+        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+
+      - uses: apple-actions/import-codesign-certs@v5
+        with:
+          p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
+          p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+
+      - name: Prepare Apple notarization key
+        env:
+          API_KEY: ${{ secrets.APPLE_API_KEY_CONTENT }}
+        run: printf '%s' "$API_KEY" > "$RUNNER_TEMP/apple-api-key.p8"
+
+      - name: Package signed Apple Silicon release
+        run: bun run package:mac
+        env:
+          HYDRACODE_REQUIRE_CODE_SIGNING: "true"
+          APPLE_API_KEY: ${{ runner.temp }}/apple-api-key.p8
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+
+      - name: Verify signing and notarization
+        run: |
+          codesign --verify --deep --strict dist/mac-arm64/HydraCode.app
+          spctl --assess --type execute dist/mac-arm64/HydraCode.app
+          xcrun stapler validate dist/*.dmg
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" dist/*.dmg dist/*.zip dist/*.yml dist/*.blockmap

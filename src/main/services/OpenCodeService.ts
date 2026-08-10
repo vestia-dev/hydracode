@@ -3,8 +3,10 @@ import { OpenCode, type OpenCodeClient } from "@opencode-ai/client/effect"
 import { Context, Effect, FileSystem, Layer, Schema } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { FetchHttpClient } from "effect/unstable/http"
+import { app } from "electron"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { OPEN_CODE_RUNTIME_VERSION, openCodeExecutable } from "./openCodeRuntime"
 
 export interface OpenCodeConnection {
   readonly url: string
@@ -33,16 +35,34 @@ export const OpenCodeServiceLive = Layer.effect(
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem
     const defaultServiceFile = join(homedir(), ".local", "state", "opencode", "service.json")
+    const executable = openCodeExecutable({
+      platform: process.platform,
+      arch: process.arch,
+      isPackaged: app?.isPackaged ?? false,
+      resourcesPath: process.resourcesPath ?? "",
+      projectPath: process.cwd(),
+    })
 
     const connection = Effect.gen(function* () {
-      const inherited = yield* LocalOpenCodeService.discover()
+      const inherited = yield* LocalOpenCodeService.discover({ version: OPEN_CODE_RUNTIME_VERSION })
       if (inherited !== undefined) return inherited
 
-      const userLevel = yield* LocalOpenCodeService.discover({ file: defaultServiceFile })
+      const userLevel = yield* LocalOpenCodeService.discover({
+        file: defaultServiceFile,
+        version: OPEN_CODE_RUNTIME_VERSION,
+      })
       if (userLevel !== undefined) return userLevel
 
+      if (executable === undefined) {
+        return yield* new OpenCodeServiceError({
+          message: `HydraCode does not include an OpenCode runtime for ${process.platform}/${process.arch}.`,
+          cause: { platform: process.platform, arch: process.arch },
+        })
+      }
+
       const endpoint = yield* LocalOpenCodeService.ensure({
-        command: ["opencode2", "serve", "--service"],
+        command: [executable, "serve", "--service"],
+        version: OPEN_CODE_RUNTIME_VERSION,
       })
       return endpoint
     }).pipe(

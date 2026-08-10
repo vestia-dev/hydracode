@@ -15,6 +15,10 @@ export interface NodeDistance {
   readonly vertical: number
 }
 
+export function roundTimelineDistance(distance: NodeDistance): NodeDistance {
+  return { ...distance, horizontal: Math.round(distance.horizontal * 1.5) }
+}
+
 export function timelinePositions(
   widths: ReadonlyArray<number>,
   distance: NodeDistance,
@@ -28,67 +32,77 @@ export function timelinePositions(
   })
 }
 
-export function spokeOffset(index: number, count: number) {
-  return `${((index + 1) / (count + 1)) * 100}%`
+export function roundSideNodePosition(
+  roundPosition: GraphPosition,
+  roundSize: GraphSize,
+  nodeHeight: number,
+  verticalGap: number,
+  side: "top" | "bottom",
+): GraphPosition {
+  return {
+    x: roundPosition.x,
+    y:
+      side === "top"
+        ? roundPosition.y - nodeHeight - verticalGap
+        : roundPosition.y + roundSize.height + verticalGap,
+  }
 }
 
-function branchWidth(sizes: ReadonlyArray<GraphSize>, horizontalDistance: number) {
-  return sizes.reduce(
-    (width, size, index) => width + size.width + (index === 0 ? 0 : horizontalDistance),
-    0,
-  )
+export function horizontalRoundSideNodePosition(
+  roundPosition: GraphPosition,
+  roundSize: GraphSize,
+  nodeSize: GraphSize,
+  horizontalGap: number,
+  side: "left" | "right",
+): GraphPosition {
+  return {
+    x:
+      side === "left"
+        ? roundPosition.x - nodeSize.width - horizontalGap
+        : roundPosition.x + roundSize.width + horizontalGap,
+    y: roundPosition.y,
+  }
 }
 
-function branchXPositions(
-  anchor: GraphPosition,
-  agentWidth: number,
-  sizes: ReadonlyArray<GraphSize>,
-  horizontalDistance: number,
+export function splitRoundToolsWidth(roundWidth: number, horizontalGap: number) {
+  return (roundWidth - horizontalGap) / 2
+}
+
+export function splitRoundToolsX(
+  roundPosition: GraphPosition,
+  roundWidth: number,
+  toolsWidth: number,
 ) {
-  let x = anchor.x + agentWidth / 2 - branchWidth(sizes, horizontalDistance) / 2
-  return sizes.map((size) => {
-    const current = x
-    x += size.width + horizontalDistance
-    return current
-  })
+  return roundPosition.x + roundWidth * 0.25 - toolsWidth / 2
 }
 
-export function readBranchPositions(
-  anchor: GraphPosition,
-  agentWidth: number,
-  sizes: ReadonlyArray<GraphSize>,
-  distance: NodeDistance,
-): ReadonlyArray<GraphPosition> {
-  const y = anchor.y - Math.max(0, ...sizes.map((size) => size.height)) - distance.vertical
-  return branchXPositions(anchor, agentWidth, sizes, distance.horizontal).map((x) => ({ x, y }))
-}
-
-export function writeBranchPositions(
-  anchor: GraphPosition,
-  agentWidth: number,
-  agentHeight: number,
-  sizes: ReadonlyArray<GraphSize>,
-  distance: NodeDistance,
-): ReadonlyArray<GraphPosition> {
-  const y = anchor.y + agentHeight + distance.vertical
-  return branchXPositions(anchor, agentWidth, sizes, distance.horizontal).map((x) => ({ x, y }))
+export function collapsedSubagentPosition(
+  roundPosition: GraphPosition,
+  roundWidth: number,
+  toolsPosition: GraphPosition,
+  toolsSize: GraphSize,
+  nodeSize: GraphSize,
+): GraphPosition {
+  return {
+    x: roundPosition.x + roundWidth * 0.75 - nodeSize.width / 2,
+    y: toolsPosition.y + toolsSize.height - nodeSize.height,
+  }
 }
 
 export function subagentTimelinePosition(
-  anchor: GraphPosition,
-  parentWidth: number,
-  childWidth: number,
-  childHeight: number,
+  roundPosition: GraphPosition,
+  roundSize: GraphSize,
+  toolsPosition: GraphPosition,
+  childSize: GraphSize,
   precedingChildHeights: ReadonlyArray<number>,
   distance: NodeDistance,
 ): GraphPosition {
-  const laneGap = Math.max(48, distance.vertical * 2)
   const precedingLaneHeight = precedingChildHeights.reduce(
-    (height, precedingChildHeight) => height + precedingChildHeight + laneGap,
+    (height, precedingChildHeight) => height + precedingChildHeight + distance.vertical,
     0,
   )
   return {
-    x: anchor.x + (parentWidth - childWidth) / 2,
-    y: anchor.y - childHeight - laneGap - precedingLaneHeight,
+    x: roundPosition.x + roundSize.width * 0.75 - childSize.width / 2,
+    y: toolsPosition.y - childSize.height - distance.vertical - precedingLaneHeight,
   }
 }

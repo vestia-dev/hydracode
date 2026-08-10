@@ -1,15 +1,20 @@
 import { Context, Effect, Layer, Option, Schema } from "effect"
 import {
-  WorkspaceUpdateEnvelope,
-  WorkspaceUpdate,
-  WorkspaceCommandResult,
-  OpenWorkspaceResult,
-  type OpenWorkspaceCommand,
+  CreateSessionResult,
+  ListProjectsResult,
+  ProjectUpdateEnvelope,
+  ProjectUpdate,
+  ProjectCommandResult,
+  OpenProjectResult,
+  type OpenProjectCommand,
+  type CreateSessionCommand,
   type SubmitPromptCommand,
-  type WorkspaceSessionCommand,
+  type ProjectSessionCommand,
+  UpdateState,
 } from "../../../shared/ipc"
-import { ThemeResult, WorkspaceSelectionResult } from "../../../shared/ipc"
+import { ThemeResult, ProjectSelectionResult } from "../../../shared/ipc"
 import type { Theme } from "../../../shared/theme"
+import type { ProjectCatalogItem } from "../../../shared/project"
 
 export class DesktopBridgeError extends Schema.TaggedErrorClass<DesktopBridgeError>()(
   "DesktopBridgeError",
@@ -18,16 +23,26 @@ export class DesktopBridgeError extends Schema.TaggedErrorClass<DesktopBridgeErr
 
 interface DesktopBridgeShape {
   readonly loadTheme: Effect.Effect<Theme, DesktopBridgeError>
-  readonly selectWorkspace: Effect.Effect<Option.Option<string>, DesktopBridgeError>
-  readonly openWorkspace: (
-    command: OpenWorkspaceCommand,
-  ) => Effect.Effect<string, DesktopBridgeError>
-  readonly closeWorkspace: (subscriptionID: string) => Effect.Effect<void, DesktopBridgeError>
+  readonly selectProject: Effect.Effect<Option.Option<string>, DesktopBridgeError>
+  readonly listProjects: Effect.Effect<ReadonlyArray<ProjectCatalogItem>, DesktopBridgeError>
+  readonly openProject: (command: OpenProjectCommand) => Effect.Effect<string, DesktopBridgeError>
+  readonly closeProject: (subscriptionID: string) => Effect.Effect<void, DesktopBridgeError>
+  readonly selectSession: (
+    command: ProjectSessionCommand,
+  ) => Effect.Effect<void, DesktopBridgeError>
+  readonly createSession: (
+    command: CreateSessionCommand,
+  ) => Effect.Effect<Exclude<CreateSessionResult, { readonly _tag: "Failure" }>, DesktopBridgeError>
   readonly submitPrompt: (command: SubmitPromptCommand) => Effect.Effect<void, DesktopBridgeError>
-  readonly interrupt: (command: WorkspaceSessionCommand) => Effect.Effect<void, DesktopBridgeError>
-  readonly watchWorkspace: (
+  readonly interrupt: (command: ProjectSessionCommand) => Effect.Effect<void, DesktopBridgeError>
+  readonly checkForUpdates: Effect.Effect<UpdateState, DesktopBridgeError>
+  readonly installUpdate: Effect.Effect<void, DesktopBridgeError>
+  readonly subscribeUpdates: (
+    onUpdate: (state: UpdateState) => void,
+  ) => Effect.Effect<() => void, DesktopBridgeError>
+  readonly watchProject: (
     subscriptionID: string,
-    onUpdate: (update: WorkspaceUpdate) => void,
+    onUpdate: (update: ProjectUpdate) => void,
   ) => Effect.Effect<never, DesktopBridgeError>
 }
 
@@ -60,7 +75,7 @@ const invoke = <S extends Schema.Top>(operation: () => Promise<unknown>, schema:
     ),
   )
 const command = (operation: () => Promise<unknown>) =>
-  invoke(operation, WorkspaceCommandResult).pipe(
+  invoke(operation, ProjectCommandResult).pipe(
     Effect.flatMap((result) =>
       result._tag === "Success"
         ? Effect.void
@@ -77,33 +92,60 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
           : Effect.fail(new DesktopBridgeError({ message: result.message, cause: result })),
       ),
     ),
-    selectWorkspace: invoke(
-      () => window.hydracode.selectWorkspace(),
-      WorkspaceSelectionResult,
-    ).pipe(
+    selectProject: invoke(() => window.hydracode.selectProject(), ProjectSelectionResult).pipe(
       Effect.flatMap((result) =>
         result._tag === "Success"
           ? Effect.succeed(Option.fromNullishOr(result.directory))
           : Effect.fail(new DesktopBridgeError({ message: result.message, cause: result })),
       ),
     ),
-    openWorkspace: (request) =>
-      invoke(() => window.hydracode.openWorkspace(request), OpenWorkspaceResult).pipe(
+    listProjects: invoke(() => window.hydracode.listProjects(), ListProjectsResult).pipe(
+      Effect.flatMap((result) =>
+        result._tag === "Success"
+          ? Effect.succeed(result.projects)
+          : Effect.fail(new DesktopBridgeError({ message: result.message, cause: result })),
+      ),
+    ),
+    openProject: (request) =>
+      invoke(() => window.hydracode.openProject(request), OpenProjectResult).pipe(
         Effect.flatMap((value) =>
           "subscriptionID" in value
             ? Effect.succeed(value.subscriptionID)
             : Effect.fail(new DesktopBridgeError({ message: value.message, cause: value })),
         ),
       ),
-    closeWorkspace: (subscriptionID) =>
-      command(() => window.hydracode.closeWorkspace({ subscriptionID })),
+    closeProject: (subscriptionID) =>
+      command(() => window.hydracode.closeProject({ subscriptionID })),
+    selectSession: (request) => command(() => window.hydracode.selectSession(request)),
+    createSession: (request) =>
+      invoke(() => window.hydracode.createSession(request), CreateSessionResult).pipe(
+        Effect.flatMap((result) =>
+          result._tag === "Failure"
+            ? Effect.fail(new DesktopBridgeError({ message: result.message, cause: result }))
+            : Effect.succeed(result),
+        ),
+      ),
     submitPrompt: (request) => command(() => window.hydracode.submitPrompt(request)),
     interrupt: (request) => command(() => window.hydracode.interrupt(request)),
-    watchWorkspace: (subscriptionID, onUpdate) =>
+    checkForUpdates: invoke(() => window.hydracode.checkForUpdates(), UpdateState),
+    installUpdate: command(() => window.hydracode.installUpdate()),
+    subscribeUpdates: (onUpdate) =>
+      Effect.try({
+        try: () =>
+          window.hydracode.onUpdateState((state) => {
+            onUpdate(Schema.decodeUnknownSync(UpdateState)(state))
+          }),
+        catch: (cause) =>
+          new DesktopBridgeError({
+            message: "HydraCode could not subscribe to application updates.",
+            cause,
+          }),
+      }),
+    watchProject: (subscriptionID, onUpdate) =>
       Effect.acquireRelease(
         Effect.sync(() =>
-          window.hydracode.onWorkspaceUpdate((envelope) => {
-            const decoded = Schema.decodeUnknownSync(WorkspaceUpdateEnvelope)(envelope)
+          window.hydracode.onProjectUpdate((envelope) => {
+            const decoded = Schema.decodeUnknownSync(ProjectUpdateEnvelope)(envelope)
             if (decoded.subscriptionID === subscriptionID) onUpdate(decoded.update)
           }),
         ),
@@ -114,7 +156,7 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
           Effect.mapError(
             (cause) =>
               new DesktopBridgeError({
-                message: "HydraCode could not subscribe to workspace updates.",
+                message: "HydraCode could not subscribe to project updates.",
                 cause,
               }),
           ),

@@ -9,7 +9,9 @@ export function projectPromptComposer(
   sessionID: string,
   nodes: ReadonlyArray<SemanticGraphNode>,
 ): PromptComposerProjection {
-  const timelineNodes = nodes.filter((node) => node.kind !== "tool-group")
+  const timelineNodes = nodes.filter(
+    (node) => node.kind !== "round-tools" && node.kind !== "round-artifacts",
+  )
   const precedingNode = timelineNodes.at(-1)
   return {
     id: `prompt-composer:${sessionID}:${precedingNode?.id ?? "empty"}`,

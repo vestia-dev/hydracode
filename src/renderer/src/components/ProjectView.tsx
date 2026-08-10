@@ -1,11 +1,11 @@
 import type { Effect } from "effect"
-import type { SessionView, WorkspaceSnapshot } from "../services/OpenCodeGateway"
+import type { ProjectSnapshot, SessionView } from "../services/OpenCodeGateway"
 import type { DesktopBridge, DesktopBridgeError } from "../services/DesktopBridge"
-import { groupSessionFamilies } from "../projectors/workspaceSessions"
+import { groupSessionFamilies } from "../projectors/projectSessions"
 import { SessionPane } from "./SessionPane"
 
-interface WorkspaceViewProps {
-  readonly snapshot: WorkspaceSnapshot
+interface ProjectViewProps {
+  readonly snapshot: ProjectSnapshot
   readonly submitPrompt: (
     sessionID: SessionView["id"],
     text: string,
@@ -13,9 +13,19 @@ interface WorkspaceViewProps {
   readonly interruptSession: (
     sessionID: SessionView["id"],
   ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
+  readonly promptRetry: {
+    readonly sessionID: SessionView["id"]
+    readonly text: string
+    readonly message: string
+  } | null
 }
 
-export function WorkspaceView({ snapshot, submitPrompt, interruptSession }: WorkspaceViewProps) {
+export function ProjectView({
+  snapshot,
+  submitPrompt,
+  interruptSession,
+  promptRetry,
+}: ProjectViewProps) {
   if (snapshot.sessions.length === 0) {
     return (
       <section className="session-pane">
@@ -24,7 +34,7 @@ export function WorkspaceView({ snapshot, submitPrompt, interruptSession }: Work
             H
           </span>
           <h1>No sessions yet</h1>
-          <p>Start an OpenCode session in this workspace and it will appear here.</p>
+          <p>Start an OpenCode session in this project and it will appear here.</p>
         </div>
       </section>
     )
@@ -44,6 +54,7 @@ export function WorkspaceView({ snapshot, submitPrompt, interruptSession }: Work
           descendants={family.descendants}
           submitPrompt={submitPrompt}
           interruptSession={interruptSession}
+          retryPrompt={promptRetry?.sessionID === family.root.id ? promptRetry : undefined}
         />
       ))}
     </div>
