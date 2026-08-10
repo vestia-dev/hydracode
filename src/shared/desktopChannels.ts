@@ -1,5 +1,6 @@
 export const DesktopChannels = {
   loadTheme: "hydracode:load-theme",
+  setBundledTheme: "hydracode:set-bundled-theme",
   selectProject: "hydracode:select-project",
   listProjects: "hydracode:list-projects",
   openProject: "hydracode:open-project",
@@ -9,6 +10,10 @@ export const DesktopChannels = {
   createSession: "hydracode:create-session",
   submitPrompt: "hydracode:submit-prompt",
   interrupt: "hydracode:interrupt",
+  paneSplit: "hydracode:pane-split",
+  paneClose: "hydracode:pane-close",
+  promptFocus: "hydracode:prompt-focus",
+  followLatest: "hydracode:follow-latest",
   updateSubscribe: "hydracode:update-subscribe",
   updateState: "hydracode:update-state",
   updateCheck: "hydracode:update-check",

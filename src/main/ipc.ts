@@ -1,6 +1,7 @@
 import { Effect, Schema } from "effect"
 import { ipcMain } from "electron"
 import { DesktopChannels } from "../shared/desktopChannels"
+import { SetBundledThemeCommand } from "../shared/theme"
 import {
   ThemeResult,
   UpdateState,
@@ -55,6 +56,22 @@ export function registerDesktopIpc() {
         ),
       ),
     ).catch((cause) => ({ _tag: "Failure", message: failureMessage(cause) })),
+  )
+  ipcMain.handle(
+    DesktopChannels.setBundledTheme,
+    (_event, input: unknown): Promise<ThemeResult> => {
+      const command = Schema.decodeUnknownSync(SetBundledThemeCommand)(input)
+      return MainRuntime.runPromise(
+        ThemeService.use((themes) =>
+          themes.selectBundled(command.theme).pipe(
+            Effect.match({
+              onFailure: (error) => ({ _tag: "Failure" as const, message: error.message }),
+              onSuccess: (theme) => ({ _tag: "Success" as const, theme }),
+            }),
+          ),
+        ),
+      ).catch((cause) => ({ _tag: "Failure", message: failureMessage(cause) }))
+    },
   )
   ipcMain.handle(DesktopChannels.selectProject, () =>
     MainRuntime.runPromise(

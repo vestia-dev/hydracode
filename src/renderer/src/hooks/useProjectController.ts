@@ -23,7 +23,6 @@ export type ProjectState =
   | {
       readonly _tag: "Ready"
       readonly snapshot: ProjectViewSnapshot
-      readonly screen: "landing" | "session"
     }
   | { readonly _tag: "Error"; readonly message: string }
 
@@ -59,11 +58,13 @@ function snapshot(value: ProjectSnapshot, previous?: ProjectViewSnapshot): Proje
     const current = previous?.sessions.find((item) => item.id === session.id)
     return view(session, current?.optimisticPrompts)
   })
-  const provisional = previous?.sessions.find((session) => session.provisional)
+  const provisional = previous?.sessions.filter(
+    (session) => session.provisional && !projected.some((item) => item.id === session.id),
+  )
   return {
     project: value.project,
     location: value.location,
-    sessions: provisional === undefined ? projected : [provisional],
+    sessions: [...projected, ...(provisional ?? [])],
     recentSessions: value.recentSessions.map((session) => ({
       ...session,
       id: Schema.decodeUnknownSync(Session.ID)(session.id),
@@ -132,7 +133,6 @@ export function useProjectController() {
                 update.snapshot,
                 current._tag === "Ready" ? current.snapshot : undefined,
               ),
-              screen: current._tag === "Ready" ? current.screen : "landing",
             }))
           else if (update._tag === "Session")
             setState((current) => {
@@ -146,8 +146,7 @@ export function useProjectController() {
               )
                 return current
               return {
-                _tag: "Ready",
-                screen: current.screen,
+                ...current,
                 snapshot: {
                   ...current.snapshot,
                   sessions: [
@@ -162,8 +161,7 @@ export function useProjectController() {
               current._tag !== "Ready"
                 ? current
                 : {
-                    _tag: "Ready",
-                    screen: current.screen,
+                    ...current,
                     snapshot: {
                       ...current.snapshot,
                       sessions: current.snapshot.sessions.filter(
@@ -269,18 +267,13 @@ export function useProjectController() {
         yield* DesktopBridge.use((desktop) =>
           desktop.selectSession({ subscriptionID: id, sessionID }),
         )
-        return yield* Effect.sync(() => {
-          setPromptRetry(null)
-          setState((current) =>
-            current._tag === "Ready" ? { ...current, screen: "session" } : current,
-          )
-        })
+        return yield* Effect.sync(() => setPromptRetry(null))
       }),
     [],
   )
 
   const createSession = useCallback(
-    (text: string) =>
+    (text: string, selectCreated?: (sessionID: SessionView["id"] | undefined) => void) =>
       Effect.gen(function* () {
         const id = subscriptionID.current
         if (id === null)
@@ -319,10 +312,13 @@ export function useProjectController() {
               ? current
               : {
                   ...current,
-                  screen: "session",
-                  snapshot: { ...current.snapshot, sessions: [provisional] },
+                  snapshot: {
+                    ...current.snapshot,
+                    sessions: [...current.snapshot.sessions, provisional],
+                  },
                 },
           )
+          selectCreated?.(provisionalID)
         })
         const result = yield* DesktopBridge.use((desktop) =>
           desktop.createSession({ subscriptionID: id }),
@@ -330,12 +326,12 @@ export function useProjectController() {
           Effect.tapError((error) =>
             Effect.sync(() => {
               setLandingError(error.message)
+              selectCreated?.(undefined)
               setState((current) =>
                 current._tag !== "Ready"
                   ? current
                   : {
                       ...current,
-                      screen: "landing",
                       snapshot: {
                         ...current.snapshot,
                         sessions: current.snapshot.sessions.filter(
@@ -348,13 +344,13 @@ export function useProjectController() {
           ),
         )
         const session = view(result.session, [prompt])
-        yield* Effect.sync(() =>
+        yield* Effect.sync(() => {
+          selectCreated?.(session.id)
           setState((current) =>
             current._tag !== "Ready"
               ? current
               : {
                   ...current,
-                  screen: "session",
                   snapshot: {
                     ...current.snapshot,
                     sessions: [
@@ -374,8 +370,8 @@ export function useProjectController() {
                     ],
                   },
                 },
-          ),
-        )
+          )
+        })
         return yield* DesktopBridge.use((desktop) =>
           desktop.submitPrompt({ subscriptionID: id, sessionID: session.id, text: promptText }),
         ).pipe(
@@ -403,32 +399,6 @@ export function useProjectController() {
       }),
     [],
   )
-
-  const showSessionLanding = useCallback(() => {
-    setPromptRetry(null)
-    setState((current) => {
-      if (current._tag !== "Ready") return current
-      const root = current.snapshot.sessions.find((session) => session.parentID === undefined)
-      if (root === undefined) return { ...current, screen: "landing" }
-      return {
-        ...current,
-        screen: "landing",
-        snapshot: {
-          ...current.snapshot,
-          recentSessions: current.snapshot.recentSessions.map((session) =>
-            session.id === root.id
-              ? {
-                  id: root.id,
-                  created: root.created,
-                  title: root.title,
-                  active: current.snapshot.sessions.some((item) => item.active),
-                }
-              : session,
-          ),
-        },
-      }
-    })
-  }, [])
 
   const interruptSession = useCallback(
     (sessionID: SessionView["id"]) =>
@@ -523,7 +493,6 @@ export function useProjectController() {
     showProjects,
     selectSession,
     createSession,
-    showSessionLanding,
     submitPrompt,
     interruptSession,
   } as const

@@ -2,9 +2,12 @@ import { Context, Effect, FileSystem, Layer, Schema } from "effect"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import {
+  type BundledThemeID,
+  DefaultBundledThemeID,
   DefaultTheme,
-  DefaultThemeID,
   DefaultThemeSettings,
+  findBundledTheme,
+  HydraCodeLightTheme,
   Theme,
   type ThemeID,
   ThemeSettings,
@@ -20,6 +23,7 @@ export class ThemeServiceError extends Schema.TaggedErrorClass<ThemeServiceError
 
 interface ThemeServiceShape {
   readonly load: Effect.Effect<Theme, ThemeServiceError>
+  readonly selectBundled: (id: BundledThemeID) => Effect.Effect<Theme, ThemeServiceError>
 }
 
 export class ThemeService extends Context.Service<ThemeService, ThemeServiceShape>()(
@@ -29,6 +33,17 @@ export class ThemeService extends Context.Service<ThemeService, ThemeServiceShap
 interface ThemeServiceOptions {
   readonly configHome?: string
   readonly home?: string
+}
+
+const LegacyDefaultThemeID: ThemeID = "hydracode-light"
+const { diff: _, ...LegacyHydraCodeLightTheme } = HydraCodeLightTheme
+
+function isGeneratedLightTheme(theme: Theme) {
+  const serialized = JSON.stringify(theme)
+  return (
+    serialized === JSON.stringify(HydraCodeLightTheme) ||
+    serialized === JSON.stringify(LegacyHydraCodeLightTheme)
+  )
 }
 
 export function themePaths(options: ThemeServiceOptions = {}) {
@@ -50,37 +65,61 @@ export function makeThemeServiceLive(options: ThemeServiceOptions = {}) {
       const fileSystem = yield* FileSystem.FileSystem
       const paths = themePaths(options)
 
+      const writeSettings = (settings: ThemeSettings) =>
+        fileSystem.writeFileString(paths.settings, `${JSON.stringify(settings, null, 2)}\n`)
+
       const load = Effect.gen(function* () {
         yield* fileSystem.makeDirectory(paths.themes, { recursive: true })
 
         if (!(yield* fileSystem.exists(paths.settings))) {
-          yield* fileSystem.writeFileString(
-            paths.settings,
-            `${JSON.stringify(DefaultThemeSettings, null, 2)}\n`,
-          )
+          yield* writeSettings(DefaultThemeSettings)
         }
 
-        const defaultThemeFile = paths.theme(DefaultThemeID)
-        if (!(yield* fileSystem.exists(defaultThemeFile))) {
-          yield* fileSystem.writeFileString(
-            defaultThemeFile,
-            `${JSON.stringify(DefaultTheme, null, 2)}\n`,
-          )
-        }
+        const settings = yield* fileSystem.readFileString(paths.settings).pipe(
+          Effect.flatMap((source) =>
+            Effect.try({
+              try: () => JSON.parse(source) as unknown,
+              catch: (cause) => cause,
+            }),
+          ),
+          Effect.flatMap(Schema.decodeUnknownEffect(ThemeSettings)),
+          Effect.catch(() => Effect.succeed(DefaultThemeSettings)),
+        )
+        if (settings.theme === undefined) return DefaultTheme
 
-        const settingsSource = yield* fileSystem.readFileString(paths.settings)
-        const settingsValue = yield* Effect.try({
-          try: () => JSON.parse(settingsSource) as unknown,
-          catch: (cause) => cause,
-        })
-        const settings = yield* Schema.decodeUnknownEffect(ThemeSettings)(settingsValue)
         const selectedThemeFile = paths.theme(settings.theme)
-        const themeSource = yield* fileSystem.readFileString(selectedThemeFile)
-        const themeValue = yield* Effect.try({
-          try: () => JSON.parse(themeSource) as unknown,
-          catch: (cause) => cause,
-        })
-        return yield* Schema.decodeUnknownEffect(Theme)(themeValue)
+        if (settings.theme === LegacyDefaultThemeID) {
+          const generatedTheme = yield* fileSystem.readFileString(selectedThemeFile).pipe(
+            Effect.flatMap((source) =>
+              Effect.try({
+                try: () => JSON.parse(source) as unknown,
+                catch: (cause) => cause,
+              }),
+            ),
+            Effect.flatMap(Schema.decodeUnknownEffect(Theme)),
+            Effect.map(isGeneratedLightTheme),
+            Effect.catch(() => Effect.succeed(false)),
+          )
+          if (generatedTheme) {
+            yield* writeSettings(DefaultThemeSettings)
+            yield* fileSystem.remove(selectedThemeFile)
+            return DefaultTheme
+          }
+        }
+
+        const bundledTheme = findBundledTheme(settings.theme)
+        if (bundledTheme !== undefined) return bundledTheme
+
+        return yield* fileSystem.readFileString(selectedThemeFile).pipe(
+          Effect.flatMap((source) =>
+            Effect.try({
+              try: () => JSON.parse(source) as unknown,
+              catch: (cause) => cause,
+            }),
+          ),
+          Effect.flatMap(Schema.decodeUnknownEffect(Theme)),
+          Effect.catch(() => Effect.succeed(DefaultTheme)),
+        )
       }).pipe(
         Effect.mapError(
           (cause) =>
@@ -91,7 +130,22 @@ export function makeThemeServiceLive(options: ThemeServiceOptions = {}) {
         ),
       )
 
-      return ThemeService.of({ load })
+      const selectBundled = (id: BundledThemeID) =>
+        Effect.gen(function* () {
+          yield* fileSystem.makeDirectory(paths.themes, { recursive: true })
+          yield* writeSettings(id === DefaultBundledThemeID ? DefaultThemeSettings : { theme: id })
+          return findBundledTheme(id) ?? DefaultTheme
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ThemeServiceError({
+                message: `HydraCode could not save its theme configuration to ${paths.directory}.`,
+                cause,
+              }),
+          ),
+        )
+
+      return ThemeService.of({ load, selectBundled })
     }),
   )
 }

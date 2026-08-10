@@ -11,6 +11,7 @@ interface SessionLandingProps {
   readonly selectSession: (
     sessionID: SessionView["id"],
   ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
+  readonly focusRequest: number | undefined
 }
 
 const sessionDate = new Intl.DateTimeFormat(undefined, {
@@ -23,11 +24,16 @@ export function SessionLanding({
   initialError,
   createSession,
   selectSession,
+  focusRequest,
 }: SessionLandingProps) {
   const [text, setText] = useState("")
   const [pending, setPending] = useState<"create" | SessionSummary["id"] | null>(null)
   const [error, setError] = useState<string | null>(initialError)
   const operationFiber = useRef<Fiber.Fiber<unknown, unknown> | null>(null)
+  const landing = useRef<HTMLElement>(null)
+  const content = useRef<HTMLDivElement>(null)
+  const composer = useRef<HTMLFormElement>(null)
+  const promptInput = useRef<HTMLTextAreaElement>(null)
   const continueOnUnmount = useRef(false)
 
   const run = useCallback((effect: Effect.Effect<void, DesktopBridgeError, DesktopBridge>) => {
@@ -72,21 +78,28 @@ export function SessionLanding({
     [],
   )
 
-  return (
-    <section className="session-landing" aria-labelledby="session-landing-title">
-      <div className="session-landing__content">
-        <div className="session-landing__intro">
-          <span className="empty-mark" aria-hidden="true">
-            H
-          </span>
-          <div>
-            <h1 id="session-landing-title">Start a new session</h1>
-            <p>Describe what you want to work on. The session starts when you send the prompt.</p>
-          </div>
-        </div>
+  useEffect(() => {
+    if (focusRequest === undefined) return
+    const landingElement = landing.current
+    const contentElement = content.current
+    const composerElement = composer.current
+    if (landingElement !== null && contentElement !== null && composerElement !== null) {
+      const paddingTop = Math.max(
+        24,
+        (landingElement.clientHeight - composerElement.offsetHeight) / 2,
+      )
+      contentElement.style.paddingTop = `${paddingTop}px`
+      landingElement.scrollTo({ top: 0, behavior: "smooth" })
+    }
+    promptInput.current?.focus({ preventScroll: true })
+  }, [focusRequest])
 
-        <form className="session-landing__composer" onSubmit={submit}>
+  return (
+    <section ref={landing} className="session-landing" aria-label="New session">
+      <div ref={content} className="session-landing__content">
+        <form ref={composer} className="session-landing__composer" onSubmit={submit}>
           <textarea
+            ref={promptInput}
             aria-label="Start a new session"
             rows={4}
             autoFocus

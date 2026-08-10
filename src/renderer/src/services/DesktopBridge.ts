@@ -13,8 +13,12 @@ import {
   UpdateState,
 } from "../../../shared/ipc"
 import { ThemeResult, ProjectSelectionResult } from "../../../shared/ipc"
-import type { Theme } from "../../../shared/theme"
+import type { BundledThemeID, Theme } from "../../../shared/theme"
 import type { ProjectCatalogItem } from "../../../shared/project"
+import {
+  PaneSplitCommand,
+  type PaneSplitCommand as PaneSplitCommandType,
+} from "../../../shared/pane"
 
 export class DesktopBridgeError extends Schema.TaggedErrorClass<DesktopBridgeError>()(
   "DesktopBridgeError",
@@ -23,6 +27,7 @@ export class DesktopBridgeError extends Schema.TaggedErrorClass<DesktopBridgeErr
 
 interface DesktopBridgeShape {
   readonly loadTheme: Effect.Effect<Theme, DesktopBridgeError>
+  readonly setBundledTheme: (id: BundledThemeID) => Effect.Effect<Theme, DesktopBridgeError>
   readonly selectProject: Effect.Effect<Option.Option<string>, DesktopBridgeError>
   readonly listProjects: Effect.Effect<ReadonlyArray<ProjectCatalogItem>, DesktopBridgeError>
   readonly openProject: (command: OpenProjectCommand) => Effect.Effect<string, DesktopBridgeError>
@@ -39,6 +44,18 @@ interface DesktopBridgeShape {
   readonly installUpdate: Effect.Effect<void, DesktopBridgeError>
   readonly subscribeUpdates: (
     onUpdate: (state: UpdateState) => void,
+  ) => Effect.Effect<() => void, DesktopBridgeError>
+  readonly subscribePaneSplits: (
+    onSplit: (command: PaneSplitCommandType) => void,
+  ) => Effect.Effect<() => void, DesktopBridgeError>
+  readonly subscribePaneClose: (
+    onClose: () => void,
+  ) => Effect.Effect<() => void, DesktopBridgeError>
+  readonly subscribePromptFocus: (
+    onFocus: () => void,
+  ) => Effect.Effect<() => void, DesktopBridgeError>
+  readonly subscribeFollowLatest: (
+    onFollow: () => void,
   ) => Effect.Effect<() => void, DesktopBridgeError>
   readonly watchProject: (
     subscriptionID: string,
@@ -92,6 +109,14 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
           : Effect.fail(new DesktopBridgeError({ message: result.message, cause: result })),
       ),
     ),
+    setBundledTheme: (id) =>
+      invoke(() => window.hydracode.setBundledTheme({ theme: id }), ThemeResult).pipe(
+        Effect.flatMap((result) =>
+          result._tag === "Success"
+            ? Effect.succeed(result.theme)
+            : Effect.fail(new DesktopBridgeError({ message: result.message, cause: result })),
+        ),
+      ),
     selectProject: invoke(() => window.hydracode.selectProject(), ProjectSelectionResult).pipe(
       Effect.flatMap((result) =>
         result._tag === "Success"
@@ -138,6 +163,45 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
         catch: (cause) =>
           new DesktopBridgeError({
             message: "HydraCode could not subscribe to application updates.",
+            cause,
+          }),
+      }),
+    subscribePaneSplits: (onSplit) =>
+      Effect.try({
+        try: () =>
+          window.hydracode.onPaneSplit((paneCommand) => {
+            onSplit(Schema.decodeUnknownSync(PaneSplitCommand)(paneCommand))
+          }),
+        catch: (cause) =>
+          new DesktopBridgeError({
+            message: "HydraCode could not subscribe to pane commands.",
+            cause,
+          }),
+      }),
+    subscribePaneClose: (onClose) =>
+      Effect.try({
+        try: () => window.hydracode.onPaneClose(onClose),
+        catch: (cause) =>
+          new DesktopBridgeError({
+            message: "HydraCode could not subscribe to pane close commands.",
+            cause,
+          }),
+      }),
+    subscribePromptFocus: (onFocus) =>
+      Effect.try({
+        try: () => window.hydracode.onPromptFocus(onFocus),
+        catch: (cause) =>
+          new DesktopBridgeError({
+            message: "HydraCode could not subscribe to prompt focus commands.",
+            cause,
+          }),
+      }),
+    subscribeFollowLatest: (onFollow) =>
+      Effect.try({
+        try: () => window.hydracode.onFollowLatest(onFollow),
+        catch: (cause) =>
+          new DesktopBridgeError({
+            message: "HydraCode could not subscribe to follow-latest commands.",
             cause,
           }),
       }),

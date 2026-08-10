@@ -1,7 +1,12 @@
 import { Schema } from "effect"
 export { DesktopChannels } from "./desktopChannels"
-import { Theme } from "./theme"
+import {
+  SetBundledThemeCommand,
+  Theme,
+  type SetBundledThemeCommand as SetBundledThemeCommandType,
+} from "./theme"
 import { UpdateState } from "./update"
+import type { PaneSplitCommand } from "./pane"
 import {
   CreateSessionCommand,
   CreateSessionResult,
@@ -53,17 +58,20 @@ export {
   ProjectUpdate,
   ProjectUpdateEnvelope,
   UpdateState,
+  SetBundledThemeCommand,
 }
 export type {
   CreateSessionCommand as CreateSessionCommandType,
   OpenProjectCommand as OpenProjectCommandType,
   SubmitPromptCommand as SubmitPromptCommandType,
   ProjectSessionCommand as ProjectSessionCommandType,
+  SetBundledThemeCommand as SetBundledThemeCommandType,
 }
 
 export interface HydraCodeDesktopApi {
   readonly platform: NodeJS.Platform
   readonly loadTheme: () => Promise<ThemeResult>
+  readonly setBundledTheme: (command: SetBundledThemeCommandType) => Promise<ThemeResult>
   readonly selectProject: () => Promise<ProjectSelectionResult>
   readonly listProjects: () => Promise<ListProjectsResult>
   readonly openProject: (command: OpenProjectCommand) => Promise<OpenProjectResult>
@@ -76,4 +84,8 @@ export interface HydraCodeDesktopApi {
   readonly installUpdate: () => Promise<ProjectCommandResult>
   readonly onUpdateState: (listener: (state: unknown) => void) => () => void
   readonly onProjectUpdate: (listener: (update: unknown) => void) => () => void
+  readonly onPaneSplit: (listener: (command: PaneSplitCommand) => void) => () => void
+  readonly onPaneClose: (listener: () => void) => () => void
+  readonly onPromptFocus: (listener: () => void) => () => void
+  readonly onFollowLatest: (listener: () => void) => () => void
 }

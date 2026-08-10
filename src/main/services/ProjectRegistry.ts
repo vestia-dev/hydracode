@@ -48,7 +48,7 @@ interface Entry {
   readonly active: Set<string>
   readonly subscribers: Map<string, Subscriber>
   readonly queued: Array<OpenCodeEvent>
-  selectedRootID?: string
+  readonly selectedRootIDs: Set<string>
   bootstrapping: boolean
   ready: boolean
   fiber?: Fiber.Fiber<never, unknown>
@@ -116,7 +116,7 @@ const sessionView = (entry: Entry, sessionID: string, state: SessionLogState): P
   }
 }
 const isSelected = (entry: Entry, session: Session.Info) =>
-  entry.selectedRootID !== undefined && sessionRootID(session, entry.info) === entry.selectedRootID
+  entry.selectedRootIDs.has(sessionRootID(session, entry.info))
 
 const captureWatermark = (client: OpenCodeClient, sessionID: Session.ID) => {
   let current: number | undefined
@@ -277,13 +277,8 @@ export const ProjectRegistryLive = Layer.effect(
           if (!availableIDs.has(sessionID)) yield* removeSession(entry, sessionID)
         }
         for (const info of page.data) entry.info.set(info.id, info)
-        if (
-          entry.selectedRootID !== undefined &&
-          !page.data.some((info) => info.id === entry.selectedRootID)
-        ) {
-          delete entry.selectedRootID
-          entry.logs.clear()
-          entry.sessions.clear()
+        for (const rootID of entry.selectedRootIDs) {
+          if (!page.data.some((info) => info.id === rootID)) entry.selectedRootIDs.delete(rootID)
         }
         const selected = page.data.filter((info) => isSelected(entry, info))
         yield* Effect.forEach(selected, (info) => hydrate(entry, info), { concurrency: 4 })
@@ -440,6 +435,7 @@ export const ProjectRegistryLive = Layer.effect(
             sessions: new Map(),
             logs: new Map(),
             active: new Set(),
+            selectedRootIDs: new Set(),
             subscribers: new Map(),
             queued: [],
             bootstrapping: false,
@@ -494,10 +490,11 @@ export const ProjectRegistryLive = Layer.effect(
           })
           entry.info.set(target.id, target)
         }
-        entry.selectedRootID = sessionRootID(target, entry.info)
-        entry.logs.clear()
-        entry.sessions.clear()
-        const family = Array.from(entry.info.values()).filter((info) => isSelected(entry, info))
+        const rootID = sessionRootID(target, entry.info)
+        entry.selectedRootIDs.add(rootID)
+        const family = Array.from(entry.info.values()).filter(
+          (info) => sessionRootID(info, entry.info) === rootID,
+        )
         yield* Effect.forEach(family, (info) => hydrate(entry, info), { concurrency: 4 })
         return yield* Effect.sync(() => emitSnapshot(entry))
       })
@@ -513,9 +510,7 @@ export const ProjectRegistryLive = Layer.effect(
           location: subscriber.location,
         })
         entry.info.set(info.id, info)
-        entry.selectedRootID = info.id
-        entry.logs.clear()
-        entry.sessions.clear()
+        entry.selectedRootIDs.add(info.id)
         yield* hydrate(entry, info)
         emitSnapshot(entry)
         const session = entry.sessions.get(info.id)

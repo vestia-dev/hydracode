@@ -18,6 +18,7 @@ export interface SessionPromptNodeData extends Record<string, unknown> {
   readonly promptPending: boolean
   readonly submitPrompt: (text: string) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
   readonly retryPrompt?: { readonly text: string; readonly message: string }
+  readonly focusRequest?: number
 }
 
 export type SessionPromptFlowNode = Node<SessionPromptNodeData, "sessionPrompt">
@@ -29,6 +30,7 @@ export function SessionPromptNode({ data }: NodeProps<SessionPromptFlowNode>) {
   const appliedRetry = useRef<typeof data.retryPrompt>(undefined)
   const sawRunning = useRef(false)
   const submissionFiber = useRef<Fiber.Fiber<unknown, unknown> | null>(null)
+  const promptInput = useRef<HTMLTextAreaElement>(null)
   const locked =
     agentRunning ||
     promptPending ||
@@ -91,6 +93,11 @@ export function SessionPromptNode({ data }: NodeProps<SessionPromptFlowNode>) {
     [],
   )
 
+  useEffect(() => {
+    if (data.focusRequest === undefined || locked) return
+    promptInput.current?.focus({ preventScroll: true })
+  }, [data.focusRequest, locked])
+
   const placeholder =
     agentRunning || promptPending
       ? "Agent is working…"
@@ -103,6 +110,7 @@ export function SessionPromptNode({ data }: NodeProps<SessionPromptFlowNode>) {
       <Handle id="timeline-target" type="target" position={Position.Left} />
       <form onSubmit={submit}>
         <textarea
+          ref={promptInput}
           className="prompt-node__input nodrag nopan nowheel"
           aria-label="Prompt the agent"
           rows={2}

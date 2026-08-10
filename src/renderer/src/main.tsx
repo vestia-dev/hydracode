@@ -1,14 +1,19 @@
 import { Effect } from "effect"
-import { StrictMode } from "react"
+import { StrictMode, useState } from "react"
 import { createRoot } from "react-dom/client"
 import { preloadHighlighter } from "@pierre/diffs"
 import { DefaultTheme } from "../../shared/theme"
 import { App } from "./App"
 import { AppRuntime } from "./runtime"
 import { DesktopBridge } from "./services/DesktopBridge"
-import { applyTheme, ThemeContext } from "./theme"
+import { applyTheme, ThemeContext, ThemeUpdateContext } from "./theme"
+import type { Theme } from "../../shared/theme"
 import "@xyflow/react/dist/style.css"
 import "./styles.css"
+
+if (navigator.userAgent.includes("Mac")) {
+  document.documentElement.dataset.platform = "macos"
+}
 
 const root = document.getElementById("root")
 
@@ -23,6 +28,22 @@ const theme = await AppRuntime.runPromise(
 )
 applyTheme(theme)
 
+function HydraCodeRoot({ initialTheme }: { readonly initialTheme: Theme }) {
+  const [currentTheme, setCurrentTheme] = useState(initialTheme)
+  const updateTheme = (nextTheme: Theme) => {
+    applyTheme(nextTheme)
+    setCurrentTheme(nextTheme)
+  }
+
+  return (
+    <ThemeUpdateContext value={updateTheme}>
+      <ThemeContext value={currentTheme}>
+        <App />
+      </ThemeContext>
+    </ThemeUpdateContext>
+  )
+}
+
 await AppRuntime.runPromise(
   Effect.tryPromise({
     try: () =>
@@ -36,9 +57,7 @@ await AppRuntime.runPromise(
 
 createRoot(root).render(
   <StrictMode>
-    <ThemeContext value={theme}>
-      <App />
-    </ThemeContext>
+    <HydraCodeRoot initialTheme={theme} />
   </StrictMode>,
 )
 

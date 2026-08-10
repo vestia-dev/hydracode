@@ -2,9 +2,14 @@ import { createContext, useContext } from "react"
 import { DefaultDiffTheme, DefaultTheme, type Theme } from "../../shared/theme"
 
 export const ThemeContext = createContext<Theme>(DefaultTheme)
+export const ThemeUpdateContext = createContext<(theme: Theme) => void>(() => {})
 
 export function useTheme() {
   return useContext(ThemeContext)
+}
+
+export function useThemeUpdate() {
+  return useContext(ThemeUpdateContext)
 }
 
 export function applyTheme(theme: Theme, root: HTMLElement = document.documentElement) {

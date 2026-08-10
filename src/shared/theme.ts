@@ -3,8 +3,16 @@ import { Schema } from "effect"
 export const ThemeID = Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9-]*$/))
 export type ThemeID = typeof ThemeID.Type
 
+export const BundledThemeID = Schema.Literals(["hydracode-dark", "hydracode-light"])
+export type BundledThemeID = typeof BundledThemeID.Type
+
+export const SetBundledThemeCommand = Schema.Struct({
+  theme: BundledThemeID,
+})
+export type SetBundledThemeCommand = typeof SetBundledThemeCommand.Type
+
 export const ThemeSettings = Schema.Struct({
-  theme: ThemeID,
+  theme: Schema.optional(ThemeID),
 })
 export type ThemeSettings = typeof ThemeSettings.Type
 
@@ -67,10 +75,9 @@ export const Theme = Schema.Struct({
 })
 export type Theme = typeof Theme.Type
 
-export const DefaultThemeID: ThemeID = "hydracode-light"
-export const DefaultThemeSettings: ThemeSettings = { theme: DefaultThemeID }
+export const DefaultThemeSettings: ThemeSettings = {}
 
-export const DefaultDiffTheme: NonNullable<Theme["diff"]> = {
+export const HydraCodeLightDiffTheme: NonNullable<Theme["diff"]> = {
   themeType: "light",
   background: "#f5f5f2",
   foreground: "#292925",
@@ -84,7 +91,21 @@ export const DefaultDiffTheme: NonNullable<Theme["diff"]> = {
   deletionBackground: "#f8e7e5",
 }
 
-export const DefaultTheme: Theme = {
+export const HydraCodeDarkDiffTheme: NonNullable<Theme["diff"]> = {
+  themeType: "dark",
+  background: "#1b1b1a",
+  foreground: "#deded8",
+  lineNumber: "#777771",
+  contextBackground: "#20201f",
+  gutterBackground: "#181817",
+  separatorBackground: "#2a2a28",
+  addition: "#7bc294",
+  deletion: "#df8580",
+  additionBackground: "#1d3527",
+  deletionBackground: "#3b2322",
+}
+
+export const HydraCodeLightTheme: Theme = {
   name: "HydraCode Light",
   colors: {
     background: "#f7f7f5",
@@ -118,7 +139,7 @@ export const DefaultTheme: Theme = {
       'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     monoFontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
   },
-  diff: DefaultDiffTheme,
+  diff: HydraCodeLightDiffTheme,
   layout: {
     nodeDistance: {
       horizontal: 32,
@@ -126,3 +147,67 @@ export const DefaultTheme: Theme = {
     },
   },
 }
+
+export const HydraCodeDarkTheme: Theme = {
+  name: "HydraCode Dark",
+  colors: {
+    background: "#171716",
+    surface: "#20201f",
+    surfaceMuted: "#262624",
+    text: "#e8e8e3",
+    textMuted: "#9a9a93",
+    border: "#383835",
+    accent: "#78a6e3",
+    accentText: "#101722",
+    success: "#68b989",
+    danger: "#d27670",
+    read: "#7ea8c2",
+    write: "#d29a5d",
+    grid: "#30302e",
+    edge: "#555550",
+  },
+  radii: {
+    small: "5px",
+    medium: "8px",
+    large: "12px",
+    round: "9999px",
+  },
+  shadows: {
+    subtle: "0 1px 2px rgb(0 0 0 / 24%)",
+    raised: "0 2px 10px rgb(0 0 0 / 30%)",
+    focus: "0 0 0 2px rgb(120 166 227 / 20%)",
+  },
+  typography: {
+    uiFontFamily:
+      'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    monoFontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+  },
+  diff: HydraCodeDarkDiffTheme,
+  layout: {
+    nodeDistance: {
+      horizontal: 32,
+      vertical: 24,
+    },
+  },
+}
+
+export const DefaultBundledThemeID: BundledThemeID = "hydracode-dark"
+export const BundledThemes: ReadonlyArray<{
+  readonly id: BundledThemeID
+  readonly theme: Theme
+}> = [
+  { id: DefaultBundledThemeID, theme: HydraCodeDarkTheme },
+  { id: "hydracode-light", theme: HydraCodeLightTheme },
+]
+
+export function findBundledTheme(id: ThemeID) {
+  return BundledThemes.find((entry) => entry.id === id)?.theme
+}
+
+export function bundledThemeID(theme: Theme) {
+  const serialized = JSON.stringify(theme)
+  return BundledThemes.find((entry) => JSON.stringify(entry.theme) === serialized)?.id
+}
+
+export const DefaultDiffTheme = HydraCodeDarkDiffTheme
+export const DefaultTheme = HydraCodeDarkTheme

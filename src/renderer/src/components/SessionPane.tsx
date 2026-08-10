@@ -14,7 +14,6 @@ import {
   type NodeTypes,
 } from "@xyflow/react"
 import type { SemanticGraphNode } from "../domain/graph"
-import { toolLayoutFixture } from "../fixtures/toolLayoutFixture"
 import {
   collapsedSubagentPosition,
   horizontalRoundSideNodePosition,
@@ -70,11 +69,12 @@ interface SessionPaneProps {
     sessionID: SessionView["id"],
   ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
   readonly retryPrompt: { readonly text: string; readonly message: string } | undefined
+  readonly focusPromptRequest: number | undefined
+  readonly followLatestRequest: number | undefined
 }
 
 interface SessionCanvasProps extends SessionPaneProps {
   readonly followLatest: boolean
-  readonly layoutLab: boolean
   readonly stopFollowing: () => void
 }
 
@@ -166,6 +166,7 @@ function promptFlowNode(
   promptPending: boolean,
   submitPrompt: (text: string) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>,
   retryPrompt: { readonly text: string; readonly message: string } | undefined,
+  focusRequest: number | undefined,
 ): SessionPromptFlowNode {
   return {
     id,
@@ -176,6 +177,7 @@ function promptFlowNode(
       promptPending,
       submitPrompt,
       ...(retryPrompt === undefined ? {} : { retryPrompt }),
+      ...(focusRequest === undefined ? {} : { focusRequest }),
     },
   }
 }
@@ -184,12 +186,15 @@ function SessionCanvas({
   session,
   descendants,
   followLatest,
-  layoutLab,
   stopFollowing,
   submitPrompt,
   retryPrompt,
+  focusPromptRequest,
+  followLatestRequest,
 }: SessionCanvasProps) {
   const measuredNodeSizes = useRef(new Map<string, NonNullable<FlowNode["measured"]>>())
+  const appliedFocusPromptRequest = useRef<number | undefined>(undefined)
+  const appliedFollowLatestRequest = useRef<number | undefined>(undefined)
   const [expandedRounds, setExpandedRounds] = useState<ReadonlySet<string>>(() => new Set())
   const [expandedSubagents, setExpandedSubagents] = useState<ReadonlySet<string>>(() => new Set())
   const [roundSizes, setRoundSizes] = useState<ReadonlyMap<string, NodeSize>>(() => new Map())
@@ -297,7 +302,7 @@ function SessionCanvas({
       if (positionedSessions.has(current.id)) return
       positionedSessions.add(current.id)
       const timelineNodes = current.graph.nodes.filter((node) => !isRoundSideNode(node))
-      const includeComposer = current.id === session.id && !layoutLab
+      const includeComposer = current.id === session.id
       const timeline = timelinePositions(
         [
           ...timelineNodes.map((node) => timelineNodeWidth(node, roundSizes)),
@@ -599,18 +604,17 @@ function SessionCanvas({
         },
       })),
     )
-    if (!layoutLab) {
-      nodes.push(
-        promptFlowNode(
-          composer.id,
-          composerPosition,
-          sessions.some((current) => current.active),
-          sessions.some((current) => current.optimisticPrompts.length > 0),
-          (text) => submitPrompt(session.id, text),
-          retryPrompt,
-        ),
-      )
-    }
+    nodes.push(
+      promptFlowNode(
+        composer.id,
+        composerPosition,
+        sessions.some((current) => current.active),
+        sessions.some((current) => current.optimisticPrompts.length > 0),
+        (text) => submitPrompt(session.id, text),
+        retryPrompt,
+        focusPromptRequest,
+      ),
+    )
 
     const edges: Array<Edge> = sessions
       .flatMap((current) => current.graph.edges)
@@ -676,22 +680,21 @@ function SessionCanvas({
         return measured === undefined ? node : Object.assign(node, { measured })
       }),
       edges,
-      focusNodeID: layoutLab
-        ? session.graph.nodes.find((node) => node.kind === "round")?.id
-        : composer.precedingNodeID,
+      focusNodeID: composer.precedingNodeID,
+      promptNodeID: composer.id,
     }
   }, [
     descendants,
     expandedRounds,
     expandedSubagents,
     closeSubagents,
-    layoutLab,
     nodeDistance,
     openSubagents,
     reportRoundSize,
     reportSideNodeSize,
     roundSizes,
     retryPrompt,
+    focusPromptRequest,
     session,
     sideNodeSizes,
     submitPrompt,
@@ -721,6 +724,31 @@ function SessionCanvas({
     const frame = window.requestAnimationFrame(() => centerLatest(220))
     return () => window.cancelAnimationFrame(frame)
   }, [centerLatest, followLatest, paneHeight, paneWidth])
+
+  useEffect(() => {
+    if (focusPromptRequest === undefined || !reactFlow.viewportInitialized) return undefined
+    if (appliedFocusPromptRequest.current === focusPromptRequest) return undefined
+    appliedFocusPromptRequest.current = focusPromptRequest
+    const frame = window.requestAnimationFrame(() => {
+      if (followLatest) stopFollowing()
+      void reactFlow.fitView({
+        nodes: [{ id: flow.promptNodeID }],
+        minZoom: 1,
+        maxZoom: 1,
+        padding: 0,
+        duration: 220,
+      })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [flow.promptNodeID, focusPromptRequest, followLatest, reactFlow, stopFollowing])
+
+  useEffect(() => {
+    if (followLatestRequest === undefined) return undefined
+    if (appliedFollowLatestRequest.current === followLatestRequest) return undefined
+    appliedFollowLatestRequest.current = followLatestRequest
+    const frame = window.requestAnimationFrame(() => centerLatest(220))
+    return () => window.cancelAnimationFrame(frame)
+  }, [centerLatest, followLatestRequest])
 
   return (
     <ReactFlow
@@ -756,82 +784,42 @@ function SessionCanvas({
   )
 }
 
-function sessionCounts(sessions: ReadonlyArray<SessionView>) {
-  const agentMessageIDs = new Set<string>()
-  let toolCallCount = 0
-  for (const session of sessions) {
-    for (const node of session.graph.nodes) {
-      for (const messageID of node.agent?.messageIDs ?? []) agentMessageIDs.add(messageID)
-      toolCallCount += node.roundTools?.calls.length ?? 0
-    }
-  }
-  return { agentMessageCount: agentMessageIDs.size, toolCallCount }
-}
-
 export function SessionPane({
   session,
   descendants,
   submitPrompt,
   interruptSession,
   retryPrompt,
+  focusPromptRequest,
+  followLatestRequest,
 }: SessionPaneProps) {
   const sessions = [session, ...descendants]
   const [interrupting, setInterrupting] = useState(false)
   const [interruptError, setInterruptError] = useState<string | null>(null)
   const [followLatest, setFollowLatest] = useState(true)
-  const [layoutLab, setLayoutLab] = useState(false)
   const stopFollowing = useCallback(() => setFollowLatest(false), [])
-  const displayedSession = layoutLab ? toolLayoutFixture(session) : session
-  const displayedDescendants = layoutLab ? [] : descendants
-  const counts = sessionCounts([displayedSession])
-  const active = layoutLab ? false : sessions.some((current) => current.active)
+  useEffect(() => {
+    if (followLatestRequest !== undefined) setFollowLatest(true)
+  }, [followLatestRequest])
+  const active = sessions.some((current) => current.active)
   const retrying = sessions.find((current) => current.execution._tag === "Retrying")
   const failed = sessions.find((current) => current.execution._tag === "Failed")
-  const executionLabel = layoutLab
-    ? "Synthetic fixture"
-    : retrying?.execution._tag === "Retrying"
+  const executionLabel =
+    retrying?.execution._tag === "Retrying"
       ? `Retrying attempt ${retrying.execution.attempt}`
       : active
         ? "Running"
         : failed?.execution._tag === "Failed"
           ? "Failed"
-          : "Idle"
+          : undefined
 
   return (
     <section className="session-pane" aria-label={`Session: ${session.title}`}>
       <div className="session-heading">
-        <span className={active ? "session-live-dot" : "session-idle-dot"} />
-        <strong>{displayedSession.title}</strong>
-        <span>
-          {executionLabel} · {counts.agentMessageCount}{" "}
-          {counts.agentMessageCount === 1 ? "agent message" : "agent messages"} ·{" "}
-          {counts.toolCallCount} {counts.toolCallCount === 1 ? "tool call" : "tool calls"}
-        </span>
-        <button
-          type="button"
-          className={`session-layout-lab-button${layoutLab ? " session-layout-lab-button--active" : ""}`}
-          aria-pressed={layoutLab}
-          onClick={() => {
-            setLayoutLab((current) => !current)
-            setFollowLatest(true)
-          }}
-        >
-          Layout lab
-        </button>
-        <button
-          type="button"
-          className={`session-follow-button${followLatest ? " session-follow-button--active" : ""}`}
-          aria-pressed={followLatest}
-          aria-label={followLatest ? "Stop following latest node" : "Follow latest node"}
-          title={followLatest ? "Stop following latest node" : "Follow latest node"}
-          onClick={() => setFollowLatest((current) => !current)}
-        >
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            <circle cx="8" cy="8" r="4" />
-            <circle cx="8" cy="8" r="1" />
-            <path d="M8 1v14M1 8h14" />
-          </svg>
-        </button>
+        <strong>{session.title}</strong>
+        {executionLabel === undefined ? null : (
+          <span className="session-heading__status">{executionLabel}</span>
+        )}
         {active ? (
           <button
             type="button"
@@ -858,16 +846,31 @@ export function SessionPane({
         ) : null}
         {interruptError === null ? null : <span role="alert">{interruptError}</span>}
       </div>
-      <ReactFlowProvider key={layoutLab ? "layout-lab" : "session"}>
+      <button
+        type="button"
+        className={`session-follow-button${followLatest ? " session-follow-button--active" : ""}`}
+        aria-pressed={followLatest}
+        aria-label={followLatest ? "Stop following latest node" : "Follow latest node"}
+        title={followLatest ? "Stop following latest node" : "Follow latest node"}
+        onClick={() => setFollowLatest((current) => !current)}
+      >
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <circle cx="8" cy="8" r="4" />
+          <circle cx="8" cy="8" r="1" />
+          <path d="M8 1v14M1 8h14" />
+        </svg>
+      </button>
+      <ReactFlowProvider>
         <SessionCanvas
-          session={displayedSession}
-          descendants={displayedDescendants}
+          session={session}
+          descendants={descendants}
           followLatest={followLatest}
-          layoutLab={layoutLab}
           stopFollowing={stopFollowing}
           submitPrompt={submitPrompt}
           interruptSession={interruptSession}
           retryPrompt={retryPrompt}
+          focusPromptRequest={focusPromptRequest}
+          followLatestRequest={followLatestRequest}
         />
       </ReactFlowProvider>
     </section>
