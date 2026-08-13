@@ -17,7 +17,7 @@ function pierreOptions(
     lineDiffType: "none",
     unsafeCSS: `
     :host {
-      --diffs-font-family: var(--typography-monoFontFamily);
+      --diffs-font-family: var(--typography-uiFontFamily);
       --diffs-font-size: 9px;
       --diffs-line-height: 18px;
       --diffs-bg: var(--diff-background);

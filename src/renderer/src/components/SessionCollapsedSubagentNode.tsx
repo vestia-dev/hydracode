@@ -9,6 +9,7 @@ export interface SessionCollapsedSubagentNodeData extends Record<string, unknown
     readonly agent: string
     readonly expanded: boolean
     readonly id: string
+    readonly running: boolean
     readonly toggle: () => void
   }>
   readonly width: number
@@ -26,6 +27,7 @@ export function SessionCollapsedSubagentNode({
   const updateNodeInternals = useUpdateNodeInternals()
   const count = data.subagents.length
   const allExpanded = data.subagents.every((subagent) => subagent.expanded)
+  const running = data.subagents.some((subagent) => subagent.running)
   const allAction = allExpanded ? "Close all" : "Open all"
 
   useEffect(() => {
@@ -42,7 +44,11 @@ export function SessionCollapsedSubagentNode({
   }, [data.id, data.reportSize, data.width, updateNodeInternals])
 
   return (
-    <article ref={nodeRef} className="collapsed-subagent-node" style={{ width: data.width }}>
+    <article
+      ref={nodeRef}
+      className={`collapsed-subagent-node${running ? " collapsed-subagent-node--running" : ""}`}
+      style={{ width: data.width }}
+    >
       <Handle id="subagent-target" type="target" position={Position.Bottom} />
       <header className="round-side-node__heading collapsed-subagent-node__heading">
         <button

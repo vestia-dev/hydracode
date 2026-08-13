@@ -545,7 +545,9 @@ function messageNode(
 function isHiddenRoundContext(message: SessionMessage.Info | undefined) {
   return (
     message?.type === "system" ||
-    (message?.type === "synthetic" && message.description === "Continuing after restart")
+    (message?.type === "synthetic" &&
+      (message.description === "Continuing after restart" ||
+        message.metadata?.["source"] === "subagent"))
   )
 }
 
@@ -570,8 +572,16 @@ function branchEdges(nodes: ReadonlyArray<SemanticGraphNode>): ReadonlyArray<Sem
   return edges
 }
 
-export function projectMessages(messages: ReadonlyArray<SessionMessage.Info>): SemanticGraph {
+export function projectMessages(
+  messages: ReadonlyArray<SessionMessage.Info>,
+  sessionActive = false,
+): SemanticGraph {
   const nodes: Array<SemanticGraphNode> = []
+  const completedSubagentSessionIDs = messages.flatMap((message) => {
+    if (message.type !== "synthetic" || message.metadata?.["source"] !== "subagent") return []
+    const childID = message.metadata["childID"] ?? message.metadata["sessionID"]
+    return typeof childID === "string" ? [childID] : []
+  })
 
   for (let index = 0; index < messages.length;) {
     const message = messages[index]
@@ -622,5 +632,16 @@ export function projectMessages(messages: ReadonlyArray<SessionMessage.Info>): S
     }
   })
 
-  return { nodes, edges: [...timelineEdges, ...branchEdges(nodes)] }
+  if (sessionActive) {
+    const latestRoundIndex = nodes.findLastIndex((node) => node.kind === "round")
+    const latestRound = nodes[latestRoundIndex]
+    if (latestRound !== undefined && latestRound.status !== "error")
+      nodes[latestRoundIndex] = { ...latestRound, status: "running" }
+  }
+
+  return {
+    nodes,
+    edges: [...timelineEdges, ...branchEdges(nodes)],
+    completedSubagentSessionIDs,
+  }
 }

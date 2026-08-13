@@ -4,7 +4,6 @@ import { Effect, Fiber } from "effect"
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react"
 import { AppRuntime } from "../runtime"
 import type { DesktopBridge, DesktopBridgeError } from "../services/DesktopBridge"
-import { LoadingIndicator } from "./LoadingIndicator"
 
 type SubmissionState =
   | { readonly _tag: "Idle" }
@@ -160,7 +159,10 @@ export function SessionQuestionNode({ data }: NodeProps<SessionQuestionFlowNode>
   const allowCustom = question.custom !== false
 
   return (
-    <article className="event-node question-node" onKeyDown={handleKeys}>
+    <article
+      className={`event-node question-node${sending ? " question-node--running" : ""}`}
+      onKeyDown={handleKeys}
+    >
       <Handle id="timeline-target" type="target" position={Position.Left} />
       <header className="question-node__header">
         <div>
@@ -300,11 +302,6 @@ export function SessionQuestionNode({ data }: NodeProps<SessionQuestionFlowNode>
         </div>
       </footer>
 
-      {sending ? (
-        <LoadingIndicator
-          label={submission._tag === "Rejecting" ? "Dismissing question" : "Submitting answer"}
-        />
-      ) : null}
       {submission._tag === "Error" ? (
         <p className="question-node__error" role="alert">
           {submission.message}

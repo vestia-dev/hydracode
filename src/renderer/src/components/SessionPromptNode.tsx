@@ -1,15 +1,23 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react"
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react"
 import { Effect, Fiber } from "effect"
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react"
 import { AppRuntime } from "../runtime"
 import type { DesktopBridge, DesktopBridgeError } from "../services/DesktopBridge"
-import { LoadingIndicator } from "./LoadingIndicator"
+import { IconButton } from "./IconButton"
 
 type SubmissionState =
   | { readonly _tag: "Idle" }
   | { readonly _tag: "Submitting" }
   | { readonly _tag: "Submitted" }
-  | { readonly _tag: "Error"; readonly message: string }
+  | { readonly _tag: "Error" }
 
 const initialSubmissionState: SubmissionState = { _tag: "Idle" }
 
@@ -52,7 +60,7 @@ export function SessionPromptNode({ data }: NodeProps<SessionPromptFlowNode>) {
     appliedRetry.current = data.retryPrompt
     setText(data.retryPrompt.text)
     data.setDraft(data.retryPrompt.text)
-    setSubmission({ _tag: "Error", message: data.retryPrompt.message })
+    setSubmission({ _tag: "Error" })
   }, [data.retryPrompt])
 
   const submit = useCallback(
@@ -64,18 +72,22 @@ export function SessionPromptNode({ data }: NodeProps<SessionPromptFlowNode>) {
       const previousFiber = submissionFiber.current
       if (previousFiber !== null) AppRuntime.runFork(Fiber.interrupt(previousFiber))
       setSubmission({ _tag: "Submitting" })
+      setText("")
+      data.setDraft("")
       sawRunning.current = false
 
       const program = submitPrompt(prompt).pipe(
         Effect.tap(() =>
           Effect.sync(() => {
-            setText("")
-            data.setDraft("")
             setSubmission({ _tag: "Submitted" })
           }),
         ),
-        Effect.catch((error) =>
-          Effect.sync(() => setSubmission({ _tag: "Error", message: error.message })),
+        Effect.catch(() =>
+          Effect.sync(() => {
+            setText(prompt)
+            data.setDraft(prompt)
+            setSubmission({ _tag: "Error" })
+          }),
         ),
       )
       submissionFiber.current = AppRuntime.runFork(program)
@@ -101,6 +113,13 @@ export function SessionPromptNode({ data }: NodeProps<SessionPromptFlowNode>) {
     if (data.focusRequest === undefined || locked) return
     promptInput.current?.focus({ preventScroll: true })
   }, [data.focusRequest, locked])
+
+  useLayoutEffect(() => {
+    const input = promptInput.current
+    if (input === null) return
+    input.style.height = "auto"
+    input.style.height = `${String(input.scrollHeight)}px`
+  }, [text])
 
   const placeholder =
     agentRunning || promptPending
@@ -128,27 +147,18 @@ export function SessionPromptNode({ data }: NodeProps<SessionPromptFlowNode>) {
           }}
           onKeyDown={submitOnEnter}
         />
-        <button
+        <IconButton
           className="prompt-node__send nodrag nopan"
           type="submit"
-          aria-label="Send prompt"
+          label="Send prompt"
+          variant="filled"
           disabled={locked || text.trim() === ""}
         >
-          {submission._tag === "Submitting" ? "Sending" : "Send"}
-        </button>
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M3 8h9M8.5 4.5 12 8l-3.5 3.5" />
+          </svg>
+        </IconButton>
       </form>
-      {locked ? (
-        <LoadingIndicator
-          label={
-            submission._tag === "Submitting" || promptPending ? "Sending prompt" : "Agent working"
-          }
-        />
-      ) : null}
-      {submission._tag === "Error" ? (
-        <p className="prompt-node__error" role="alert">
-          {submission.message}
-        </p>
-      ) : null}
     </article>
   )
 }

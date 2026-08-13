@@ -6,6 +6,7 @@ import type { OpenCodeDiagnostics, OpenCodeServerDiagnostics } from "../../../sh
 import { AppRuntime } from "../runtime"
 import { DesktopBridge } from "../services/DesktopBridge"
 import { useTheme, useThemeUpdate } from "../theme"
+import { IconButton } from "./IconButton"
 
 const themeDescriptions: Record<BundledThemeID, string> = {
   "hydracode-dark": "Low-glare charcoal surfaces for focused work.",
@@ -172,16 +173,17 @@ export function SettingsModal({ close, returnFocus }: SettingsModalProps) {
             <h1 id={titleID}>Settings</h1>
             <p>Inspect the desktop runtime and choose how the interface looks and feels.</p>
           </div>
-          <button
+          <IconButton
             type="button"
             className="settings-modal__close"
-            aria-label="Close settings"
+            label="Close settings"
+            variant="ghost"
             onClick={close}
           >
             <svg viewBox="0 0 16 16" aria-hidden="true">
               <path d="m3 3 10 10M13 3 3 13" />
             </svg>
-          </button>
+          </IconButton>
         </header>
         <div className="settings-modal__content">
           <section className="settings-section" aria-labelledby="opencode-title">

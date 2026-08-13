@@ -118,6 +118,55 @@ html[data-platform="macos"] .project-header {
   cursor: pointer;
 }
 
+.icon-button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  padding: 0;
+  place-items: center;
+  border-radius: var(--radius-round);
+  cursor: pointer;
+}
+
+.icon-button svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+}
+
+.icon-button:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.icon-button--filled {
+  border: 0;
+  color: var(--color-accentText);
+  background: var(--color-accent);
+}
+
+.icon-button--ghost {
+  border: 0;
+  color: var(--color-textMuted);
+  background: transparent;
+}
+
+.icon-button--ghost:not(:disabled):hover {
+  color: var(--color-text);
+  background: var(--color-surfaceMuted);
+}
+
+.icon-button:disabled {
+  color: var(--color-textMuted);
+  background: color-mix(in srgb, var(--color-textMuted) 18%, var(--color-surfaceMuted));
+  cursor: default;
+}
+
 .open-project-button {
   padding: 5px 9px;
   font-size: 11px;
@@ -196,8 +245,8 @@ html[data-platform="macos"] .project-header {
 
 .project-icon {
   display: grid;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   flex: 0 0 auto;
   place-items: center;
   overflow: hidden;
@@ -304,7 +353,7 @@ html[data-platform="macos"] .project-header {
 
 .project-switcher__meta kbd {
   min-width: 20px;
-  font-family: var(--typography-monoFontFamily);
+  font-family: var(--typography-uiFontFamily);
   text-align: right;
 }
 
@@ -400,7 +449,7 @@ html[data-platform="macos"] .project-header {
   color: var(--color-textMuted);
   background: var(--color-surfaceMuted);
   box-shadow: 0 1px 0 color-mix(in srgb, var(--color-border) 80%, transparent);
-  font: 9px/1.5 var(--typography-monoFontFamily);
+  font: 9px/1.5 var(--typography-uiFontFamily);
   text-align: center;
   white-space: nowrap;
 }
@@ -589,17 +638,7 @@ html[data-platform="macos"] .project-header {
 }
 
 .settings-modal__close {
-  display: grid;
-  width: 30px;
-  height: 30px;
-  flex: 0 0 auto;
-  place-items: center;
-  padding: 0;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-medium);
-  color: var(--color-textMuted);
-  background: var(--color-surface);
-  cursor: pointer;
+  margin-top: 3px;
 }
 
 .settings-modal__close:hover,
@@ -608,15 +647,6 @@ html[data-platform="macos"] .project-header {
   color: var(--color-text);
   background: var(--color-surfaceMuted);
   box-shadow: var(--shadow-focus);
-}
-
-.settings-modal__close svg {
-  width: 14px;
-  height: 14px;
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-width: 1.5;
 }
 
 .settings-modal__content {
@@ -781,7 +811,7 @@ html[data-platform="macos"] .project-header {
 .diagnostics-list dd {
   margin: 5px 0 0;
   overflow-wrap: anywhere;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--typography-uiFontFamily);
   font-size: 11px;
   line-height: 1.45;
 }
@@ -1103,7 +1133,7 @@ html[data-platform="macos"] .project-header {
   outline: 0;
   color: var(--color-text);
   background: transparent;
-  font: 13px/1.55 var(--typography-monoFontFamily);
+  font: 13px/1.55 var(--typography-uiFontFamily);
 }
 
 .session-landing__composer textarea::placeholder {
@@ -1291,6 +1321,10 @@ html[data-platform="macos"] .project-header {
   pointer-events: auto;
 }
 
+.session-heading--following {
+  border-color: var(--color-accent);
+}
+
 .session-heading strong {
   max-width: 280px;
   overflow: hidden;
@@ -1303,48 +1337,6 @@ html[data-platform="macos"] .project-header {
 .session-heading__status {
   color: var(--color-textMuted);
   font-size: 10px;
-}
-
-.session-follow-button {
-  position: absolute;
-  z-index: 5;
-  right: 16px;
-  bottom: 16px;
-  display: inline-flex;
-  width: 32px;
-  height: 32px;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-small);
-  color: var(--color-textMuted);
-  background: color-mix(in srgb, var(--color-surface) 88%, transparent);
-  box-shadow: var(--shadow-subtle);
-  backdrop-filter: blur(10px);
-  font-size: 10px;
-  cursor: pointer;
-}
-
-.session-follow-button:hover {
-  border-color: var(--color-border);
-  color: var(--color-text);
-  background: var(--color-surfaceMuted);
-}
-
-.session-follow-button--active {
-  border-color: color-mix(in srgb, var(--color-accent) 30%, var(--color-border));
-  color: var(--color-accent);
-  background: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface));
-}
-
-.session-follow-button svg {
-  width: 12px;
-  height: 12px;
-  fill: none;
-  stroke: currentcolor;
-  stroke-linecap: round;
-  stroke-width: 1.25;
 }
 
 .event-node {
@@ -1360,47 +1352,9 @@ html[data-platform="macos"] .project-header {
 .event-node--running,
 .agent-node--running,
 .tool-group-node--running,
-.prompt-node--loading {
-  border-color: color-mix(in srgb, var(--color-accent) 38%, var(--color-border));
-}
-
-.loading-indicator {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 7px;
-  color: var(--color-textMuted);
-  font-size: 9px;
-  font-weight: 550;
-}
-
-.loading-indicator--compact {
-  flex: 0 0 auto;
-  gap: 4px;
-  margin: 0 0 0 auto;
-  font-size: 8px;
-}
-
-.loading-indicator__spinner {
-  width: 9px;
-  height: 9px;
-  flex: 0 0 auto;
-  border: 1.5px solid color-mix(in srgb, var(--color-accent) 25%, transparent);
-  border-top-color: var(--color-accent);
-  border-radius: var(--radius-round);
-  animation: loading-spin 700ms linear infinite;
-}
-
-@keyframes loading-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .loading-indicator__spinner {
-    animation: none;
-  }
+.prompt-node--loading,
+.question-node--running {
+  border-color: var(--color-accent);
 }
 
 .agent-node {
@@ -1427,26 +1381,24 @@ html[data-platform="macos"] .project-header {
   line-height: 1.45;
 }
 
-.round-node__history-button {
+.round-node__history-button,
+.round-node__stop-button {
   position: absolute;
-  top: 10px;
-  right: 12px;
-  z-index: 3;
-  padding: 0;
-  border: 0;
-  color: var(--color-accent);
-  background: transparent;
-  font: 650 8px/1.4 var(--typography-monoFontFamily);
-  cursor: pointer;
+  z-index: 1;
+  top: 8px;
+  right: 8px;
 }
 
-.round-node > .event-node__heading {
-  padding-right: 66px;
+.round-node__history-button--with-stop {
+  right: 36px;
 }
 
-.round-node__history-button:hover,
-.round-node__history-button:focus-visible {
-  text-decoration: underline;
+.round-node:has(.round-node__history-button, .round-node__stop-button) .event-node__heading {
+  padding-right: 26px;
+}
+
+.round-node:has(.round-node__history-button--with-stop) .event-node__heading {
+  padding-right: 54px;
 }
 
 .round-history-backdrop {
@@ -1492,7 +1444,7 @@ html[data-platform="macos"] .project-header {
 
 .round-history__heading small {
   color: var(--color-textMuted);
-  font: 8px/1.4 var(--typography-monoFontFamily);
+  font: 8px/1.4 var(--typography-uiFontFamily);
 }
 
 .round-history__heading button {
@@ -1542,7 +1494,7 @@ html[data-platform="macos"] .project-header {
 
 .round-history__entry > div:first-child > span {
   color: var(--color-textMuted);
-  font: 8px/1.4 var(--typography-monoFontFamily);
+  font: 8px/1.4 var(--typography-uiFontFamily);
   text-transform: uppercase;
 }
 
@@ -1627,6 +1579,10 @@ html[data-platform="macos"] .project-header {
   color: var(--color-text);
   background: var(--color-surface);
   box-shadow: var(--shadow-raised);
+}
+
+.collapsed-subagent-node--running {
+  border-color: var(--color-accent);
 }
 
 .round-tools-node {
@@ -1716,11 +1672,11 @@ html[data-platform="macos"] .project-header {
 
 .collapsed-subagent-list span {
   color: var(--color-textMuted);
-  font: 8px/1.4 var(--typography-monoFontFamily);
+  font: 8px/1.4 var(--typography-uiFontFamily);
 }
 
 .round-tools-node--running {
-  border-color: color-mix(in srgb, var(--color-accent) 38%, var(--color-border));
+  border-color: var(--color-accent);
 }
 
 .round-side-node__heading {
@@ -1732,7 +1688,7 @@ html[data-platform="macos"] .project-header {
   padding: 8px 10px;
   border-bottom: 1px solid var(--color-border);
   background: var(--color-surfaceMuted);
-  font: 650 9px/1.2 var(--typography-monoFontFamily);
+  font: 650 9px/1.2 var(--typography-uiFontFamily);
 }
 
 .round-side-node__heading > span {
@@ -1772,7 +1728,7 @@ html[data-platform="macos"] .project-header {
 .round-tools-list__item > span {
   overflow: hidden;
   color: var(--color-textMuted);
-  font: 8px/1.4 var(--typography-monoFontFamily);
+  font: 8px/1.4 var(--typography-uiFontFamily);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1806,7 +1762,7 @@ html[data-platform="macos"] .project-header {
   color: var(--color-text);
   background: color-mix(in srgb, var(--color-surface) 92%, var(--color-accent));
   box-shadow: var(--shadow-raised);
-  font: 650 9px/1.2 var(--typography-monoFontFamily);
+  font: 650 9px/1.2 var(--typography-uiFontFamily);
   cursor: pointer;
 }
 
@@ -1907,7 +1863,7 @@ html[data-platform="macos"] .project-header {
   min-width: 0;
   padding: 6px 8px;
   color: var(--color-textMuted);
-  font: 9px/1.4 var(--typography-monoFontFamily);
+  font: 9px/1.4 var(--typography-uiFontFamily);
   white-space: nowrap;
 }
 
@@ -1950,27 +1906,29 @@ html[data-platform="macos"] .project-header {
 .prompt-node {
   width: 270px;
   min-height: 0;
-  padding: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .prompt-node form {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: 7px;
+  position: relative;
 }
 
 .prompt-node__input {
   width: 100%;
   min-height: 48px;
-  padding: 7px 8px;
+  padding: 10px 42px 10px 11px;
+  overflow: hidden;
   resize: none;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-small);
   outline: none;
   color: var(--color-text);
   background: var(--color-surfaceMuted);
-  font: 9px/1.45 var(--typography-monoFontFamily);
+  font: 12px/1.45 var(--typography-uiFontFamily);
 }
 
 .prompt-node__input:focus {
@@ -1984,28 +1942,9 @@ html[data-platform="macos"] .project-header {
 }
 
 .prompt-node__send {
-  height: 28px;
-  padding: 0 9px;
-  border: 1px solid var(--color-accent);
-  border-radius: var(--radius-small);
-  color: var(--color-accentText);
-  background: var(--color-accent);
-  font-size: 9px;
-  font-weight: 650;
-  cursor: pointer;
-}
-
-.prompt-node__send:disabled {
-  border-color: var(--color-border);
-  color: var(--color-textMuted);
-  background: var(--color-surfaceMuted);
-  cursor: default;
-}
-
-.prompt-node .prompt-node__error {
-  margin-top: 6px;
-  color: var(--color-danger);
-  -webkit-line-clamp: 2;
+  position: absolute;
+  top: 10px;
+  right: 11px;
 }
 
 .question-node {
@@ -2206,7 +2145,7 @@ html[data-platform="macos"] .project-header {
   color: var(--color-text);
   background: var(--color-surfaceMuted);
   box-shadow: var(--shadow-focus);
-  font: 9px/1.45 var(--typography-monoFontFamily);
+  font: 9px/1.45 var(--typography-uiFontFamily);
 }
 
 .question-node__footer {
@@ -2276,7 +2215,7 @@ html[data-platform="macos"] .project-header {
   margin: 9px 0 0;
   overflow: hidden;
   color: var(--color-textMuted);
-  font-family: var(--typography-monoFontFamily);
+  font-family: var(--typography-uiFontFamily);
   font-size: 9px;
   line-height: 1.45;
   -webkit-box-orient: vertical;
@@ -2289,7 +2228,7 @@ html[data-platform="macos"] .project-header {
   overflow: hidden;
   overflow-wrap: anywhere;
   color: var(--color-textMuted);
-  font-family: var(--typography-monoFontFamily);
+  font-family: var(--typography-uiFontFamily);
   font-size: 9px;
   line-height: 1.45;
 }
@@ -2342,7 +2281,7 @@ html[data-platform="macos"] .project-header {
   padding: 0.08em 0.28em;
   border-radius: var(--radius-small);
   background: var(--color-surfaceMuted);
-  font-family: var(--typography-monoFontFamily);
+  font-family: var(--typography-uiFontFamily);
   font-size: 0.92em;
 }
 
@@ -2500,7 +2439,7 @@ button.tool-call-group__summary:hover {
 .tool-group-call__detail {
   overflow: hidden;
   color: var(--color-textMuted);
-  font-family: var(--typography-monoFontFamily);
+  font-family: var(--typography-uiFontFamily);
   font-size: 8px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2548,7 +2487,7 @@ button.tool-call-group__summary:hover {
 
 .tool-patch-file__summary strong {
   overflow: hidden;
-  font-family: var(--typography-monoFontFamily);
+  font-family: var(--typography-uiFontFamily);
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2583,7 +2522,7 @@ button.tool-call-group__summary:hover {
 .tool-patch-file__changes {
   display: flex;
   gap: 4px;
-  font-family: var(--typography-monoFontFamily);
+  font-family: var(--typography-uiFontFamily);
   font-size: 8px;
 }
 
@@ -2633,7 +2572,7 @@ button.tool-call-group__summary:hover {
   margin: 0;
   padding: 10px;
   color: var(--color-danger);
-  font: 9px/1.45 var(--typography-monoFontFamily);
+  font: 9px/1.45 var(--typography-uiFontFamily);
 }
 
 .agent-node__identity {
@@ -2643,7 +2582,7 @@ button.tool-call-group__summary:hover {
   margin-left: auto;
   overflow: hidden;
   color: var(--color-textMuted);
-  font-family: var(--typography-monoFontFamily);
+  font-family: var(--typography-uiFontFamily);
   font-size: 7px;
   font-weight: 400;
   text-overflow: ellipsis;

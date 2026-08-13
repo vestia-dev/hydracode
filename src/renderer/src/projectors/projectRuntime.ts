@@ -17,7 +17,7 @@ export function projectSessionView(
   value: ProjectSession,
   optimisticPrompts: ReadonlyArray<OptimisticPrompt> = [],
 ): SessionView {
-  const authoritativeGraph = projectMessages(value.messages)
+  const authoritativeGraph = projectMessages(value.messages, value.active)
   const reconciled = reconcileOptimisticPrompts(optimisticPrompts, value.messages)
   return {
     id: Schema.decodeUnknownSync(Session.ID)(value.id),

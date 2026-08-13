@@ -1,7 +1,6 @@
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react"
 import type { GraphNodeKind, GraphNodeStatus } from "../domain/graph"
 import { MarkdownContent } from "./MarkdownContent"
-import { LoadingIndicator } from "./LoadingIndicator"
 
 export interface SessionEventNodeData extends Record<string, unknown> {
   readonly kind: GraphNodeKind
@@ -27,7 +26,6 @@ export function SessionEventNode({ data }: NodeProps<SessionEventFlowNode>) {
       ) : null}
       <div className="event-node__heading">
         <span>{data.title}</span>
-        {data.status === "running" ? <LoadingIndicator label="Running" compact /> : null}
       </div>
       {data.kind === "shell" ? (
         <p>{detail}</p>

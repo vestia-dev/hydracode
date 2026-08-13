@@ -46,6 +46,7 @@ it.effect("appends an optimistic prompt as the next timeline round", () =>
           },
         ],
         edges: [],
+        completedSubagentSessionIDs: [],
       },
       [prompt],
     )

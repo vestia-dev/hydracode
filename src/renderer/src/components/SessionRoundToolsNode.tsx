@@ -2,7 +2,6 @@ import { useEffect, useRef } from "react"
 import { Handle, Position, useUpdateNodeInternals, type Node, type NodeProps } from "@xyflow/react"
 import type { GraphNodeStatus, GraphRoundTools } from "../domain/graph"
 import { groupToolCalls } from "../projectors/toolCallGroups"
-import { LoadingIndicator } from "./LoadingIndicator"
 
 export interface SessionRoundToolsNodeData extends Record<string, unknown> {
   readonly id: string
@@ -58,7 +57,6 @@ export function SessionRoundToolsNode({ data }: NodeProps<SessionRoundToolsFlowN
           <li key={group.id} className="round-tools-list__item">
             <strong>{group.name}</strong>
             <span title={group.detail}>{group.detail || "No input"}</span>
-            {group.status === "running" ? <LoadingIndicator label="Running" compact /> : null}
           </li>
         ))}
       </ol>

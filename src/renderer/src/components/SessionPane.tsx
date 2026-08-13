@@ -87,8 +87,9 @@ interface SessionPaneProps {
   readonly updateUIState: (update: Partial<Omit<PaneUIState, "paneID">>) => void
 }
 
-interface SessionCanvasProps extends Omit<SessionPaneProps, "interruptSession"> {
+interface SessionCanvasProps extends SessionPaneProps {
   readonly followLatest: boolean
+  readonly stopFamily: () => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
   readonly stopFollowing: () => void
 }
 
@@ -151,6 +152,7 @@ function roundFlowNode(
   horizontalSides: boolean,
   expanded: boolean,
   collapseSubagent: (() => void) | undefined,
+  stop: (() => void) | undefined,
   reportSize: (id: string, width: number, height: number) => void,
   toggleExpanded: (id: string) => void,
 ): SessionRoundFlowNode {
@@ -171,6 +173,7 @@ function roundFlowNode(
       reportSize,
       toggleExpanded,
       ...(collapseSubagent === undefined ? {} : { collapseSubagent }),
+      ...(stop === undefined ? {} : { stop }),
     },
   }
 }
@@ -229,8 +232,10 @@ function SessionCanvas({
   session,
   descendants,
   followLatest,
+  stopFamily,
   stopFollowing,
   submitPrompt,
+  interruptSession,
   replyQuestion,
   rejectQuestion,
   retryPrompt,
@@ -357,11 +362,13 @@ function SessionCanvas({
           readonly agent: string
           readonly expanded: boolean
           readonly id: string
+          readonly running: boolean
         }>
       }
     >()
     const splitToolNodeIDs = new Set<string>()
     const subagentRoundIDs = new Set<string>()
+    const runningSubagentIDs = new Set<string>()
     const positionedSessions = new Set<string>()
 
     const positionSession = (
@@ -400,6 +407,7 @@ function SessionCanvas({
                       id: call.id,
                       nodeID: node.id,
                       roundID,
+                      status: call.status,
                       created: call.time.created,
                       sessionIDs:
                         call.subagentSessionID === undefined ? [] : [call.subagentSessionID],
@@ -517,9 +525,11 @@ function SessionCanvas({
           const agent =
             firstChildNode.round?.agent?.agents.join(", ") || firstChildNode.title || "Subagent"
           const expanded = expandedSubagents.has(child.id)
+          const running = !current.graph.completedSubagentSessionIDs.includes(child.id)
+          if (running) runningSubagentIDs.add(child.id)
           const existing = collapsedSubagents.get(parentRound.id)
           if (existing !== undefined) {
-            existing.subagents.push({ agent, expanded, id: child.id })
+            existing.subagents.push({ agent, expanded, id: child.id, running })
           } else {
             const tools = current.graph.nodes.find((node) => node.id === launcher.nodeID)
             const toolsHeight =
@@ -541,7 +551,7 @@ function SessionCanvas({
                 collapsedSize,
               ),
               width: toolsWidth,
-              subagents: [{ agent, expanded, id: child.id }],
+              subagents: [{ agent, expanded, id: child.id, running }],
             })
             childConnections.push({ source: parentRound.id, target: collapsedID })
           }
@@ -573,6 +583,13 @@ function SessionCanvas({
         const position = positions.get(node.id)
         if (position === undefined) continue
         if (node.kind === "round" && node.round !== undefined) {
+          const latestRound = current.graph.nodes.findLast(
+            (candidate) => candidate.kind === "round",
+          )
+          const status =
+            runningSubagentIDs.has(current.id) && latestRound?.id === node.id
+              ? "running"
+              : node.status
           const hasTools = current.graph.nodes.some(
             (candidate) =>
               candidate.kind === "round-tools" && candidate.agentRunID === node.agentRunID,
@@ -583,7 +600,7 @@ function SessionCanvas({
           )
           nodes.push(
             roundFlowNode(
-              { ...node, round: node.round },
+              { ...node, status, round: node.round },
               position,
               subagentRootNodeIDs.has(node.id),
               hasTools,
@@ -593,6 +610,16 @@ function SessionCanvas({
               expandedRounds.has(node.id),
               subagentRootNodeIDs.has(node.id) && expandedSubagents.has(current.id)
                 ? () => toggleSubagent(current.id)
+                : undefined,
+              status === "running"
+                ? () => {
+                    AppRuntime.runFork(
+                      (current.id === session.id
+                        ? stopFamily()
+                        : interruptSession(current.id)
+                      ).pipe(Effect.ignore),
+                    )
+                  }
                 : undefined,
               reportRoundSize,
               toggleRound,
@@ -777,8 +804,10 @@ function SessionCanvas({
     replyQuestion,
     rejectQuestion,
     focusPromptRequest,
+    interruptSession,
     session,
     sideNodeSizes,
+    stopFamily,
     submitPrompt,
     toggleRound,
     toggleSubagent,
@@ -882,14 +911,27 @@ export function SessionPane({
   updateUIState,
 }: SessionPaneProps) {
   const sessions = [session, ...descendants]
-  const [interrupting, setInterrupting] = useState(false)
-  const [interruptError, setInterruptError] = useState<string | null>(null)
   const [followLatest, setFollowLatest] = useState(uiState?.followLatest ?? true)
   const appliedFollowStateRequest = useRef<number | undefined>(undefined)
   const stopFollowing = useCallback(() => {
     setFollowLatest(false)
     updateUIState({ followLatest: false })
   }, [updateUIState])
+  const submitPromptAndFollow = useCallback(
+    (sessionID: SessionView["id"], text: string) => {
+      setFollowLatest(true)
+      updateUIState({ followLatest: true })
+      return submitPrompt(sessionID, text)
+    },
+    [submitPrompt, updateUIState],
+  )
+  const stopFamily = useCallback(
+    () =>
+      Effect.forEach(descendants.toReversed(), (current) => interruptSession(current.id), {
+        discard: true,
+      }).pipe(Effect.andThen(interruptSession(session.id))),
+    [descendants, interruptSession, session.id],
+  )
   useEffect(() => {
     if (
       followLatestRequest === undefined ||
@@ -914,63 +956,24 @@ export function SessionPane({
 
   return (
     <section className="session-pane" aria-label={`Session: ${session.title}`}>
-      <div className="session-heading">
+      <div
+        className={`session-heading${followLatest ? " session-heading--following" : ""}`}
+        aria-label={followLatest ? "Following latest node" : undefined}
+      >
         <strong>{session.title}</strong>
         {executionLabel === undefined ? null : (
           <span className="session-heading__status">{executionLabel}</span>
         )}
-        {active ? (
-          <button
-            type="button"
-            className="open-project-button"
-            disabled={interrupting}
-            onClick={() => {
-              setInterrupting(true)
-              setInterruptError(null)
-              AppRuntime.runFork(
-                interruptSession(session.id).pipe(
-                  Effect.tap(() => Effect.sync(() => setInterrupting(false))),
-                  Effect.catch((error) =>
-                    Effect.sync(() => {
-                      setInterrupting(false)
-                      setInterruptError(error.message)
-                    }),
-                  ),
-                ),
-              )
-            }}
-          >
-            {interrupting ? "Stopping" : "Stop"}
-          </button>
-        ) : null}
-        {interruptError === null ? null : <span role="alert">{interruptError}</span>}
       </div>
-      <button
-        type="button"
-        className={`session-follow-button${followLatest ? " session-follow-button--active" : ""}`}
-        aria-pressed={followLatest}
-        aria-label={followLatest ? "Stop following latest node" : "Follow latest node"}
-        title={followLatest ? "Stop following latest node" : "Follow latest node"}
-        onClick={() =>
-          setFollowLatest((current) => {
-            updateUIState({ followLatest: !current })
-            return !current
-          })
-        }
-      >
-        <svg viewBox="0 0 16 16" aria-hidden="true">
-          <circle cx="8" cy="8" r="4" />
-          <circle cx="8" cy="8" r="1" />
-          <path d="M8 1v14M1 8h14" />
-        </svg>
-      </button>
       <ReactFlowProvider>
         <SessionCanvas
           session={session}
           descendants={descendants}
           followLatest={followLatest}
+          stopFamily={stopFamily}
           stopFollowing={stopFollowing}
-          submitPrompt={submitPrompt}
+          submitPrompt={submitPromptAndFollow}
+          interruptSession={interruptSession}
           replyQuestion={replyQuestion}
           rejectQuestion={rejectQuestion}
           retryPrompt={retryPrompt}

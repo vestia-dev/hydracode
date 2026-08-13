@@ -53,6 +53,24 @@ it.effect("shows only the question text for question tools", () =>
   }),
 )
 
+it.effect("summarizes subagent tools without exposing their raw prompt", () =>
+  Effect.sync(() => {
+    expect(
+      formatToolCallDetail("subagent", {
+        agent: "general",
+        description: "Research Rust async",
+        prompt: "A long internal delegation prompt",
+      }),
+    ).toBe("Research Rust async")
+    expect(formatToolCallDetail("subagent", { agent: "explore", prompt: "Inspect sessions" })).toBe(
+      "explore",
+    )
+    expect(
+      formatToolCallDetail("task", { subagent_type: "explore", prompt: "Inspect sessions" }),
+    ).toBe("explore")
+  }),
+)
+
 it.effect("falls back to compact structured input for unknown tools", () =>
   Effect.sync(() => {
     expect(formatToolCallDetail("custom-tool", { value: "hello" })).toBe('{"value":"hello"}')

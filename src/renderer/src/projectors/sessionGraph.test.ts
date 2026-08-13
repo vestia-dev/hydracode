@@ -83,6 +83,17 @@ function restartMessage(created: number) {
   } satisfies SessionMessage.Synthetic
 }
 
+function subagentResult(id: string, childID: string, created: number) {
+  return {
+    id: messageID(id),
+    type: "synthetic",
+    text: `<subagent id="${childID}" state="completed">Result</subagent>`,
+    description: "Research topic",
+    metadata: { source: "subagent", childID, agent: "General", state: "completed" },
+    time: { created: timestamp(created) },
+  } satisfies SessionMessage.Synthetic
+}
+
 function effectSessionMessages() {
   return [
     userMessage(),
@@ -210,6 +221,61 @@ it.effect("hides restart context without splitting the surrounding round", () =>
   }),
 )
 
+it.effect("keeps completed subagent results inside their originating round", () =>
+  Effect.sync(() => {
+    const graph = projectMessages([
+      userMessage(),
+      assistantMessage(
+        "message-launch-1",
+        [tool("call-subagent-1", "subagent", { agent: "general" }, 2_010)],
+        2_000,
+      ),
+      assistantMessage(
+        "message-launch-2",
+        [tool("call-subagent-2", "subagent", { agent: "general" }, 3_010)],
+        3_000,
+      ),
+      assistantMessage(
+        "message-launch-3",
+        [tool("call-subagent-3", "subagent", { agent: "general" }, 4_010)],
+        4_000,
+      ),
+      subagentResult("message-result-1", "session-child-1", 5_000),
+      assistantMessage(
+        "message-progress-1",
+        [{ type: "text", text: "One report is complete.", state: { phase: "commentary" } }],
+        6_000,
+      ),
+      subagentResult("message-result-2", "session-child-2", 7_000),
+      assistantMessage(
+        "message-progress-2",
+        [{ type: "text", text: "Two reports are complete.", state: { phase: "commentary" } }],
+        8_000,
+      ),
+      subagentResult("message-result-3", "session-child-3", 9_000),
+      assistantMessage(
+        "message-response",
+        [{ type: "text", text: "All reports are complete." }],
+        10_000,
+        "stop",
+      ),
+    ])
+
+    expect(graph.nodes.map((node) => node.kind)).toEqual(["round", "round-tools"])
+    expect(graph.nodes.find((node) => node.kind === "round")?.agent?.messageIDs).toEqual([
+      "message-launch-1",
+      "message-launch-2",
+      "message-launch-3",
+      "message-progress-1",
+      "message-progress-2",
+      "message-response",
+    ])
+    expect(graph.nodes.find((node) => node.kind === "round-tools")?.roundTools?.calls).toHaveLength(
+      3,
+    )
+  }),
+)
+
 it.effect("keeps commentary, reasoning, and response inside the round exactly once", () =>
   Effect.sync(() => {
     const graph = projectMessages(effectSessionMessages())
@@ -262,6 +328,31 @@ it.effect("keeps a stable round identity before assistant work arrives", () =>
     expect(completed.nodes[0]?.id).toBe("round:message-user")
     expect(pending.nodes[0]?.round?.agent).toBeUndefined()
     expect(completed.nodes[0]?.round?.agent?.messageIDs).toEqual(["message-assistant"])
+  }),
+)
+
+it.effect("marks the latest round running while its session is active", () =>
+  Effect.sync(() => {
+    const graph = projectMessages(
+      [
+        userMessage(),
+        assistantMessage("message-assistant", [{ type: "text", text: "Streaming text" }], 2_000),
+      ],
+      true,
+    )
+
+    expect(graph.nodes.find((node) => node.kind === "round")?.status).toBe("running")
+  }),
+)
+
+it.effect("records completed subagent sessions from hidden result messages", () =>
+  Effect.sync(() => {
+    const graph = projectMessages([
+      userMessage(),
+      subagentResult("subagent-result", "child-1", 2_000),
+    ])
+
+    expect(graph.completedSubagentSessionIDs).toEqual(["child-1"])
   }),
 )
 

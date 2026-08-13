@@ -30,6 +30,14 @@ export function formatToolCallDetail(
   const normalizedName = name.toLowerCase().replaceAll(/[-_]/g, "")
   const path = stringField(input, "path") ?? stringField(input, "filePath")
 
+  if (normalizedName === "subagent" || normalizedName === "task") {
+    const detail =
+      stringField(input, "description") ??
+      stringField(input, "agent") ??
+      stringField(input, "subagent_type")
+    return detail === undefined ? fallbackDetail(input) : compactText(detail)
+  }
+
   if (normalizedName === "grep" || normalizedName === "glob") {
     const pattern = stringField(input, "pattern")
     return pattern === undefined ? fallbackDetail(input) : compactText(pattern)

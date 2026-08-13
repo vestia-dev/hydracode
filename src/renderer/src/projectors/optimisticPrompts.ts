@@ -91,5 +91,6 @@ export function projectOptimisticPrompts(
   return {
     nodes: [...graph.nodes, ...optimisticNodes],
     edges: [...graph.edges, ...optimisticEdges],
+    completedSubagentSessionIDs: graph.completedSubagentSessionIDs,
   }
 }

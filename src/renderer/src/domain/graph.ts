@@ -143,4 +143,5 @@ export interface SemanticGraphEdge {
 export interface SemanticGraph {
   readonly nodes: ReadonlyArray<SemanticGraphNode>
   readonly edges: ReadonlyArray<SemanticGraphEdge>
+  readonly completedSubagentSessionIDs: ReadonlyArray<string>
 }
