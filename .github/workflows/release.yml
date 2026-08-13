@@ -61,7 +61,7 @@ jobs:
         run: |
           codesign --verify --deep --strict dist/mac-arm64/HydraCode.app
           spctl --assess --type execute dist/mac-arm64/HydraCode.app
-          xcrun stapler validate dist/*.dmg
+          xcrun stapler validate dist/mac-arm64/HydraCode.app
 
       - name: Publish GitHub release
         env:
