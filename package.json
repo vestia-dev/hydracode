@@ -10,7 +10,7 @@
     "dev": "electron-vite dev",
     "dev:debug": "electron-vite dev --remoteDebuggingPort 9333",
     "build": "electron-vite build",
-    "package:mac": "bun run build && electron-builder --mac --arm64 --config electron-builder.config.ts",
+    "package:mac": "bun run build && electron-builder --mac --arm64 --publish never --config electron-builder.config.ts",
     "package:mac:dir": "bun run build && electron-builder --mac --arm64 --dir --config electron-builder.config.ts",
     "preview": "electron-vite preview",
     "lint": "oxfmt --write . && oxlint --type-aware --type-check --fix --report-unused-disable-directives --deny-warnings .",
