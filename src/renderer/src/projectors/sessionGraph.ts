@@ -542,6 +542,13 @@ function messageNode(
   }
 }
 
+function isHiddenRoundContext(message: SessionMessage.Info | undefined) {
+  return (
+    message?.type === "system" ||
+    (message?.type === "synthetic" && message.description === "Continuing after restart")
+  )
+}
+
 function branchEdges(nodes: ReadonlyArray<SemanticGraphNode>): ReadonlyArray<SemanticGraphEdge> {
   const edges: Array<SemanticGraphEdge> = []
   const agentNodes = nodes.filter((node) => node.kind === "round")
@@ -575,13 +582,13 @@ export function projectMessages(messages: ReadonlyArray<SessionMessage.Info>): S
       while (index < messages.length) {
         const candidate = messages[index]
         if (candidate?.type === "assistant") assistantMessages.push(candidate)
-        else if (candidate?.type !== "system") break
+        else if (!isHiddenRoundContext(candidate)) break
         index += 1
       }
       nodes.push(...roundNode(message, assistantMessages))
       continue
     }
-    if (message.type === "system") {
+    if (isHiddenRoundContext(message)) {
       index += 1
       continue
     }
@@ -595,7 +602,7 @@ export function projectMessages(messages: ReadonlyArray<SessionMessage.Info>): S
     while (index < messages.length) {
       const candidate = messages[index]
       if (candidate?.type === "assistant") assistantMessages.push(candidate)
-      else if (candidate?.type !== "system") break
+      else if (!isHiddenRoundContext(candidate)) break
       index += 1
     }
     nodes.push(...roundNode(undefined, assistantMessages))

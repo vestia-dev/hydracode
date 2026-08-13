@@ -2,11 +2,12 @@ import type { Dispatch, PointerEvent, ReactNode, SetStateAction } from "react"
 import { Effect } from "effect"
 import type { ProjectSnapshot, SessionView } from "../services/OpenCodeGateway"
 import type { DesktopBridge, DesktopBridgeError } from "../services/DesktopBridge"
+import type { Question } from "@opencode-ai/client/effect"
 import { groupSessionFamilies } from "../projectors/projectSessions"
 import { setPaneSession, setSplitRatio, type PaneLayout } from "../projectors/paneLayout"
 import { SessionLanding } from "./SessionLanding"
 import { SessionPane } from "./SessionPane"
-import type { SavedLayout } from "../../../shared/layout"
+import type { PaneUIState } from "../../../shared/applicationState"
 
 interface ProjectViewProps {
   readonly snapshot: ProjectSnapshot
@@ -15,8 +16,6 @@ interface ProjectViewProps {
   readonly promptFocusRequest: { readonly paneID: string; readonly sequence: number } | null
   readonly followLatestRequest: { readonly paneID: string; readonly sequence: number } | null
   readonly landingError: string | null
-  readonly savedLayouts: ReadonlyArray<SavedLayout>
-  readonly savedLayoutsError: string | null
   readonly setActivePane: (paneID: string) => void
   readonly setLayout: Dispatch<SetStateAction<PaneLayout>>
   readonly selectSession: (
@@ -26,12 +25,16 @@ interface ProjectViewProps {
     text: string,
     selectCreated?: (sessionID: SessionView["id"] | undefined) => void,
   ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
-  readonly openSavedLayout: (
-    layout: SavedLayout,
-  ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
   readonly submitPrompt: (
     sessionID: SessionView["id"],
     text: string,
+  ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
+  readonly replyQuestion: (
+    request: Question.Request,
+    answers: ReadonlyArray<Question.Answer>,
+  ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
+  readonly rejectQuestion: (
+    request: Question.Request,
   ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
   readonly interruptSession: (
     sessionID: SessionView["id"],
@@ -41,6 +44,8 @@ interface ProjectViewProps {
     readonly text: string
     readonly message: string
   } | null
+  readonly paneUIStates: ReadonlyMap<string, PaneUIState>
+  readonly updatePaneUIState: (paneID: string, update: Partial<Omit<PaneUIState, "paneID">>) => void
 }
 
 function SplitDivider({
@@ -126,7 +131,7 @@ export function ProjectView(props: ProjectViewProps) {
     return (
       <div
         key={layout.id}
-        className={`workspace-pane${props.activePaneID === layout.id ? " workspace-pane--active" : ""}`}
+        className={`project-pane${props.activePaneID === layout.id ? " project-pane--active" : ""}`}
         onPointerDownCapture={() => props.setActivePane(layout.id)}
       >
         {family === undefined ? (
@@ -134,11 +139,8 @@ export function ProjectView(props: ProjectViewProps) {
             <SessionLanding
               snapshot={props.snapshot}
               initialError={props.landingError}
-              savedLayouts={props.savedLayouts}
-              savedLayoutsError={props.savedLayoutsError}
               createSession={createInPane}
               selectSession={selectInPane}
-              openSavedLayout={props.openSavedLayout}
               focusRequest={
                 props.promptFocusRequest?.paneID === layout.id
                   ? props.promptFocusRequest.sequence
@@ -154,9 +156,12 @@ export function ProjectView(props: ProjectViewProps) {
           )
         ) : (
           <SessionPane
+            key={family.root.id}
             session={family.root}
             descendants={family.descendants}
             submitPrompt={props.submitPrompt}
+            replyQuestion={props.replyQuestion}
+            rejectQuestion={props.rejectQuestion}
             interruptSession={props.interruptSession}
             retryPrompt={
               props.promptRetry?.sessionID === family.root.id ? props.promptRetry : undefined
@@ -171,11 +176,13 @@ export function ProjectView(props: ProjectViewProps) {
                 ? props.followLatestRequest.sequence
                 : undefined
             }
+            uiState={props.paneUIStates.get(layout.id)}
+            updateUIState={(update) => props.updatePaneUIState(layout.id, update)}
           />
         )}
       </div>
     )
   }
 
-  return <div className="pane-workspace">{renderLayout(props.layout)}</div>
+  return <div className="pane-layout">{renderLayout(props.layout)}</div>
 }

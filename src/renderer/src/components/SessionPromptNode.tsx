@@ -19,13 +19,15 @@ export interface SessionPromptNodeData extends Record<string, unknown> {
   readonly submitPrompt: (text: string) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
   readonly retryPrompt?: { readonly text: string; readonly message: string }
   readonly focusRequest?: number
+  readonly draft: string
+  readonly setDraft: (draft: string) => void
 }
 
 export type SessionPromptFlowNode = Node<SessionPromptNodeData, "sessionPrompt">
 
 export function SessionPromptNode({ data }: NodeProps<SessionPromptFlowNode>) {
   const { agentRunning, promptPending, submitPrompt } = data
-  const [text, setText] = useState("")
+  const [text, setText] = useState(data.draft)
   const [submission, setSubmission] = useState<SubmissionState>(initialSubmissionState)
   const appliedRetry = useRef<typeof data.retryPrompt>(undefined)
   const sawRunning = useRef(false)
@@ -49,6 +51,7 @@ export function SessionPromptNode({ data }: NodeProps<SessionPromptFlowNode>) {
     if (data.retryPrompt === undefined || appliedRetry.current === data.retryPrompt) return
     appliedRetry.current = data.retryPrompt
     setText(data.retryPrompt.text)
+    data.setDraft(data.retryPrompt.text)
     setSubmission({ _tag: "Error", message: data.retryPrompt.message })
   }, [data.retryPrompt])
 
@@ -67,6 +70,7 @@ export function SessionPromptNode({ data }: NodeProps<SessionPromptFlowNode>) {
         Effect.tap(() =>
           Effect.sync(() => {
             setText("")
+            data.setDraft("")
             setSubmission({ _tag: "Submitted" })
           }),
         ),
@@ -119,6 +123,7 @@ export function SessionPromptNode({ data }: NodeProps<SessionPromptFlowNode>) {
           placeholder={placeholder}
           onChange={(event) => {
             setText(event.target.value)
+            data.setDraft(event.target.value)
             if (submission._tag === "Error") setSubmission(initialSubmissionState)
           }}
           onKeyDown={submitOnEnter}

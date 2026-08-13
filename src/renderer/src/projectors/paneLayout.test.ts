@@ -1,10 +1,11 @@
 import { expect, it } from "@effect/vitest"
 import { Effect } from "effect"
 import {
+  clearMissingPaneSessions,
   adjacentPaneID,
   closePane,
+  hasPane,
   initialPaneLayout,
-  paneCount,
   paneInDirection,
   paneSessionIDs,
   restorePaneLayout,
@@ -48,11 +49,10 @@ it.effect("serializes and restores split dimensions and pane sessions", () =>
 
     expect(restorePaneLayout(saved)).toEqual(setPaneSession(split, "one", "session-1"))
     expect(paneSessionIDs(split)).toEqual(["session-2"])
-    expect(paneCount(split)).toBe(2)
   }),
 )
 
-it.effect("rejects malformed saved layout graphs", () =>
+it.effect("rejects malformed persisted pane graphs", () =>
   Effect.sync(() => {
     expect(
       restorePaneLayout({
@@ -119,5 +119,28 @@ it.effect("closes a pane, collapses its split, and identifies the adjacent pane"
     expect(adjacentPaneID(nested, "three")).toBe("two")
     expect(closePane(nested, "three")).toEqual(right)
     expect(closePane(initialPaneLayout("one"), "one")).toEqual(initialPaneLayout("one"))
+  }),
+)
+
+it.effect("clears only missing sessions and validates the active pane", () =>
+  Effect.sync(() => {
+    const split = splitPane(
+      setPaneSession(initialPaneLayout("one"), "one", "session-1"),
+      "one",
+      "right",
+      "split",
+      "two",
+    )
+    const assigned = setPaneSession(split, "two", "session-2")
+    expect(hasPane(assigned, "two")).toBe(true)
+    expect(hasPane(assigned, "missing")).toBe(false)
+    expect(clearMissingPaneSessions(assigned, new Set(["session-1"]))).toEqual({
+      _tag: "Split",
+      id: "split",
+      direction: "horizontal",
+      ratio: 0.5,
+      first: { _tag: "Pane", id: "one" },
+      second: { _tag: "Pane", id: "two", sessionID: "session-2" },
+    })
   }),
 )

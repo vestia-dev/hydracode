@@ -73,6 +73,16 @@ function systemMessage(id: string, created: number) {
   } satisfies SessionMessage.System
 }
 
+function restartMessage(created: number) {
+  return {
+    id: messageID("message-restart"),
+    type: "synthetic",
+    text: "The server restarted while you were working. Continue from where you left off without repeating completed work.",
+    description: "Continuing after restart",
+    time: { created: timestamp(created) },
+  } satisfies SessionMessage.Synthetic
+}
+
 function effectSessionMessages() {
   return [
     userMessage(),
@@ -170,6 +180,33 @@ it.effect("hides system messages without splitting their surrounding round", () 
       3,
     )
     expect(graph.nodes.some((node) => node.kind === "system")).toBe(false)
+  }),
+)
+
+it.effect("hides restart context without splitting the surrounding round", () =>
+  Effect.sync(() => {
+    const graph = projectMessages([
+      userMessage(),
+      assistantMessage(
+        "message-assistant-before-restart",
+        [{ type: "text", text: "Work before restart." }],
+        2_000,
+      ),
+      restartMessage(3_000),
+      systemMessage("message-system-after-restart", 3_100),
+      assistantMessage(
+        "message-assistant-after-restart",
+        [{ type: "text", text: "Work after restart." }],
+        4_000,
+      ),
+    ])
+
+    expect(graph.nodes.filter((node) => node.kind === "round")).toHaveLength(1)
+    expect(graph.nodes.some((node) => node.id === "message-restart")).toBe(false)
+    expect(graph.nodes.find((node) => node.kind === "round")?.agent?.messageIDs).toEqual([
+      "message-assistant-before-restart",
+      "message-assistant-after-restart",
+    ])
   }),
 )
 

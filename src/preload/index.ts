@@ -10,7 +10,6 @@ const paneFocusListeners = new Set<(direction: "right" | "down" | "left" | "up")
 const paneCloseListeners = new Set<() => void>()
 const promptFocusListeners = new Set<() => void>()
 const followLatestListeners = new Set<() => void>()
-const layoutSaveListeners = new Set<() => void>()
 let updateSubscription: Promise<unknown> | undefined
 
 ipcRenderer.on(DesktopChannels.updateState, (_event, state: unknown) => {
@@ -43,26 +42,28 @@ ipcRenderer.on(DesktopChannels.followLatest, () => {
   for (const listener of followLatestListeners) listener()
 })
 
-ipcRenderer.on(DesktopChannels.layoutSave, () => {
-  for (const listener of layoutSaveListeners) listener()
-})
-
 const desktopApi: HydraCodeDesktopApi = {
   platform: process.platform,
   loadTheme: () => ipcRenderer.invoke(DesktopChannels.loadTheme),
   setBundledTheme: (command) => ipcRenderer.invoke(DesktopChannels.setBundledTheme, command),
   selectProject: () => ipcRenderer.invoke(DesktopChannels.selectProject),
   listProjects: () => ipcRenderer.invoke(DesktopChannels.listProjects),
+  loadApplicationState: () => ipcRenderer.invoke(DesktopChannels.loadApplicationState),
+  saveProjectSelection: (state) => ipcRenderer.invoke(DesktopChannels.saveProjectSelection, state),
+  saveProjectUIState: (state) => ipcRenderer.invoke(DesktopChannels.saveProjectUIState, state),
   openProject: (command) => ipcRenderer.invoke(DesktopChannels.openProject, command),
   closeProject: (command) => ipcRenderer.invoke(DesktopChannels.closeProject, command),
   selectSession: (command) => ipcRenderer.invoke(DesktopChannels.selectSession, command),
   createSession: (command) => ipcRenderer.invoke(DesktopChannels.createSession, command),
   submitPrompt: (command) => ipcRenderer.invoke(DesktopChannels.submitPrompt, command),
+  replyQuestion: (command) => ipcRenderer.invoke(DesktopChannels.replyQuestion, command),
+  rejectQuestion: (command) => ipcRenderer.invoke(DesktopChannels.rejectQuestion, command),
   interrupt: (command) => ipcRenderer.invoke(DesktopChannels.interrupt, command),
-  listSavedLayouts: (command) => ipcRenderer.invoke(DesktopChannels.listSavedLayouts, command),
-  saveLayout: (command) => ipcRenderer.invoke(DesktopChannels.saveLayout, command),
+  getOpenCodeDiagnostics: () => ipcRenderer.invoke(DesktopChannels.openCodeDiagnostics),
+  installOpenCode: () => ipcRenderer.invoke(DesktopChannels.installOpenCode),
   checkForUpdates: () => ipcRenderer.invoke(DesktopChannels.updateCheck),
   installUpdate: () => ipcRenderer.invoke(DesktopChannels.updateInstall),
+  restartForUpdate: () => ipcRenderer.invoke(DesktopChannels.updateRestart),
   onUpdateState: (listener) => {
     updateListeners.add(listener)
     updateSubscription ??= ipcRenderer.invoke(DesktopChannels.updateSubscribe)
@@ -92,10 +93,6 @@ const desktopApi: HydraCodeDesktopApi = {
   onFollowLatest: (listener) => {
     followLatestListeners.add(listener)
     return () => followLatestListeners.delete(listener)
-  },
-  onLayoutSave: (listener) => {
-    layoutSaveListeners.add(listener)
-    return () => layoutSaveListeners.delete(listener)
   },
 }
 

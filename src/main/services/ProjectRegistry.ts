@@ -1,5 +1,6 @@
 import {
   Location,
+  Question,
   Session,
   SessionMessage,
   type OpenCodeClient,
@@ -10,18 +11,22 @@ import { Schema } from "effect"
 import {
   reduceSessionLog,
   hydrateSessionLogState,
+  questionFormAnswer,
+  questionFormID,
+  questionFromForm,
+  sessionIDFromEvent,
   type SessionLogState,
 } from "../../shared/projectors/sessionLog"
 import type {
   ProjectDetails,
-  ProjectCatalogItem,
+  AvailableProject,
   ProjectSession,
   ProjectSnapshot,
   ProjectUpdate,
 } from "../../shared/project"
 import type { CreateSessionResult } from "../../shared/project"
 import {
-  projectCatalogItems,
+  availableProjects,
   projectName,
   projectSessionSummaries,
   sessionRootID,
@@ -43,7 +48,6 @@ interface Entry {
   readonly directories: Set<string>
   readonly client: OpenCodeClient
   readonly info: Map<string, Session.Info>
-  readonly sessions: Map<string, ProjectSession>
   readonly logs: Map<string, SessionLogState>
   readonly active: Set<string>
   readonly subscribers: Map<string, Subscriber>
@@ -55,9 +59,10 @@ interface Entry {
 }
 
 interface ProjectRegistryShape {
-  readonly list: Effect.Effect<ReadonlyArray<ProjectCatalogItem>, unknown>
+  readonly list: Effect.Effect<ReadonlyArray<AvailableProject>, unknown>
+  readonly resolve: (location: Location.Ref) => Effect.Effect<AvailableProject, unknown>
   readonly open: (
-    location: Location.Ref,
+    location: Location.Ref | undefined,
     notify: (subscriptionID: string, update: ProjectUpdate) => void,
   ) => Effect.Effect<string, unknown>
   readonly close: (subscriptionID: string) => Effect.Effect<void, unknown>
@@ -71,6 +76,17 @@ interface ProjectRegistryShape {
     sessionID: string,
     text: string,
   ) => Effect.Effect<void, unknown>
+  readonly replyQuestion: (
+    subscriptionID: string,
+    sessionID: string,
+    requestID: string,
+    answers: ReadonlyArray<Question.Answer>,
+  ) => Effect.Effect<void, unknown>
+  readonly rejectQuestion: (
+    subscriptionID: string,
+    sessionID: string,
+    requestID: string,
+  ) => Effect.Effect<void, unknown>
   readonly interrupt: (subscriptionID: string, sessionID: string) => Effect.Effect<void, unknown>
 }
 
@@ -83,7 +99,7 @@ const emit = (entry: Entry, update: ProjectUpdate) => {
   for (const subscriber of entry.subscribers.values()) subscriber.notify(subscriber.id, update)
 }
 const snapshot = (entry: Entry, location: Location.Ref): ProjectSnapshot => {
-  const catalog = Array.from(entry.info.values(), (session) => ({
+  const sessionMetadata = Array.from(entry.info.values(), (session) => ({
     id: String(session.id),
     ...(session.parentID == null ? {} : { parentID: String(session.parentID) }),
     created: DateTime.toEpochMillis(session.time.created),
@@ -92,8 +108,8 @@ const snapshot = (entry: Entry, location: Location.Ref): ProjectSnapshot => {
   return {
     project: entry.project,
     location,
-    sessions: Array.from(entry.sessions.values()),
-    recentSessions: projectSessionSummaries(catalog, entry.active),
+    sessions: Array.from(entry.logs, ([sessionID, state]) => sessionView(entry, sessionID, state)),
+    recentSessions: projectSessionSummaries(sessionMetadata, entry.active),
   }
 }
 const sessionView = (entry: Entry, sessionID: string, state: SessionLogState): ProjectSession => {
@@ -113,6 +129,7 @@ const sessionView = (entry: Entry, sessionID: string, state: SessionLogState): P
     synchronized: state.synchronized,
     execution: state.execution,
     messages: state.messages,
+    questions: state.questions,
   }
 }
 const isSelected = (entry: Entry, session: Session.Info) =>
@@ -148,16 +165,41 @@ export const ProjectRegistryLive = Layer.effect(
       }
     }
 
-    const list: Effect.Effect<ReadonlyArray<ProjectCatalogItem>, unknown> = openCode.client.pipe(
+    const list: Effect.Effect<ReadonlyArray<AvailableProject>, unknown> = openCode.client.pipe(
       Effect.flatMap((client) => client.project.list()),
-      Effect.map(projectCatalogItems),
+      Effect.map(availableProjects),
     )
+
+    const resolve = (location: Location.Ref) =>
+      Effect.gen(function* () {
+        const client = yield* openCode.client
+        const current = yield* client.project.current({
+          location: {
+            directory: location.directory,
+            ...(location.workspaceID === undefined ? {} : { workspace: location.workspaceID }),
+          },
+        })
+        const projects = yield* client.project.list()
+        const info = projects.find((project) => project.id === current.id)
+        return {
+          project: {
+            id: current.id,
+            canonical: info?.canonical ?? current.canonical,
+            ...projectName(info?.name),
+            ...(info?.icon === undefined ? {} : { icon: info.icon }),
+          },
+          location: Location.Ref.make({
+            directory: current.directory,
+            ...(location.workspaceID === undefined ? {} : { workspaceID: location.workspaceID }),
+          }),
+          updated: info?.time.updated ?? Date.now(),
+        }
+      })
 
     const removeSession = (entry: Entry, sessionID: string) =>
       Effect.sync(() => {
         entry.info.delete(sessionID)
         entry.logs.delete(sessionID)
-        entry.sessions.delete(sessionID)
         entry.active.delete(sessionID)
         if (entry.ready) {
           emit(entry, { _tag: "Removed", projectID: entry.project.id, sessionID })
@@ -168,7 +210,6 @@ export const ProjectRegistryLive = Layer.effect(
       const state = entry.logs.get(sessionID)
       if (state === undefined) return
       const next = sessionView(entry, sessionID, state)
-      entry.sessions.set(sessionID, next)
       if (entry.ready) emit(entry, { _tag: "Session", projectID: entry.project.id, session: next })
     }
 
@@ -176,8 +217,22 @@ export const ProjectRegistryLive = Layer.effect(
       Effect.gen(function* () {
         entry.info.set(info.id, info)
         const sequence = yield* captureWatermark(entry.client, info.id)
-        const messages = yield* entry.client.session.context({ sessionID: info.id })
-        entry.logs.set(info.id, hydrateSessionLogState(info.id, messages, sequence))
+        const [messages, questions, forms] = yield* Effect.all(
+          [
+            entry.client.session.context({ sessionID: info.id }),
+            entry.client.question.list({ sessionID: info.id }),
+            entry.client.form.list({ sessionID: info.id }),
+          ],
+          { concurrency: "unbounded" },
+        )
+        const formQuestions = forms.flatMap((form) => {
+          const question = questionFromForm(form)
+          return question === undefined ? [] : [question]
+        })
+        entry.logs.set(
+          info.id,
+          hydrateSessionLogState(info.id, messages, sequence, [...questions, ...formQuestions]),
+        )
         publish(entry, info.id)
       })
 
@@ -193,7 +248,6 @@ export const ProjectRegistryLive = Layer.effect(
           const state = entry.logs.get(info.id)
           if (state === undefined) return hydrate(entry, info)
           const next = sessionView(entry, info.id, state)
-          entry.sessions.set(info.id, next)
           if (entry.ready) {
             emit(entry, { _tag: "Session", projectID: entry.project.id, session: next })
           }
@@ -206,8 +260,9 @@ export const ProjectRegistryLive = Layer.effect(
 
     const apply = (entry: Entry, event: OpenCodeEvent): Effect.Effect<void, ProjectRegistryError> =>
       Effect.gen(function* () {
-        if (!("sessionID" in event.data) || typeof event.data.sessionID !== "string") return
-        const sessionID = Schema.decodeUnknownSync(Session.ID)(event.data.sessionID)
+        const eventSessionID = sessionIDFromEvent(event)
+        if (eventSessionID === undefined) return
+        const sessionID = Schema.decodeUnknownSync(Session.ID)(eventSessionID)
         const current = entry.logs.get(sessionID)
         if (current === undefined) {
           yield* refreshSession(entry, sessionID)
@@ -304,8 +359,9 @@ export const ProjectRegistryLive = Layer.effect(
           yield* reconcileSessions(entry)
           return
         }
-        if (!("sessionID" in event.data) || typeof event.data.sessionID !== "string") return
-        const sessionID = Schema.decodeUnknownSync(Session.ID)(event.data.sessionID)
+        const eventSessionID = sessionIDFromEvent(event)
+        if (eventSessionID === undefined) return
+        const sessionID = Schema.decodeUnknownSync(Session.ID)(eventSessionID)
         const known = entry.info.has(sessionID)
         const belongsToProject =
           known ||
@@ -396,17 +452,23 @@ export const ProjectRegistryLive = Layer.effect(
       })
 
     const open = (
-      location: Location.Ref,
+      location: Location.Ref | undefined,
       notify: (subscriptionID: string, update: ProjectUpdate) => void,
     ): Effect.Effect<string, unknown> =>
       Effect.gen(function* () {
         const client = yield* openCode.client
-        const current = yield* client.project.current({
-          location: {
-            directory: location.directory,
-            ...(location.workspaceID === undefined ? {} : { workspace: location.workspaceID }),
-          },
-        })
+        const current = yield* client.project.current(
+          location === undefined
+            ? undefined
+            : {
+                location: {
+                  directory: location.directory,
+                  ...(location.workspaceID === undefined
+                    ? {}
+                    : { workspace: location.workspaceID }),
+                },
+              },
+        )
         const [projects, directories] = yield* Effect.all(
           [client.project.list(), client.project.directories({ projectID: current.id })],
           { concurrency: "unbounded" },
@@ -420,7 +482,7 @@ export const ProjectRegistryLive = Layer.effect(
         }
         const resolvedLocation = Location.Ref.make({
           directory: current.directory,
-          ...(location.workspaceID === undefined ? {} : { workspaceID: location.workspaceID }),
+          ...(location?.workspaceID === undefined ? {} : { workspaceID: location.workspaceID }),
         })
         const knownDirectories = new Set(directories.map((item) => item.directory))
         knownDirectories.add(current.directory)
@@ -432,7 +494,6 @@ export const ProjectRegistryLive = Layer.effect(
             directories: knownDirectories,
             client,
             info: new Map(),
-            sessions: new Map(),
             logs: new Map(),
             active: new Set(),
             selectedRootIDs: new Set(),
@@ -513,11 +574,12 @@ export const ProjectRegistryLive = Layer.effect(
         entry.selectedRootIDs.add(info.id)
         yield* hydrate(entry, info)
         emitSnapshot(entry)
-        const session = entry.sessions.get(info.id)
-        if (session === undefined)
+        const state = entry.logs.get(info.id)
+        if (state === undefined)
           return yield* Effect.fail(
             new ProjectRegistryError({ message: "The new session could not be projected." }),
           )
+        const session = sessionView(entry, info.id, state)
         return { _tag: "Success", session } as const
       })
     const submitPrompt = (
@@ -555,13 +617,87 @@ export const ProjectRegistryLive = Layer.effect(
           sessionID: Schema.decodeUnknownSync(Session.ID)(sessionID),
         })
       })
+    const replyQuestion = (
+      subscriptionID: string,
+      sessionID: string,
+      requestID: string,
+      answers: ReadonlyArray<Question.Answer>,
+    ): Effect.Effect<void, unknown> =>
+      Effect.gen(function* () {
+        const subscription = subscriptions.get(subscriptionID)
+        if (subscription === undefined)
+          return yield* Effect.fail(
+            new ProjectRegistryError({ message: "Project subscription is closed" }),
+          )
+        const { entry } = subscription
+        const decodedSessionID = Schema.decodeUnknownSync(Session.ID)(sessionID)
+        const formID = questionFormID(requestID)
+        const decodedRequestID = Schema.decodeUnknownSync(Question.ID)(requestID)
+        if (formID === undefined) {
+          yield* entry.client.question.reply({
+            sessionID: decodedSessionID,
+            requestID: decodedRequestID,
+            answers,
+          })
+        } else {
+          const form = yield* entry.client.form.get({ sessionID: decodedSessionID, formID })
+          yield* entry.client.form.reply({
+            sessionID: decodedSessionID,
+            formID,
+            answer: questionFormAnswer(form, answers),
+          })
+        }
+        const state = entry.logs.get(decodedSessionID)
+        if (state === undefined) return yield* Effect.void
+        entry.logs.set(decodedSessionID, {
+          ...state,
+          questions: state.questions.filter((request) => request.id !== decodedRequestID),
+        })
+        publish(entry, decodedSessionID)
+        return yield* Effect.void
+      })
+    const rejectQuestion = (
+      subscriptionID: string,
+      sessionID: string,
+      requestID: string,
+    ): Effect.Effect<void, unknown> =>
+      Effect.gen(function* () {
+        const subscription = subscriptions.get(subscriptionID)
+        if (subscription === undefined)
+          return yield* Effect.fail(
+            new ProjectRegistryError({ message: "Project subscription is closed" }),
+          )
+        const { entry } = subscription
+        const decodedSessionID = Schema.decodeUnknownSync(Session.ID)(sessionID)
+        const formID = questionFormID(requestID)
+        const decodedRequestID = Schema.decodeUnknownSync(Question.ID)(requestID)
+        if (formID === undefined) {
+          yield* entry.client.question.reject({
+            sessionID: decodedSessionID,
+            requestID: decodedRequestID,
+          })
+        } else {
+          yield* entry.client.form.cancel({ sessionID: decodedSessionID, formID })
+        }
+        const state = entry.logs.get(decodedSessionID)
+        if (state === undefined) return yield* Effect.void
+        entry.logs.set(decodedSessionID, {
+          ...state,
+          questions: state.questions.filter((request) => request.id !== decodedRequestID),
+        })
+        publish(entry, decodedSessionID)
+        return yield* Effect.void
+      })
     return ProjectRegistry.of({
       list,
+      resolve,
       open,
       close,
       selectSession,
       createSession,
       submitPrompt,
+      replyQuestion,
+      rejectQuestion,
       interrupt,
     })
   }),

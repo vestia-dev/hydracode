@@ -1,7 +1,12 @@
 import { expect, it } from "@effect/vitest"
 import type { OpenCodeEvent, SessionMessage } from "@opencode-ai/client/effect"
 import { Effect } from "effect"
-import { createSessionLogState, hydrateSessionLogState, reduceSessionLog } from "./sessionLog"
+import {
+  createSessionLogState,
+  hydrateSessionLogState,
+  questionFormAnswer,
+  reduceSessionLog,
+} from "./sessionLog"
 
 function asEvent(input: object): OpenCodeEvent {
   // Fixtures intentionally bridge the SDK's branded decoded event type.
@@ -99,6 +104,125 @@ it.effect("hydrates existing context at the captured durable watermark", () =>
       synchronized: true,
       messages: [{ id: "message-1", text: "existing" }],
     })
+  }),
+)
+
+it.effect("projects pending question requests until they are replied to or rejected", () =>
+  Effect.sync(() => {
+    const asked = asEvent({
+      id: "evt-question-1",
+      created: 1000,
+      type: "question.asked",
+      data: {
+        id: "que_1",
+        sessionID: "session-1",
+        questions: [
+          {
+            header: "Approach",
+            question: "Which approach should be used?",
+            options: [{ label: "Simple", description: "Use the smallest change" }],
+          },
+        ],
+      },
+    })
+    const projected = reduceSessionLog(createSessionLogState("session-1"), asked)
+
+    expect(projected.state.questions).toMatchObject([
+      { id: "que_1", questions: [{ header: "Approach" }] },
+    ])
+
+    const replied = reduceSessionLog(
+      projected.state,
+      asEvent({
+        id: "evt-question-2",
+        created: 2000,
+        type: "question.replied",
+        data: { sessionID: "session-1", requestID: "que_1", answers: [["Simple"]] },
+      }),
+    )
+    expect(replied.state.questions).toEqual([])
+
+    const restored = reduceSessionLog(replied.state, asked)
+    const rejected = reduceSessionLog(
+      restored.state,
+      asEvent({
+        id: "evt-question-3",
+        created: 3000,
+        type: "question.rejected",
+        data: { sessionID: "session-1", requestID: "que_1" },
+      }),
+    )
+    expect(rejected.state.questions).toEqual([])
+  }),
+)
+
+it.effect("projects question forms and maps selected labels back to form values", () =>
+  Effect.sync(() => {
+    const created = asEvent({
+      id: "evt-form-1",
+      created: 1000,
+      type: "form.created",
+      data: {
+        form: {
+          id: "frm_1",
+          sessionID: "session-1",
+          title: "Questions",
+          metadata: { kind: "question" },
+          fields: [
+            {
+              key: "q0",
+              title: "Season",
+              description: "Which season?",
+              type: "string",
+              options: [{ value: "autumn", label: "Autumn", description: "Cool weather" }],
+              custom: true,
+            },
+          ],
+        },
+      },
+    })
+    if (created.type !== "form.created") throw new Error("Expected a form.created fixture")
+    const projected = reduceSessionLog(createSessionLogState("session-1"), created)
+
+    expect(projected.state.questions).toMatchObject([
+      {
+        id: "que_frm_1",
+        questions: [{ header: "Season", question: "Which season?" }],
+      },
+    ])
+    expect(questionFormAnswer(created.data.form, [["Autumn"]])).toEqual({ q0: "autumn" })
+
+    const replied = reduceSessionLog(
+      projected.state,
+      asEvent({
+        id: "evt-form-2",
+        created: 2000,
+        type: "form.replied",
+        data: { id: "frm_1", sessionID: "session-1", answer: { q0: "autumn" } },
+      }),
+    )
+    expect(replied.state.questions).toEqual([])
+  }),
+)
+
+it.effect("ignores question requests for another session", () =>
+  Effect.sync(() => {
+    const reduction = reduceSessionLog(
+      createSessionLogState("session-1"),
+      asEvent({
+        id: "evt-question-other",
+        created: 1000,
+        type: "question.asked",
+        data: {
+          id: "que_other",
+          sessionID: "session-2",
+          questions: [],
+        },
+      }),
+    )
+
+    expect(reduction.status).toBe("ignored")
+    expect(reduction.state.questions).toEqual([])
   }),
 )
 

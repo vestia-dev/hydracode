@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Effect } from "effect"
+import type { Question } from "@opencode-ai/client/effect"
 import {
   Background,
   BackgroundVariant,
@@ -12,6 +13,7 @@ import {
   type EdgeTypes,
   type NodeChange,
   type NodeTypes,
+  type Viewport,
 } from "@xyflow/react"
 import type { SemanticGraphNode } from "../domain/graph"
 import {
@@ -41,9 +43,11 @@ import {
 } from "./SessionCollapsedSubagentNode"
 import { SessionEventNode, type SessionEventFlowNode } from "./SessionEventNode"
 import { SessionPromptNode, type SessionPromptFlowNode } from "./SessionPromptNode"
+import { SessionQuestionNode, type SessionQuestionFlowNode } from "./SessionQuestionNode"
 import { SessionSpokeEdge } from "./SessionSpokeEdge"
 import { useTheme } from "../theme"
 import { AppRuntime } from "../runtime"
+import type { PaneUIState } from "../../../shared/applicationState"
 
 const nodeTypes: NodeTypes = {
   sessionRound: SessionRoundNode,
@@ -52,6 +56,7 @@ const nodeTypes: NodeTypes = {
   sessionCollapsedSubagent: SessionCollapsedSubagentNode,
   sessionEvent: SessionEventNode,
   sessionPrompt: SessionPromptNode,
+  sessionQuestion: SessionQuestionNode,
 }
 
 const edgeTypes: EdgeTypes = {
@@ -68,12 +73,21 @@ interface SessionPaneProps {
   readonly interruptSession: (
     sessionID: SessionView["id"],
   ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
+  readonly replyQuestion: (
+    request: Question.Request,
+    answers: ReadonlyArray<Question.Answer>,
+  ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
+  readonly rejectQuestion: (
+    request: Question.Request,
+  ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
   readonly retryPrompt: { readonly text: string; readonly message: string } | undefined
   readonly focusPromptRequest: number | undefined
   readonly followLatestRequest: number | undefined
+  readonly uiState: PaneUIState | undefined
+  readonly updateUIState: (update: Partial<Omit<PaneUIState, "paneID">>) => void
 }
 
-interface SessionCanvasProps extends SessionPaneProps {
+interface SessionCanvasProps extends Omit<SessionPaneProps, "interruptSession"> {
   readonly followLatest: boolean
   readonly stopFollowing: () => void
 }
@@ -85,10 +99,12 @@ type FlowNode =
   | SessionRoundArtifactsFlowNode
   | SessionCollapsedSubagentFlowNode
   | SessionPromptFlowNode
+  | SessionQuestionFlowNode
 
 const ROUND_WIDTH = 420
 const EVENT_WIDTH = 220
 const PROMPT_WIDTH = 270
+const QUESTION_WIDTH = 400
 const ROUND_COLLAPSED_HEIGHT = 92
 
 interface NodeSize {
@@ -167,6 +183,8 @@ function promptFlowNode(
   submitPrompt: (text: string) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>,
   retryPrompt: { readonly text: string; readonly message: string } | undefined,
   focusRequest: number | undefined,
+  draft: string,
+  setDraft: (draft: string) => void,
 ): SessionPromptFlowNode {
   return {
     id,
@@ -176,7 +194,32 @@ function promptFlowNode(
       agentRunning,
       promptPending,
       submitPrompt,
+      draft,
+      setDraft,
       ...(retryPrompt === undefined ? {} : { retryPrompt }),
+      ...(focusRequest === undefined ? {} : { focusRequest }),
+    },
+  }
+}
+
+function questionFlowNode(
+  id: string,
+  position: { readonly x: number; readonly y: number },
+  request: Question.Request,
+  reply: (
+    answers: ReadonlyArray<Question.Answer>,
+  ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>,
+  reject: () => Effect.Effect<void, DesktopBridgeError, DesktopBridge>,
+  focusRequest: number | undefined,
+): SessionQuestionFlowNode {
+  return {
+    id,
+    type: "sessionQuestion",
+    position,
+    data: {
+      request,
+      reply,
+      reject,
       ...(focusRequest === undefined ? {} : { focusRequest }),
     },
   }
@@ -188,49 +231,73 @@ function SessionCanvas({
   followLatest,
   stopFollowing,
   submitPrompt,
+  replyQuestion,
+  rejectQuestion,
   retryPrompt,
   focusPromptRequest,
   followLatestRequest,
+  uiState,
+  updateUIState,
 }: SessionCanvasProps) {
   const measuredNodeSizes = useRef(new Map<string, NonNullable<FlowNode["measured"]>>())
   const appliedFocusPromptRequest = useRef<number | undefined>(undefined)
   const appliedFollowLatestRequest = useRef<number | undefined>(undefined)
-  const [expandedRounds, setExpandedRounds] = useState<ReadonlySet<string>>(() => new Set())
-  const [expandedSubagents, setExpandedSubagents] = useState<ReadonlySet<string>>(() => new Set())
+  const [expandedRounds, setExpandedRounds] = useState<ReadonlySet<string>>(
+    () => new Set(uiState?.expandedRoundIDs ?? []),
+  )
+  const [expandedSubagents, setExpandedSubagents] = useState<ReadonlySet<string>>(
+    () => new Set(uiState?.expandedSubagentIDs ?? []),
+  )
   const [roundSizes, setRoundSizes] = useState<ReadonlyMap<string, NodeSize>>(() => new Map())
   const [sideNodeSizes, setSideNodeSizes] = useState<ReadonlyMap<string, NodeSize>>(() => new Map())
   const nodeDistance = useTheme().layout.nodeDistance
 
-  const toggleRound = useCallback((id: string) => {
-    setExpandedRounds((current) => {
-      const next = new Set(current)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }, [])
-  const toggleSubagent = useCallback((id: string) => {
-    setExpandedSubagents((current) => {
-      const next = new Set(current)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }, [])
-  const openSubagents = useCallback((ids: ReadonlyArray<string>) => {
-    setExpandedSubagents((current) => {
-      const next = new Set(current)
-      for (const id of ids) next.add(id)
-      return next
-    })
-  }, [])
-  const closeSubagents = useCallback((ids: ReadonlyArray<string>) => {
-    setExpandedSubagents((current) => {
-      const next = new Set(current)
-      for (const id of ids) next.delete(id)
-      return next
-    })
-  }, [])
+  const toggleRound = useCallback(
+    (id: string) => {
+      setExpandedRounds((current) => {
+        const next = new Set(current)
+        if (next.has(id)) next.delete(id)
+        else next.add(id)
+        updateUIState({ expandedRoundIDs: Array.from(next) })
+        return next
+      })
+    },
+    [updateUIState],
+  )
+  const toggleSubagent = useCallback(
+    (id: string) => {
+      setExpandedSubagents((current) => {
+        const next = new Set(current)
+        if (next.has(id)) next.delete(id)
+        else next.add(id)
+        updateUIState({ expandedSubagentIDs: Array.from(next) })
+        return next
+      })
+    },
+    [updateUIState],
+  )
+  const openSubagents = useCallback(
+    (ids: ReadonlyArray<string>) => {
+      setExpandedSubagents((current) => {
+        const next = new Set(current)
+        for (const id of ids) next.add(id)
+        updateUIState({ expandedSubagentIDs: Array.from(next) })
+        return next
+      })
+    },
+    [updateUIState],
+  )
+  const closeSubagents = useCallback(
+    (ids: ReadonlyArray<string>) => {
+      setExpandedSubagents((current) => {
+        const next = new Set(current)
+        for (const id of ids) next.delete(id)
+        updateUIState({ expandedSubagentIDs: Array.from(next) })
+        return next
+      })
+    },
+    [updateUIState],
+  )
   const reportRoundSize = useCallback((id: string, width: number, height: number) => {
     setRoundSizes((current) => {
       const currentSize = current.get(id)
@@ -259,6 +326,8 @@ function SessionCanvas({
 
   const flow = useMemo(() => {
     const sessions = [session, ...descendants]
+    const questionRequest = sessions.flatMap((current) => current.questions)[0]
+    const composerWidth = questionRequest === undefined ? PROMPT_WIDTH : QUESTION_WIDTH
     const timelineDistance = roundTimelineDistance(nodeDistance)
     const subagentRootNodeIDs = new Set(
       descendants.flatMap((current) => {
@@ -306,7 +375,7 @@ function SessionCanvas({
       const timeline = timelinePositions(
         [
           ...timelineNodes.map((node) => timelineNodeWidth(node, roundSizes)),
-          ...(includeComposer ? [PROMPT_WIDTH] : []),
+          ...(includeComposer ? [composerWidth] : []),
         ],
         timelineDistance,
         origin,
@@ -605,15 +674,26 @@ function SessionCanvas({
       })),
     )
     nodes.push(
-      promptFlowNode(
-        composer.id,
-        composerPosition,
-        sessions.some((current) => current.active),
-        sessions.some((current) => current.optimisticPrompts.length > 0),
-        (text) => submitPrompt(session.id, text),
-        retryPrompt,
-        focusPromptRequest,
-      ),
+      questionRequest === undefined
+        ? promptFlowNode(
+            composer.id,
+            composerPosition,
+            sessions.some((current) => current.active),
+            sessions.some((current) => current.optimisticPrompts.length > 0),
+            (text) => submitPrompt(session.id, text),
+            retryPrompt,
+            focusPromptRequest,
+            uiState?.draft ?? "",
+            (draft) => updateUIState({ draft }),
+          )
+        : questionFlowNode(
+            composer.id,
+            composerPosition,
+            questionRequest,
+            (answers) => replyQuestion(questionRequest, answers),
+            () => rejectQuestion(questionRequest),
+            focusPromptRequest,
+          ),
     )
 
     const edges: Array<Edge> = sessions
@@ -694,6 +774,8 @@ function SessionCanvas({
     reportSideNodeSize,
     roundSizes,
     retryPrompt,
+    replyQuestion,
+    rejectQuestion,
     focusPromptRequest,
     session,
     sideNodeSizes,
@@ -762,6 +844,8 @@ function SessionCanvas({
       onMoveStart={(event) => {
         if (event !== null && followLatest) stopFollowing()
       }}
+      onMoveEnd={(_event, viewport: Viewport) => updateUIState({ viewport })}
+      {...(uiState?.viewport === undefined ? {} : { defaultViewport: uiState.viewport })}
       onInit={(instance) => {
         const focusNodeID = flow.focusNodeID
         if (!followLatest || focusNodeID === undefined) return
@@ -788,19 +872,34 @@ export function SessionPane({
   session,
   descendants,
   submitPrompt,
+  replyQuestion,
+  rejectQuestion,
   interruptSession,
   retryPrompt,
   focusPromptRequest,
   followLatestRequest,
+  uiState,
+  updateUIState,
 }: SessionPaneProps) {
   const sessions = [session, ...descendants]
   const [interrupting, setInterrupting] = useState(false)
   const [interruptError, setInterruptError] = useState<string | null>(null)
-  const [followLatest, setFollowLatest] = useState(true)
-  const stopFollowing = useCallback(() => setFollowLatest(false), [])
+  const [followLatest, setFollowLatest] = useState(uiState?.followLatest ?? true)
+  const appliedFollowStateRequest = useRef<number | undefined>(undefined)
+  const stopFollowing = useCallback(() => {
+    setFollowLatest(false)
+    updateUIState({ followLatest: false })
+  }, [updateUIState])
   useEffect(() => {
-    if (followLatestRequest !== undefined) setFollowLatest(true)
-  }, [followLatestRequest])
+    if (
+      followLatestRequest === undefined ||
+      appliedFollowStateRequest.current === followLatestRequest
+    )
+      return
+    appliedFollowStateRequest.current = followLatestRequest
+    setFollowLatest(true)
+    updateUIState({ followLatest: true })
+  }, [followLatestRequest, updateUIState])
   const active = sessions.some((current) => current.active)
   const retrying = sessions.find((current) => current.execution._tag === "Retrying")
   const failed = sessions.find((current) => current.execution._tag === "Failed")
@@ -852,7 +951,12 @@ export function SessionPane({
         aria-pressed={followLatest}
         aria-label={followLatest ? "Stop following latest node" : "Follow latest node"}
         title={followLatest ? "Stop following latest node" : "Follow latest node"}
-        onClick={() => setFollowLatest((current) => !current)}
+        onClick={() =>
+          setFollowLatest((current) => {
+            updateUIState({ followLatest: !current })
+            return !current
+          })
+        }
       >
         <svg viewBox="0 0 16 16" aria-hidden="true">
           <circle cx="8" cy="8" r="4" />
@@ -867,10 +971,13 @@ export function SessionPane({
           followLatest={followLatest}
           stopFollowing={stopFollowing}
           submitPrompt={submitPrompt}
-          interruptSession={interruptSession}
+          replyQuestion={replyQuestion}
+          rejectQuestion={rejectQuestion}
           retryPrompt={retryPrompt}
           focusPromptRequest={focusPromptRequest}
           followLatestRequest={followLatestRequest}
+          uiState={uiState}
+          updateUIState={updateUIState}
         />
       </ReactFlowProvider>
     </section>

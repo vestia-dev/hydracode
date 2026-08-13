@@ -50,6 +50,22 @@ export function formatToolCallDetail(
     return query === undefined ? fallbackDetail(input) : compactText(query)
   }
 
+  if (normalizedName === "question") {
+    const questions = input["questions"]
+    const detail = Array.isArray(questions)
+      ? questions
+          .flatMap((question) =>
+            typeof question === "object" && question !== null && "question" in question
+              ? typeof question.question === "string"
+                ? [question.question]
+                : []
+              : [],
+          )
+          .join(" · ")
+      : ""
+    return detail === "" ? fallbackDetail(input) : compactText(detail)
+  }
+
   if (path !== undefined) return compactText(fileName(path))
   return fallbackDetail(input)
 }

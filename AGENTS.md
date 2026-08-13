@@ -1,15 +1,5 @@
 # HydraCode Engineering Guardrails
 
-## Linear project updates
-
-- At the beginning of every session, read this file and the latest Linear project update for the `hydracode` project before planning or changing code.
-- Treat the latest project update as the cross-session handoff. Other agents may be working concurrently, so do not rely only on conversation history or an update read earlier by another session.
-- Only create or publish a Linear project update when the user explicitly asks for one. Do not publish updates automatically at session end or after completing work.
-- When the user requests an update, immediately re-read the latest project update and incorporate any newer concurrent-session information.
-- For requested updates, follow the established comprehensive handoff structure: purpose and product direction, repository references, stack, run and verification commands, current Git state, guardrails, architecture map, important domain and UI behavior, tests, working and missing functionality, recommended next steps, and a fresh-session startup checklist.
-- Record concrete verification results and material changes in requested updates. Never include credentials, authentication secrets, or other sensitive values.
-- If Linear is unavailable when an update was explicitly requested, tell the user that the requested project update could not be published.
-
 ## Dependency policy
 
 - Do not add, remove, or update a dependency without explicit user approval.
@@ -39,3 +29,18 @@
 - Run `bun run lint`, `bun run test`, and `bun run build` before considering implementation work complete.
 - Do not suppress diagnostics without documenting the concrete reason.
 - Add tests for domain behavior and event projections alongside the implementation.
+
+### Electron UI inspection
+
+- Use the `chrome-devtools-electron` tools to inspect the real Electron renderer. Do not use the regular `chrome-devtools` tools or open the Vite URL in Chrome; standalone Chrome does not have the preload-provided `window.hydracode` API.
+- Before UI inspection, check whether `http://127.0.0.1:9333/json/version` is already available. If not, start an isolated debug instance with `bun run dev:debug`, which exposes Electron CDP on port `9333`.
+- Confirm the selected page is titled `HydraCode` and that `window.hydracode` exists before relying on inspection results.
+- Use snapshots, console messages, network requests, and interaction through `chrome-devtools-electron` to verify renderer changes when relevant.
+- If the agent started `bun run dev:debug`, always stop that complete process tree after inspection and verify ports `9333` and its Vite renderer port are released. Never stop a dev server or Electron instance started by the user.
+
+### OpenCode server inspection
+
+- Use `tools.opencode.api` to query or operate on an OpenCode V2 server. It delegates to `opencode2 api`, preserving the CLI's managed-service discovery and authentication.
+- Prefer method and path calls such as `{ method: "get", path: "/api/health" }`. OpenAPI operation IDs are also supported and use dotted names such as `v2.health.get`.
+- Pass request bodies as valid JSON strings in `data`. Use `params` for OpenAPI path and query parameters, and only use `server` when intentionally targeting an explicit OpenCode server.
+- Do not expose credentials or authorization headers in responses or logs.

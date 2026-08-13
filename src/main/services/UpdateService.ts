@@ -14,7 +14,8 @@ export class UpdateServiceError extends Schema.TaggedErrorClass<UpdateServiceErr
 interface UpdateServiceShape {
   readonly check: Effect.Effect<UpdateState>
   readonly checkSilently: Effect.Effect<UpdateState>
-  readonly install: Effect.Effect<void, UpdateServiceError>
+  readonly install: Effect.Effect<UpdateState, UpdateServiceError>
+  readonly restart: Effect.Effect<void, UpdateServiceError>
   readonly subscribe: (listener: (state: UpdateState) => void) => Effect.Effect<() => void>
 }
 
@@ -41,12 +42,22 @@ export const UpdateServiceLive = Layer.sync(UpdateService, () => {
   return UpdateService.of({
     check: Effect.promise(() => controller.check()),
     checkSilently: Effect.promise(() => controller.check({ silent: true })),
-    install: Effect.try({
-      try: () => {
-        if (!controller.install()) throw new Error("No update is ready to install.")
+    install: Effect.tryPromise({
+      try: async () => {
+        const state = await controller.install()
+        if (state === undefined) throw new Error("No update is available to install.")
+        if (state.status !== "ready") throw new Error("The update could not be prepared.")
+        return state
       },
       catch: (cause) =>
-        new UpdateServiceError({ message: "HydraCode could not install the update.", cause }),
+        new UpdateServiceError({ message: "HydraCode could not prepare the update.", cause }),
+    }),
+    restart: Effect.try({
+      try: () => {
+        if (!controller.restart()) throw new Error("No update is ready for restart.")
+      },
+      catch: (cause) =>
+        new UpdateServiceError({ message: "HydraCode could not restart for the update.", cause }),
     }),
     subscribe: (listener) => Effect.sync(() => controller.subscribe(listener)),
   })

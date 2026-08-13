@@ -1,9 +1,11 @@
 import { Effect, Schema } from "effect"
 import { ipcMain } from "electron"
+import { Location } from "@opencode-ai/client/effect"
 import { DesktopChannels } from "../shared/desktopChannels"
 import { SetBundledThemeCommand } from "../shared/theme"
 import {
   ThemeResult,
+  OpenCodeDiagnosticsResult,
   UpdateState,
   ProjectSubscription,
   ProjectUpdateEnvelope,
@@ -14,6 +16,8 @@ import {
   CreateSessionResult,
   ListProjectsResult,
   OpenProjectCommand,
+  QuestionCommand,
+  ReplyQuestionCommand,
   SubmitPromptCommand,
   ProjectSessionCommand,
 } from "../shared/project"
@@ -22,8 +26,14 @@ import { DesktopService } from "./services/DesktopService"
 import { ThemeService } from "./services/ThemeService"
 import { UpdateService } from "./services/UpdateService"
 import { ProjectRegistry } from "./services/ProjectRegistry"
-import { ListSavedLayoutsCommand, SaveLayoutCommand } from "../shared/layout"
-import { LayoutService } from "./services/LayoutService"
+import { OpenCodeService } from "./services/OpenCodeService"
+import {
+  ApplicationStateResult,
+  ProjectSelectionState,
+  ProjectUIState,
+  ProjectUIStateResult,
+} from "../shared/applicationState"
+import { ApplicationStateService } from "./services/ApplicationStateService"
 
 const updateSubscriptions = new Map<number, () => void>()
 
@@ -77,12 +87,17 @@ export function registerDesktopIpc() {
   )
   ipcMain.handle(DesktopChannels.selectProject, () =>
     MainRuntime.runPromise(
-      DesktopService.use((desktop) =>
-        desktop.selectProject.pipe(
-          Effect.match({
-            onFailure: (error) => ({ _tag: "Failure" as const, message: error.message }),
-            onSuccess: (directory) => ({ _tag: "Success" as const, directory }),
-          }),
+      Effect.gen(function* () {
+        const desktop = yield* DesktopService
+        const registry = yield* ProjectRegistry
+        const directory = yield* desktop.selectProject
+        if (directory === null) return { _tag: "Success" as const, project: null }
+        const location = Schema.decodeUnknownSync(Location.Ref)({ directory })
+        const project = yield* registry.resolve(location)
+        return { _tag: "Success" as const, project }
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.succeed({ _tag: "Failure" as const, message: failureMessage(error) }),
         ),
       ),
     ).catch((cause) => ({ _tag: "Failure", message: failureMessage(cause) })),
@@ -93,6 +108,55 @@ export function registerDesktopIpc() {
         Schema.encodeSync(ListProjectsResult)({ _tag: "Success" as const, projects }),
       )
       .catch((cause) => ({ _tag: "Failure" as const, message: failureMessage(cause) })),
+  )
+  ipcMain.handle(DesktopChannels.loadApplicationState, () =>
+    MainRuntime.runPromise(ApplicationStateService.use((service) => service.load))
+      .then((state) =>
+        Schema.encodeSync(ApplicationStateResult)({ _tag: "Success" as const, state }),
+      )
+      .catch((cause) => ({ _tag: "Failure" as const, message: failureMessage(cause) })),
+  )
+  ipcMain.handle(DesktopChannels.saveProjectSelection, (_event, input: unknown) => {
+    const state = Schema.decodeUnknownSync(ProjectSelectionState)(input)
+    return MainRuntime.runPromise(
+      ApplicationStateService.use((service) => service.saveSelection(state)),
+    )
+      .then((saved) =>
+        Schema.encodeSync(ApplicationStateResult)({
+          _tag: "Success" as const,
+          state: saved,
+        }),
+      )
+      .catch((cause) => ({ _tag: "Failure" as const, message: failureMessage(cause) }))
+  })
+  ipcMain.handle(DesktopChannels.saveProjectUIState, (_event, input: unknown) => {
+    const state = Schema.decodeUnknownSync(ProjectUIState)(input)
+    return MainRuntime.runPromise(
+      ApplicationStateService.use((service) => service.saveProjectUIState(state)),
+    )
+      .then((saved) =>
+        Schema.encodeSync(ProjectUIStateResult)({ _tag: "Success" as const, state: saved }),
+      )
+      .catch((cause) => ({ _tag: "Failure" as const, message: failureMessage(cause) }))
+  })
+  ipcMain.handle(DesktopChannels.openCodeDiagnostics, () =>
+    MainRuntime.runPromise(OpenCodeService.use((service) => service.diagnostics))
+      .then((diagnostics) =>
+        Schema.encodeSync(OpenCodeDiagnosticsResult)({ _tag: "Success" as const, diagnostics }),
+      )
+      .catch((cause) => ({ _tag: "Failure" as const, message: failureMessage(cause) })),
+  )
+  ipcMain.handle(DesktopChannels.installOpenCode, () =>
+    MainRuntime.runPromise(
+      OpenCodeService.use((service) =>
+        service.install.pipe(
+          Effect.as({ _tag: "Success" as const }),
+          Effect.catch((cause) =>
+            Effect.succeed({ _tag: "Failure" as const, message: failureMessage(cause) }),
+          ),
+        ),
+      ),
+    ),
   )
   ipcMain.handle(DesktopChannels.openProject, (event, input: unknown) => {
     const command = Schema.decodeUnknownSync(OpenProjectCommand)(input)
@@ -138,6 +202,27 @@ export function registerDesktopIpc() {
       ),
     )
   })
+  ipcMain.handle(DesktopChannels.replyQuestion, (_event, input: unknown) => {
+    const command = Schema.decodeUnknownSync(ReplyQuestionCommand)(input)
+    return result(
+      ProjectRegistry.use((registry) =>
+        registry.replyQuestion(
+          command.subscriptionID,
+          command.sessionID,
+          command.requestID,
+          command.answers,
+        ),
+      ),
+    )
+  })
+  ipcMain.handle(DesktopChannels.rejectQuestion, (_event, input: unknown) => {
+    const command = Schema.decodeUnknownSync(QuestionCommand)(input)
+    return result(
+      ProjectRegistry.use((registry) =>
+        registry.rejectQuestion(command.subscriptionID, command.sessionID, command.requestID),
+      ),
+    )
+  })
   ipcMain.handle(DesktopChannels.interrupt, (_event, input: unknown) => {
     const command = Schema.decodeUnknownSync(ProjectSessionCommand)(input)
     return result(
@@ -145,18 +230,6 @@ export function registerDesktopIpc() {
         registry.interrupt(command.subscriptionID, command.sessionID),
       ),
     )
-  })
-  ipcMain.handle(DesktopChannels.listSavedLayouts, (_event, input: unknown) => {
-    const command = Schema.decodeUnknownSync(ListSavedLayoutsCommand)(input)
-    return MainRuntime.runPromise(LayoutService.use((layouts) => layouts.list(command.projectID)))
-      .then((layouts) => ({ _tag: "Success" as const, layouts }))
-      .catch((cause) => ({ _tag: "Failure" as const, message: failureMessage(cause) }))
-  })
-  ipcMain.handle(DesktopChannels.saveLayout, (_event, input: unknown) => {
-    const command = Schema.decodeUnknownSync(SaveLayoutCommand)(input)
-    return MainRuntime.runPromise(LayoutService.use((layouts) => layouts.save(command)))
-      .then((layout) => ({ _tag: "Success" as const, layout }))
-      .catch((cause) => ({ _tag: "Failure" as const, message: failureMessage(cause) }))
   })
   ipcMain.handle(DesktopChannels.updateSubscribe, (event) =>
     MainRuntime.runPromise(
@@ -183,6 +256,18 @@ export function registerDesktopIpc() {
     MainRuntime.runPromise(
       UpdateService.use((updates) =>
         updates.install.pipe(
+          Effect.map(() => ({ _tag: "Success" as const })),
+          Effect.catch((cause) =>
+            Effect.succeed({ _tag: "Failure" as const, message: failureMessage(cause) }),
+          ),
+        ),
+      ),
+    ),
+  )
+  ipcMain.handle(DesktopChannels.updateRestart, () =>
+    MainRuntime.runPromise(
+      UpdateService.use((updates) =>
+        updates.restart.pipe(
           Effect.map(() => ({ _tag: "Success" as const })),
           Effect.catch((cause) =>
             Effect.succeed({ _tag: "Failure" as const, message: failureMessage(cause) }),

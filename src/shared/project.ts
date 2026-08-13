@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { AbsolutePath, Location, Project } from "@opencode-ai/client/effect"
+import { AbsolutePath, Location, Project, Question } from "@opencode-ai/client/effect"
 import { SessionMessage } from "@opencode-ai/schema/session-message"
 
 export const ProjectSessionExecution = Schema.Union([
@@ -24,6 +24,7 @@ export const ProjectSession = Schema.Struct({
   synchronized: Schema.Boolean,
   execution: ProjectSessionExecution,
   messages: Schema.Array(SessionMessage.Info),
+  questions: Schema.Array(Question.Request),
 })
 export type ProjectSession = typeof ProjectSession.Type
 
@@ -43,15 +44,15 @@ export const ProjectDetails = Schema.Struct({
 })
 export type ProjectDetails = typeof ProjectDetails.Type
 
-export const ProjectCatalogItem = Schema.Struct({
+export const AvailableProject = Schema.Struct({
   project: ProjectDetails,
   location: Location.Ref,
   updated: Schema.Number,
 })
-export type ProjectCatalogItem = typeof ProjectCatalogItem.Type
+export type AvailableProject = typeof AvailableProject.Type
 
 export const ListProjectsResult = Schema.Union([
-  Schema.Struct({ _tag: Schema.Literal("Success"), projects: Schema.Array(ProjectCatalogItem) }),
+  Schema.Struct({ _tag: Schema.Literal("Success"), projects: Schema.Array(AvailableProject) }),
   Schema.Struct({ _tag: Schema.Literal("Failure"), message: Schema.String }),
 ])
 export type ListProjectsResult = typeof ListProjectsResult.Type
@@ -86,7 +87,7 @@ export const ProjectUpdateEnvelope = Schema.Struct({
 })
 export type ProjectUpdateEnvelope = typeof ProjectUpdateEnvelope.Type
 
-export const OpenProjectCommand = Schema.Struct({ location: Location.Ref })
+export const OpenProjectCommand = Schema.Struct({ location: Schema.optional(Location.Ref) })
 export type OpenProjectCommand = typeof OpenProjectCommand.Type
 
 export const ProjectSubscription = Schema.Struct({ subscriptionID: Schema.String })
@@ -113,6 +114,19 @@ export const SubmitPromptCommand = Schema.Struct({
   text: Schema.String,
 })
 export type SubmitPromptCommand = typeof SubmitPromptCommand.Type
+
+export const QuestionCommand = Schema.Struct({
+  subscriptionID: Schema.String,
+  sessionID: Schema.String,
+  requestID: Question.ID,
+})
+export type QuestionCommand = typeof QuestionCommand.Type
+
+export const ReplyQuestionCommand = Schema.Struct({
+  ...QuestionCommand.fields,
+  answers: Schema.Array(Question.Answer),
+})
+export type ReplyQuestionCommand = typeof ReplyQuestionCommand.Type
 
 export const CreateSessionCommand = Schema.Struct({
   subscriptionID: Schema.String,

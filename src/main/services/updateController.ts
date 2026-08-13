@@ -15,7 +15,8 @@ export function createUpdateController(input: {
   readonly backend: UpdateBackend
 }) {
   let state: UpdateState = input.enabled ? { status: "idle" } : { status: "disabled" }
-  let pending: Promise<UpdateState> | undefined
+  let pendingCheck: Promise<UpdateState> | undefined
+  let pendingInstall: Promise<UpdateState> | undefined
   const listeners = new Set<(state: UpdateState) => void>()
 
   const transition = (next: UpdateState) => {
@@ -25,10 +26,11 @@ export function createUpdateController(input: {
   }
 
   const check = (options: { readonly silent?: boolean } = {}) => {
-    if (!input.enabled || state.status === "ready") return Promise.resolve(state)
-    if (pending !== undefined) return pending
+    if (!input.enabled || state.status === "available" || state.status === "ready")
+      return Promise.resolve(state)
+    if (pendingCheck !== undefined) return pendingCheck
 
-    pending = (async () => {
+    pendingCheck = (async () => {
       transition({ status: "checking" })
       const result = await input.backend.checkForUpdates()
       const version = result?.updateInfo?.version
@@ -40,9 +42,7 @@ export function createUpdateController(input: {
         return transition({ status: "up-to-date" })
       }
 
-      transition({ status: "downloading", version })
-      await input.backend.downloadUpdate()
-      return transition({ status: "ready", version })
+      return transition({ status: "available", version })
     })()
       .catch((cause) =>
         options.silent
@@ -53,10 +53,10 @@ export function createUpdateController(input: {
             }),
       )
       .finally(() => {
-        pending = undefined
+        pendingCheck = undefined
       })
 
-    return pending
+    return pendingCheck
   }
 
   return {
@@ -67,9 +67,27 @@ export function createUpdateController(input: {
     },
     check,
     install() {
-      if (state.status !== "ready") return false
+      if (state.status === "ready") return Promise.resolve(state)
+      if (state.status !== "available") return undefined
+      if (pendingInstall !== undefined) return pendingInstall
       const version = state.version
-      transition({ status: "installing", version })
+      transition({ status: "downloading", version })
+      pendingInstall = input.backend
+        .downloadUpdate()
+        .then(() => transition({ status: "ready", version }))
+        .catch((cause) =>
+          transition({
+            status: "error",
+            message: cause instanceof Error ? cause.message : String(cause),
+          }),
+        )
+        .finally(() => {
+          pendingInstall = undefined
+        })
+      return pendingInstall
+    },
+    restart() {
+      if (state.status !== "ready") return false
       input.backend.quitAndInstall()
       return true
     },

@@ -3,22 +3,15 @@ import { Effect, Fiber } from "effect"
 import { AppRuntime } from "../runtime"
 import type { ProjectSnapshot, SessionSummary, SessionView } from "../services/OpenCodeGateway"
 import type { DesktopBridge, DesktopBridgeError } from "../services/DesktopBridge"
-import type { SavedLayout } from "../../../shared/layout"
-import { paneCount, restorePaneLayout, type PaneLayout } from "../projectors/paneLayout"
 
 interface SessionLandingProps {
   readonly snapshot: ProjectSnapshot
   readonly initialError: string | null
-  readonly savedLayouts: ReadonlyArray<SavedLayout>
-  readonly savedLayoutsError: string | null
   readonly createSession: (text: string) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
   readonly selectSession: (
     sessionID: SessionView["id"],
   ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
   readonly focusRequest: number | undefined
-  readonly openSavedLayout: (
-    layout: SavedLayout,
-  ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
 }
 
 const sessionDate = new Intl.DateTimeFormat(undefined, {
@@ -29,17 +22,12 @@ const sessionDate = new Intl.DateTimeFormat(undefined, {
 export function SessionLanding({
   snapshot,
   initialError,
-  savedLayouts,
-  savedLayoutsError,
   createSession,
   selectSession,
   focusRequest,
-  openSavedLayout,
 }: SessionLandingProps) {
   const [text, setText] = useState("")
-  const [pending, setPending] = useState<
-    "create" | SessionSummary["id"] | `layout:${string}` | null
-  >(null)
+  const [pending, setPending] = useState<"create" | SessionSummary["id"] | null>(null)
   const [error, setError] = useState<string | null>(initialError)
   const operationFiber = useRef<Fiber.Fiber<unknown, unknown> | null>(null)
   const landing = useRef<HTMLElement>(null)
@@ -138,55 +126,6 @@ export function SessionLanding({
           </p>
         )}
 
-        <div className="session-landing__history session-landing__saved-layouts">
-          <div className="session-landing__history-heading">
-            <h2>Saved layouts</h2>
-            <span>{savedLayouts.length}</span>
-          </div>
-          {savedLayoutsError !== null ? (
-            <p className="session-landing__error" role="alert">
-              {savedLayoutsError}
-            </p>
-          ) : savedLayouts.length === 0 ? (
-            <p className="session-landing__no-sessions">
-              Configure your panes, then press Cmd/Ctrl + S to save the layout.
-            </p>
-          ) : (
-            <div className="session-landing__session-list">
-              {savedLayouts.map((layout) => {
-                const restored = restorePaneLayout(layout.layout)
-                const pendingID = `layout:${layout.id}` as const
-                return (
-                  <button
-                    key={layout.id}
-                    type="button"
-                    className="session-landing__session session-landing__layout"
-                    disabled={pending !== null || restored === undefined}
-                    onClick={() => {
-                      setPending(pendingID)
-                      setError(null)
-                      continueOnUnmount.current = false
-                      run(openSavedLayout(layout))
-                    }}
-                  >
-                    {restored === undefined ? null : <LayoutPreview layout={restored} />}
-                    <span className="session-landing__session-title">{layout.name}</span>
-                    <span className="session-landing__session-meta">
-                      <span>
-                        {restored === undefined ? "Invalid" : `${paneCount(restored)} panes`}
-                      </span>
-                      <time dateTime={new Date(layout.updated).toISOString()}>
-                        {sessionDate.format(layout.updated)}
-                      </time>
-                      <span>{pending === pendingID ? "Opening..." : "Open"}</span>
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
-          )}
-        </div>
-
         <div className="session-landing__history">
           <div className="session-landing__history-heading">
             <h2>Existing sessions</h2>
@@ -224,23 +163,5 @@ export function SessionLanding({
         </div>
       </div>
     </section>
-  )
-}
-
-function LayoutPreview({ layout }: { readonly layout: PaneLayout }) {
-  if (layout._tag === "Pane") return <span className="layout-preview__pane" />
-  return (
-    <span
-      className={`layout-preview__split layout-preview__split--${layout.direction}`}
-      style={{
-        gridTemplateColumns:
-          layout.direction === "horizontal" ? `${layout.ratio}fr ${1 - layout.ratio}fr` : undefined,
-        gridTemplateRows:
-          layout.direction === "vertical" ? `${layout.ratio}fr ${1 - layout.ratio}fr` : undefined,
-      }}
-    >
-      <LayoutPreview layout={layout.first} />
-      <LayoutPreview layout={layout.second} />
-    </span>
   )
 }

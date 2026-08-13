@@ -1,4 +1,4 @@
-import type { Session } from "@opencode-ai/client/effect"
+import type { Question, Session } from "@opencode-ai/client/effect"
 import { Schema } from "effect"
 import type { SemanticGraph } from "../domain/graph"
 import type { OptimisticPrompt } from "../projectors/optimisticPrompts"
@@ -13,6 +13,7 @@ export interface SessionView {
   readonly active: boolean
   readonly synchronized: boolean
   readonly execution: ProjectSessionExecution
+  readonly questions: ReadonlyArray<Question.Request>
   readonly provisional: boolean
   readonly authoritativeGraph: SemanticGraph
   readonly optimisticPrompts: ReadonlyArray<OptimisticPrompt>

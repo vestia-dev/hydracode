@@ -1,5 +1,12 @@
 import { SessionMessage } from "@opencode-ai/schema/session-message"
-import type { EventLog, OpenCodeEvent, SessionPending } from "@opencode-ai/client/effect"
+import {
+  Form,
+  Question,
+  Session,
+  type EventLog,
+  type OpenCodeEvent,
+  type SessionPending,
+} from "@opencode-ai/client/effect"
 import { DateTime } from "effect"
 
 type Assistant = Extract<SessionMessage.Info, { type: "assistant" }>
@@ -18,6 +25,7 @@ export interface SessionLogState {
   readonly synchronized: boolean
   readonly execution: SessionExecutionState
   readonly pending: ReadonlyMap<string, SessionPending.Message>
+  readonly questions: ReadonlyArray<Question.Request>
 }
 
 export type SessionExecutionState =
@@ -68,6 +76,7 @@ export function createSessionLogState(
     synchronized: false,
     execution: { _tag: "Idle" },
     pending: new Map(),
+    questions: [],
   }
 }
 
@@ -75,12 +84,72 @@ export function hydrateSessionLogState(
   sessionID: string,
   messages: ReadonlyArray<SessionMessage.Info>,
   durableSeq?: number,
+  questions: ReadonlyArray<Question.Request> = [],
 ): SessionLogState {
   return {
     ...createSessionLogState(sessionID, messages),
     ...(durableSeq === undefined ? {} : { durableSeq }),
+    questions: questions.toSorted((left, right) => left.id.localeCompare(right.id)),
     synchronized: true,
   }
+}
+
+export function questionFromForm(form: Form.Info): Question.Request | undefined {
+  if (form.metadata?.["kind"] !== "question") return undefined
+  const fields = form.fields.filter(
+    (field): field is Form.StringField | Form.MultiselectField =>
+      field.type === "string" || field.type === "multiselect",
+  )
+  if (fields.length === 0) return undefined
+  return {
+    id: Question.ID.ascending(`que_${form.id}`),
+    sessionID: Session.ID.descending(form.sessionID),
+    questions: fields.map((field) =>
+      Object.assign(
+        {
+          header: field.title ?? form.title,
+          question: field.description ?? field.title ?? form.title,
+          options: (field.options ?? []).map((option) => ({
+            label: option.label,
+            description: option.description ?? "",
+          })),
+        },
+        field.type === "multiselect" ? { multiple: true as const } : {},
+        field.custom === undefined ? {} : { custom: field.custom },
+      ),
+    ),
+  }
+}
+
+export function questionFormAnswer(
+  form: Form.Info,
+  answers: ReadonlyArray<Question.Answer>,
+): Form.Answer {
+  return Object.fromEntries(
+    form.fields
+      .filter(
+        (field): field is Form.StringField | Form.MultiselectField =>
+          field.type === "string" || field.type === "multiselect",
+      )
+      .map((field, index) => {
+        const values = (answers[index] ?? []).map(
+          (answer) => field.options?.find((option) => option.label === answer)?.value ?? answer,
+        )
+        return [field.key, field.type === "multiselect" ? values : (values[0] ?? "")]
+      }),
+  )
+}
+
+export function questionFormID(requestID: string): Form.ID | undefined {
+  if (!requestID.startsWith("que_frm_")) return undefined
+  return Form.ID.create(requestID.slice(4))
+}
+
+export function sessionIDFromEvent(event: OpenCodeEvent): string | undefined {
+  if (event.type === "form.created") return event.data.form.sessionID
+  return "sessionID" in event.data && typeof event.data.sessionID === "string"
+    ? event.data.sessionID
+    : undefined
 }
 
 export function reduceSessionLog(
@@ -102,7 +171,7 @@ export function reduceSessionLog(
     }
   }
 
-  if (!hasSessionID(event)) return { status: "ignored", state }
+  if (sessionIDFromEvent(event) !== state.sessionID) return { status: "ignored", state }
   if ("durable" in event && event.durable.aggregateID !== state.sessionID)
     return { status: "ignored", state }
 
@@ -134,15 +203,9 @@ export function reduceSessionLog(
   }
 }
 
-function hasSessionID(
-  event: OpenCodeEvent,
-): event is OpenCodeEvent & { readonly data: { readonly sessionID: string } } {
-  return "sessionID" in event.data && typeof event.data.sessionID === "string"
-}
-
 function project(
   state: SessionLogState,
-  event: OpenCodeEvent & { readonly data: { readonly sessionID: string } },
+  event: OpenCodeEvent,
 ):
   | {
       readonly status: "applied"
@@ -172,6 +235,55 @@ function project(
     )
 
   switch (event.type) {
+    case "form.created": {
+      const question = questionFromForm(event.data.form)
+      if (question === undefined) return result(state.messages)
+      return {
+        status: "applied",
+        state: {
+          ...state,
+          questions: [
+            ...state.questions.filter((request) => request.id !== question.id),
+            question,
+          ].toSorted((left, right) => left.id.localeCompare(right.id)),
+        },
+        touched: [],
+      }
+    }
+    case "form.replied":
+    case "form.cancelled": {
+      const requestID = Question.ID.ascending(`que_${event.data.id}`)
+      return {
+        status: "applied",
+        state: {
+          ...state,
+          questions: state.questions.filter((request) => request.id !== requestID),
+        },
+        touched: [],
+      }
+    }
+    case "question.asked":
+      return {
+        status: "applied",
+        state: {
+          ...state,
+          questions: [
+            ...state.questions.filter((request) => request.id !== event.data.id),
+            event.data,
+          ].toSorted((left, right) => left.id.localeCompare(right.id)),
+        },
+        touched: [],
+      }
+    case "question.replied":
+    case "question.rejected":
+      return {
+        status: "applied",
+        state: {
+          ...state,
+          questions: state.questions.filter((request) => request.id !== event.data.requestID),
+        },
+        touched: [],
+      }
     case "session.input.admitted": {
       const pending = new Map(state.pending)
       pending.set(event.data.inputID, event.data.input)

@@ -7,6 +7,8 @@ import { registerDesktopIpc } from "./ipc"
 import { MainRuntime } from "./runtime"
 import { UpdateService } from "./services/UpdateService"
 
+app.setName("HydraCode")
+
 const createProjectWindow = Effect.sync(() => {
   const window = new BrowserWindow({
     width: 1440,
@@ -32,7 +34,7 @@ const createProjectWindow = Effect.sync(() => {
   window.once("ready-to-show", () => window.show())
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }))
   window.webContents.on("before-input-event", (event, input) => {
-    if (input.type !== "keyDown" || input.alt || input.shift) return
+    if (input.type !== "keyDown" || input.alt || !input.shift) return
     const primaryModifier = process.platform === "darwin" ? input.meta : input.control
     const secondaryModifier = process.platform === "darwin" ? input.control : input.meta
     if (!primaryModifier || secondaryModifier) return
@@ -91,10 +93,6 @@ const sendFollowLatest = () => {
   BrowserWindow.getFocusedWindow()?.webContents.send(DesktopChannels.followLatest)
 }
 
-const sendLayoutSave = () => {
-  BrowserWindow.getFocusedWindow()?.webContents.send(DesktopChannels.layoutSave)
-}
-
 const installApplicationMenu = () => {
   const splitItems: MenuItemConstructorOptions[] = [
     {
@@ -131,32 +129,26 @@ const installApplicationMenu = () => {
     {
       label: "File",
       submenu: [
-        {
-          label: "Save Layout",
-          accelerator: "CommandOrControl+S",
-          click: sendLayoutSave,
-        },
-        { type: "separator" },
         ...splitItems,
         { type: "separator" },
         {
           label: "Focus Pane Left",
-          accelerator: "CommandOrControl+Left",
+          accelerator: "CommandOrControl+Shift+Left",
           click: () => sendPaneFocus("left"),
         },
         {
           label: "Focus Pane Down",
-          accelerator: "CommandOrControl+Down",
+          accelerator: "CommandOrControl+Shift+Down",
           click: () => sendPaneFocus("down"),
         },
         {
           label: "Focus Pane Up",
-          accelerator: "CommandOrControl+Up",
+          accelerator: "CommandOrControl+Shift+Up",
           click: () => sendPaneFocus("up"),
         },
         {
           label: "Focus Pane Right",
-          accelerator: "CommandOrControl+Right",
+          accelerator: "CommandOrControl+Shift+Right",
           click: () => sendPaneFocus("right"),
         },
         { type: "separator" },
@@ -187,6 +179,9 @@ const installApplicationMenu = () => {
 
 const start = Effect.gen(function* () {
   yield* Effect.promise(() => app.whenReady())
+  if (!app.isPackaged && process.platform === "darwin") {
+    app.dock?.setIcon(join(app.getAppPath(), "build/icon.png"))
+  }
   registerDesktopIpc()
   installApplicationMenu()
   yield* createProjectWindow

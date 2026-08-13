@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react"
 import { Handle, Position, useUpdateNodeInternals, type Node, type NodeProps } from "@xyflow/react"
 import type { GraphNodeStatus, GraphRoundTools } from "../domain/graph"
+import { groupToolCalls } from "../projectors/toolCallGroups"
 import { LoadingIndicator } from "./LoadingIndicator"
 
 export interface SessionRoundToolsNodeData extends Record<string, unknown> {
@@ -18,6 +19,7 @@ export type SessionRoundToolsFlowNode = Node<SessionRoundToolsNodeData, "session
 export function SessionRoundToolsNode({ data }: NodeProps<SessionRoundToolsFlowNode>) {
   const nodeRef = useRef<HTMLElement>(null)
   const updateNodeInternals = useUpdateNodeInternals()
+  const groups = groupToolCalls(data.tools.calls)
 
   useEffect(() => {
     const element = nodeRef.current
@@ -49,14 +51,14 @@ export function SessionRoundToolsNode({ data }: NodeProps<SessionRoundToolsFlowN
       />
       <header className="round-side-node__heading">
         <strong>Tools</strong>
-        <span>{data.tools.calls.length}</span>
+        <span>{groups.length}</span>
       </header>
       <ol className="round-tools-list nowheel nodrag nopan">
-        {data.tools.calls.map((call) => (
-          <li key={call.id} className="round-tools-list__item">
-            <strong>{call.name}</strong>
-            <span title={call.detail}>{call.detail || "No input"}</span>
-            {call.status === "running" ? <LoadingIndicator label="Running" compact /> : null}
+        {groups.map((group) => (
+          <li key={group.id} className="round-tools-list__item">
+            <strong>{group.name}</strong>
+            <span title={group.detail}>{group.detail || "No input"}</span>
+            {group.status === "running" ? <LoadingIndicator label="Running" compact /> : null}
           </li>
         ))}
       </ol>

@@ -6,20 +6,24 @@ import {
   type SetBundledThemeCommand as SetBundledThemeCommandType,
 } from "./theme"
 import { UpdateState } from "./update"
+import { OpenCodeDiagnostics } from "./openCode"
 import type { PaneDirection, PaneSplitCommand } from "./pane"
 import type {
-  ListSavedLayoutsCommand,
-  ListSavedLayoutsResult,
-  SaveLayoutCommand,
-  SaveLayoutResult,
-} from "./layout"
+  ApplicationStateResult,
+  ProjectSelectionState,
+  ProjectUIState,
+  ProjectUIStateResult,
+} from "./applicationState"
 import {
+  AvailableProject,
   CreateSessionCommand,
   CreateSessionResult,
   ListProjectsResult,
   OpenProjectCommand,
   OpenProjectResult,
   SubmitPromptCommand,
+  ReplyQuestionCommand,
+  QuestionCommand,
   ProjectCommandResult,
   ProjectSessionCommand,
   ProjectSubscription,
@@ -36,7 +40,7 @@ export type DesktopFailure = typeof DesktopFailure.Type
 export const ProjectSelectionResult = Schema.Union([
   Schema.Struct({
     _tag: Schema.Literal("Success"),
-    directory: Schema.Union([Schema.String, Schema.Null]),
+    project: Schema.Union([AvailableProject, Schema.Null]),
   }),
   DesktopFailure,
 ])
@@ -51,6 +55,15 @@ export const ThemeResult = Schema.Union([
 ])
 export type ThemeResult = typeof ThemeResult.Type
 
+export const OpenCodeDiagnosticsResult = Schema.Union([
+  Schema.Struct({
+    _tag: Schema.Literal("Success"),
+    diagnostics: OpenCodeDiagnostics,
+  }),
+  DesktopFailure,
+])
+export type OpenCodeDiagnosticsResult = typeof OpenCodeDiagnosticsResult.Type
+
 export {
   CreateSessionCommand,
   CreateSessionResult,
@@ -58,6 +71,8 @@ export {
   OpenProjectCommand,
   OpenProjectResult,
   SubmitPromptCommand,
+  ReplyQuestionCommand,
+  QuestionCommand,
   ProjectCommandResult,
   ProjectSessionCommand,
   ProjectSubscription,
@@ -70,6 +85,8 @@ export type {
   CreateSessionCommand as CreateSessionCommandType,
   OpenProjectCommand as OpenProjectCommandType,
   SubmitPromptCommand as SubmitPromptCommandType,
+  ReplyQuestionCommand as ReplyQuestionCommandType,
+  QuestionCommand as QuestionCommandType,
   ProjectSessionCommand as ProjectSessionCommandType,
   SetBundledThemeCommand as SetBundledThemeCommandType,
 }
@@ -80,16 +97,22 @@ export interface HydraCodeDesktopApi {
   readonly setBundledTheme: (command: SetBundledThemeCommandType) => Promise<ThemeResult>
   readonly selectProject: () => Promise<ProjectSelectionResult>
   readonly listProjects: () => Promise<ListProjectsResult>
+  readonly loadApplicationState: () => Promise<ApplicationStateResult>
+  readonly saveProjectSelection: (state: ProjectSelectionState) => Promise<ApplicationStateResult>
+  readonly saveProjectUIState: (state: ProjectUIState) => Promise<ProjectUIStateResult>
   readonly openProject: (command: OpenProjectCommand) => Promise<OpenProjectResult>
   readonly closeProject: (command: ProjectSubscription) => Promise<ProjectCommandResult>
   readonly selectSession: (command: ProjectSessionCommand) => Promise<ProjectCommandResult>
   readonly createSession: (command: CreateSessionCommand) => Promise<CreateSessionResult>
   readonly submitPrompt: (command: SubmitPromptCommand) => Promise<ProjectCommandResult>
+  readonly replyQuestion: (command: ReplyQuestionCommand) => Promise<ProjectCommandResult>
+  readonly rejectQuestion: (command: QuestionCommand) => Promise<ProjectCommandResult>
   readonly interrupt: (command: ProjectSessionCommand) => Promise<ProjectCommandResult>
-  readonly listSavedLayouts: (command: ListSavedLayoutsCommand) => Promise<ListSavedLayoutsResult>
-  readonly saveLayout: (command: SaveLayoutCommand) => Promise<SaveLayoutResult>
+  readonly getOpenCodeDiagnostics: () => Promise<OpenCodeDiagnosticsResult>
+  readonly installOpenCode: () => Promise<ProjectCommandResult>
   readonly checkForUpdates: () => Promise<UpdateState>
   readonly installUpdate: () => Promise<ProjectCommandResult>
+  readonly restartForUpdate: () => Promise<ProjectCommandResult>
   readonly onUpdateState: (listener: (state: unknown) => void) => () => void
   readonly onProjectUpdate: (listener: (update: unknown) => void) => () => void
   readonly onPaneSplit: (listener: (command: PaneSplitCommand) => void) => () => void
@@ -97,5 +120,4 @@ export interface HydraCodeDesktopApi {
   readonly onPaneClose: (listener: () => void) => () => void
   readonly onPromptFocus: (listener: () => void) => () => void
   readonly onFollowLatest: (listener: () => void) => () => void
-  readonly onLayoutSave: (listener: () => void) => () => void
 }

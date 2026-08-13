@@ -6,7 +6,7 @@
       "name": "hydracode",
       "dependencies": {
         "@effect/platform-node": "4.0.0-beta.101",
-        "@opencode-ai/client": "0.0.0-next-17028",
+        "@opencode-ai/client": "0.0.0-next-17114",
         "@pierre/diffs": "1.2.10",
         "@xyflow/react": "12.11.2",
         "dompurify": "3.4.13",
@@ -31,14 +31,6 @@
         "typescript": "7.0.2",
         "vite": "7.3.6",
         "vitest": "4.1.10",
-      },
-      "optionalDependencies": {
-        "@opencode-ai/cli-darwin-arm64": "0.0.0-next-17028",
-        "@opencode-ai/cli-darwin-x64-baseline": "0.0.0-next-17028",
-        "@opencode-ai/cli-linux-arm64": "0.0.0-next-17028",
-        "@opencode-ai/cli-linux-x64-baseline": "0.0.0-next-17028",
-        "@opencode-ai/cli-windows-arm64": "0.0.0-next-17028",
-        "@opencode-ai/cli-windows-x64-baseline": "0.0.0-next-17028",
       },
     },
   },
@@ -199,23 +191,11 @@
 
     "@noble/hashes": ["@noble/hashes@2.3.0", "", {}, "sha512-oN+QwyX7VSHotibwubG3kpzbwKrfnyR6OOO+3Nk/53ADL7FmgHHz4TgrbaYKvvOw09u6QTx0oiH1cNCIOuN0CQ=="],
 
-    "@opencode-ai/cli-darwin-arm64": ["@opencode-ai/cli-darwin-arm64@0.0.0-next-17028", "", { "os": "darwin", "cpu": "arm64" }, "sha512-uyBCNUf1Rnu6GMw3meqobj+BEpJ09U4eFH6i5fKXC7GKTlUrYY4zgKQzRTA4n+NqIrY7CPgHwwlfFYIg1bs4jw=="],
+    "@opencode-ai/client": ["@opencode-ai/client@0.0.0-next-17114", "", { "dependencies": { "@opencode-ai/protocol": "0.0.0-next-17114", "@opencode-ai/schema": "0.0.0-next-17114" }, "peerDependencies": { "effect": "4.0.0-beta.101" }, "optionalPeers": ["effect"] }, "sha512-yfcmoC5iWQ5gULEYY9eCuOgwdSI8gUUokcvrsDEEvjriQ2mOoZ1ZoxJkjQrPx24KGumQu8a3HizMuV5gfL7g4A=="],
 
-    "@opencode-ai/cli-darwin-x64-baseline": ["@opencode-ai/cli-darwin-x64-baseline@0.0.0-next-17028", "", { "os": "darwin", "cpu": "x64" }, "sha512-RiaJaAN0ynMJR+UCh/Qxo2zgMM2SkHixUg3JMsQSpGcyJpZQRRc4Fo+HRoAL7bs5ap0Symne0kjQ8aCaPcwuag=="],
+    "@opencode-ai/protocol": ["@opencode-ai/protocol@0.0.0-next-17114", "", { "dependencies": { "@opencode-ai/schema": "0.0.0-next-17114", "effect": "4.0.0-beta.101" } }, "sha512-nvUTLve13ESBRCmxCfr49pBsiiCzra0K5RPDGs3GWfJ7o2dNp5rGVQfJs4jppnS9hmzoNy4OJoZVjjmELSu5vg=="],
 
-    "@opencode-ai/cli-linux-arm64": ["@opencode-ai/cli-linux-arm64@0.0.0-next-17028", "", { "os": "linux", "cpu": "arm64" }, "sha512-Y+ujIjp8SGzHfeJeUqq1iLhatFJLAgoAJzr3YS+z6tGJ1gGhuV6yjlSo6ERh+nGUQLv1MfC+3nQWHzNZan/4Pg=="],
-
-    "@opencode-ai/cli-linux-x64-baseline": ["@opencode-ai/cli-linux-x64-baseline@0.0.0-next-17028", "", { "os": "linux", "cpu": "x64" }, "sha512-O7pstEFLR/3oXuXVdHeEAyzEkUW4S/9LcBEL3sC0Kx7ck2sL+q5rFczuhnruqPBJUIFugXf/VcJ0LkcAHwerFw=="],
-
-    "@opencode-ai/cli-windows-arm64": ["@opencode-ai/cli-windows-arm64@0.0.0-next-17028", "", { "os": "win32", "cpu": "arm64" }, "sha512-PQHpJ58OcIuKYE9FW47dXEWmv1qY6cMwX0zh+34caFAmFaqNUx3emAxKGxRW33eMZCElaC6JoaER6+RCpCehHg=="],
-
-    "@opencode-ai/cli-windows-x64-baseline": ["@opencode-ai/cli-windows-x64-baseline@0.0.0-next-17028", "", { "os": "win32", "cpu": "x64" }, "sha512-qCX1ekd9ktdDPKtJR+e5w6ZUkpP4ApfXEAIo3ua7xdbQ2VtAECsYT+WeCJNmSs+79zbbUcCypw98hk7/VwZpjg=="],
-
-    "@opencode-ai/client": ["@opencode-ai/client@0.0.0-next-17028", "", { "dependencies": { "@opencode-ai/protocol": "0.0.0-next-17028", "@opencode-ai/schema": "0.0.0-next-17028" }, "peerDependencies": { "effect": "4.0.0-beta.101" }, "optionalPeers": ["effect"] }, "sha512-uaf3kXCwA89u4PBTJQnGJCvTSWZVuHNT1d44XzlKw2c+hVO48HS5LncmqxUjLkLyQ4HqjACSF5ZAbXbPfMwiqQ=="],
-
-    "@opencode-ai/protocol": ["@opencode-ai/protocol@0.0.0-next-17028", "", { "dependencies": { "@opencode-ai/schema": "0.0.0-next-17028", "effect": "4.0.0-beta.101" } }, "sha512-EpV4g1eSdvoW6rTI1ppZZ41Lt3GNEugXYGJ1MMXP4zDT722v4urHxOPJN2cBcwV6dy93r8PMhKbTiHwCfoqWsw=="],
-
-    "@opencode-ai/schema": ["@opencode-ai/schema@0.0.0-next-17028", "", { "dependencies": { "@standard-schema/spec": "1.1.0", "effect": "4.0.0-beta.101" } }, "sha512-55LI1/gqVTi0oD4+90LPYN/UEwenxeLqVI3TE3WK3zZ8euhROyHiXDhLyvhC5GrkXaIMrimc1403CTcPksCzKw=="],
+    "@opencode-ai/schema": ["@opencode-ai/schema@0.0.0-next-17114", "", { "dependencies": { "@standard-schema/spec": "1.1.0", "effect": "4.0.0-beta.101" } }, "sha512-27LFvPbtpRo3FGa5jkcK5CQiWFkTj8zr76i18qxURBG8CxxykCteCKWNU8kz22NB9vvPH4PeZOjGwDZfWnwDQQ=="],
 
     "@oxfmt/binding-android-arm-eabi": ["@oxfmt/binding-android-arm-eabi@0.62.0", "", { "os": "android", "cpu": "arm" }, "sha512-pdsv0C4gPjJ8H1+sd8u0BDx+yLACTL+rgeMIOL1ln4ihSnhw8CWXtYWgvcSkyTfgGBIzFKab+d8rx9Xl4en/Kw=="],
 

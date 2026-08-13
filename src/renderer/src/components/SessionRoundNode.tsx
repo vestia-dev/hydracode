@@ -188,9 +188,14 @@ export function SessionRoundNode({ data }: NodeProps<SessionRoundFlowNode>) {
         </p>
       ))}
       {latestNarrative === undefined ? (
-        <p className="agent-node__text agent-node__text--empty">Waiting for the agent…</p>
+        <p className="agent-node__text agent-node__text--empty">
+          {completed && data.round.agent !== undefined ? "Completed" : "Waiting for the agent…"}
+        </p>
       ) : (
-        <MarkdownContent className="agent-node__text" source={latestNarrative.detail} />
+        <MarkdownContent
+          className={`agent-node__text agent-node__text--${latestNarrative.kind}`}
+          source={latestNarrative.detail}
+        />
       )}
       {interactive ? (
         <span className="agent-node__expand-prompt" aria-hidden="true">

@@ -3,8 +3,8 @@ import type { UpdateState } from "../../../shared/update"
 import { AppRuntime } from "../runtime"
 import { DesktopBridge } from "../services/DesktopBridge"
 
-const installUpdate = () => {
-  void AppRuntime.runPromise(DesktopBridge.use((desktop) => desktop.installUpdate)).catch(
+const restartForUpdate = () => {
+  void AppRuntime.runPromise(DesktopBridge.use((desktop) => desktop.restartForUpdate)).catch(
     () => undefined,
   )
 }
@@ -32,16 +32,16 @@ export function useUpdater() {
     }
   }, [])
 
-  const check = () => {
-    void AppRuntime.runPromise(DesktopBridge.use((desktop) => desktop.checkForUpdates))
-      .then(setState)
-      .catch((cause) => {
+  const install = () => {
+    void AppRuntime.runPromise(DesktopBridge.use((desktop) => desktop.installUpdate)).catch(
+      (cause) => {
         setState({
           status: "error",
           message: cause instanceof Error ? cause.message : String(cause),
         })
-      })
+      },
+    )
   }
 
-  return { state, check, install: installUpdate }
+  return { state, install, restart: restartForUpdate }
 }

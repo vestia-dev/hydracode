@@ -14,18 +14,21 @@ function backend(overrides: Partial<UpdateBackend> = {}): UpdateBackend {
   }
 }
 
-it("downloads an available update and waits for an explicit install", async () => {
+it("reports an available update, prepares it on install, and waits for restart", async () => {
   const updateBackend = backend()
   const controller = createUpdateController({ enabled: true, backend: updateBackend })
   const states: Array<string> = []
   controller.subscribe((state) => states.push(state.status))
 
-  await expect(controller.check()).resolves.toEqual({ status: "ready", version: "0.2.0" })
-  expect(states).toEqual(["idle", "checking", "downloading", "ready"])
+  await expect(controller.check()).resolves.toEqual({ status: "available", version: "0.2.0" })
+  expect(states).toEqual(["idle", "checking", "available"])
+  expect(updateBackend.downloadUpdate).not.toHaveBeenCalled()
+
+  await expect(controller.install()).resolves.toEqual({ status: "ready", version: "0.2.0" })
   expect(updateBackend.downloadUpdate).toHaveBeenCalledOnce()
   expect(updateBackend.quitAndInstall).not.toHaveBeenCalled()
 
-  expect(controller.install()).toBe(true)
+  expect(controller.restart()).toBe(true)
   expect(updateBackend.quitAndInstall).toHaveBeenCalledOnce()
 })
 
@@ -41,6 +44,21 @@ it("reports when the current version is up to date", async () => {
   })
 
   await expect(controller.check()).resolves.toEqual({ status: "up-to-date" })
+})
+
+it("reports a failed update download without restarting", async () => {
+  const updateBackend = backend({
+    downloadUpdate: vi.fn().mockRejectedValue(new Error("Download failed")),
+  })
+  const controller = createUpdateController({ enabled: true, backend: updateBackend })
+
+  await controller.check()
+  await expect(controller.install()).resolves.toEqual({
+    status: "error",
+    message: "Download failed",
+  })
+  expect(controller.restart()).toBe(false)
+  expect(updateBackend.quitAndInstall).not.toHaveBeenCalled()
 })
 
 it("deduplicates concurrent checks", async () => {

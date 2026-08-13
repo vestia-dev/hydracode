@@ -59,9 +59,9 @@ bun run build
 
 ## Distribution
 
-The first supported release target is macOS on Apple Silicon. HydraCode packages the matching
-OpenCode V2 runtime, checks for an existing OpenCode service first, and starts the bundled runtime
-when no service is available.
+The first supported release target is macOS on Apple Silicon. HydraCode connects to the user's
+OpenCode V2 service and starts the installed `opencode2` executable when no service is available.
+OpenCode can be installed from HydraCode Settings using its official installer.
 
 Build an unpacked application locally:
 
@@ -92,6 +92,24 @@ for example `v0.1.0`. It requires these GitHub Actions secrets:
 
 The workflow signs and notarizes HydraCode, creates a GitHub Release, and uploads the DMG, ZIP,
 blockmap, and `latest-mac.yml` metadata used by `electron-updater`.
+
+Before the first release:
+
+1. Create a Developer ID Application certificate in the Apple Developer account, export it as a
+   password-protected P12, and add its base64 encoding and password as `APPLE_CERTIFICATE` and
+   `APPLE_CERTIFICATE_PASSWORD`.
+2. Create an App Store Connect API key, then add its P8 contents, key ID, and issuer ID as
+   `APPLE_API_KEY_CONTENT`, `APPLE_API_KEY_ID`, and `APPLE_API_ISSUER`.
+3. Ensure the release commit, including the intended `package.json` version, is pushed to `main`.
+4. Run `bun run lint:check`, `bun run test`, and `bun run build` from that commit.
+5. Create and push the matching tag. This immediately triggers the public release workflow:
+
+```sh
+git tag -a v0.1.0 -m "HydraCode v0.1.0"
+git push origin v0.1.0
+```
+
+The workflow keeps the GitHub Release as a draft until every asset has uploaded successfully.
 
 ### Future Platforms
 

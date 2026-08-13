@@ -1,11 +1,7 @@
 import { expect, it } from "@effect/vitest"
 import { Project } from "@opencode-ai/client/effect"
 import { Effect, Schema } from "effect"
-import {
-  projectCatalogItems,
-  projectSessionSummaries,
-  selectedSessionFamily,
-} from "./projectCatalog"
+import { availableProjects, projectSessionSummaries, selectedSessionFamily } from "./projectCatalog"
 
 const sessions = [
   { id: "older-root", created: 1_000, title: "Older" },
@@ -37,7 +33,7 @@ it.effect("selects a session's complete root family without choosing a default",
 it.effect("lists known projects by recent activity and excludes the global fallback", () =>
   Effect.sync(() => {
     const decode = Schema.decodeUnknownSync(Project.Info)
-    const projects = projectCatalogItems([
+    const projects = availableProjects([
       decode({
         id: Project.ID.global,
         canonical: "/",

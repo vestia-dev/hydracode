@@ -37,6 +37,22 @@ it.effect("keeps purpose-specific details for commands and web tools", () =>
   }),
 )
 
+it.effect("shows only the question text for question tools", () =>
+  Effect.sync(() => {
+    expect(
+      formatToolCallDetail("question", {
+        questions: [
+          {
+            header: "Season",
+            question: "Which season would you choose?",
+            options: [{ label: "Autumn", description: "Cool weather" }],
+          },
+        ],
+      }),
+    ).toBe("Which season would you choose?")
+  }),
+)
+
 it.effect("falls back to compact structured input for unknown tools", () =>
   Effect.sync(() => {
     expect(formatToolCallDetail("custom-tool", { value: "hello" })).toBe('{"value":"hello"}')

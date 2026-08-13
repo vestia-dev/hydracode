@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Effect, Fiber, Option, Schema } from "effect"
-import { AbsolutePath, Location, Session } from "@opencode-ai/client/effect"
+import { Effect, Fiber, Option } from "effect"
+import { AbsolutePath, Location, Project, type Question } from "@opencode-ai/client/effect"
 import { AppRuntime } from "../runtime"
 import { DesktopBridge, DesktopBridgeError } from "../services/DesktopBridge"
 import type {
@@ -11,66 +11,36 @@ import { projectMessages } from "../projectors/sessionGraph"
 import {
   createProvisionalSessionID,
   projectOptimisticPrompts,
-  reconcileOptimisticPrompts,
   type OptimisticPrompt,
 } from "../projectors/optimisticPrompts"
-import type { ProjectSession, ProjectSnapshot, ProjectUpdate } from "../../../shared/project"
-import type { ProjectCatalogItem } from "../../../shared/project"
+import type { AvailableProject, ProjectUpdate } from "../../../shared/project"
+import {
+  applyProjectUpdate as reduceProjectUpdate,
+  projectSessionView,
+} from "../projectors/projectRuntime"
+import { restoreApplicationState } from "../projectors/applicationState"
 
-export type ProjectState =
-  | { readonly _tag: "Idle" }
-  | { readonly _tag: "Loading"; readonly location: Location.Ref }
-  | {
-      readonly _tag: "Ready"
-      readonly snapshot: ProjectViewSnapshot
-    }
-  | { readonly _tag: "Error"; readonly message: string }
+export interface PromptRetry {
+  readonly sessionID: SessionView["id"]
+  readonly text: string
+  readonly message: string
+}
 
-const initialState: ProjectState = { _tag: "Idle" }
-export type ProjectCatalogState =
+export interface OpenProjectRuntime {
+  readonly projectID: Project.ID
+  readonly location: Location.Ref
+  readonly status: "opening" | "ready" | "error"
+  readonly snapshot: ProjectViewSnapshot | undefined
+  readonly error: string | undefined
+  readonly promptRetry: PromptRetry | null
+  readonly landingError: string | null
+  readonly requestedSessionID?: SessionView["id"] | undefined
+}
+
+export type AvailableProjectsState =
   | { readonly _tag: "Loading" }
-  | { readonly _tag: "Ready"; readonly projects: ReadonlyArray<ProjectCatalogItem> }
+  | { readonly _tag: "Ready"; readonly projects: ReadonlyArray<AvailableProject> }
   | { readonly _tag: "Error"; readonly message: string }
-function view(
-  value: ProjectSession,
-  optimisticPrompts: ReadonlyArray<OptimisticPrompt> = [],
-): SessionView {
-  const authoritativeGraph = projectMessages(value.messages)
-  const reconciled = reconcileOptimisticPrompts(optimisticPrompts, value.messages)
-  return {
-    id: Schema.decodeUnknownSync(Session.ID)(value.id),
-    ...(value.parentID === undefined
-      ? {}
-      : { parentID: Schema.decodeUnknownSync(Session.ID)(value.parentID) }),
-    created: value.created,
-    title: value.title,
-    active: value.active,
-    synchronized: value.synchronized,
-    execution: value.execution,
-    provisional: false,
-    authoritativeGraph,
-    optimisticPrompts: reconciled,
-    graph: projectOptimisticPrompts(authoritativeGraph, reconciled),
-  }
-}
-function snapshot(value: ProjectSnapshot, previous?: ProjectViewSnapshot): ProjectViewSnapshot {
-  const projected = value.sessions.map((session) => {
-    const current = previous?.sessions.find((item) => item.id === session.id)
-    return view(session, current?.optimisticPrompts)
-  })
-  const provisional = previous?.sessions.filter(
-    (session) => session.provisional && !projected.some((item) => item.id === session.id),
-  )
-  return {
-    project: value.project,
-    location: value.location,
-    sessions: [...projected, ...(provisional ?? [])],
-    recentSessions: value.recentSessions.map((session) => ({
-      ...session,
-      id: Schema.decodeUnknownSync(Session.ID)(session.id),
-    })),
-  }
-}
 
 function pendingPrompt(session: SessionView, text: string): OptimisticPrompt {
   return {
@@ -94,340 +64,477 @@ function withPrompts(
   }
 }
 
-export interface PromptRetry {
-  readonly sessionID: SessionView["id"]
-  readonly text: string
-  readonly message: string
-}
-
 export function useProjectController() {
-  const [state, setState] = useState<ProjectState>(initialState)
-  const stateRef = useRef(state)
-  stateRef.current = state
-  const [promptRetry, setPromptRetry] = useState<PromptRetry | null>(null)
+  const [activeProjectID, setActiveProjectID] = useState<Project.ID | null>(null)
+  const [openProjects, setOpenProjects] = useState<ReadonlyMap<Project.ID, OpenProjectRuntime>>(
+    () => new Map(),
+  )
+  const projectsRef = useRef(openProjects)
+  projectsRef.current = openProjects
+  const [availableProjects, setAvailableProjects] = useState<AvailableProjectsState>({
+    _tag: "Loading",
+  })
   const [landingError, setLandingError] = useState<string | null>(null)
-  const [catalog, setCatalog] = useState<ProjectCatalogState>({ _tag: "Loading" })
   const selectionFiber = useRef<Fiber.Fiber<unknown, unknown> | null>(null)
-  const catalogFiber = useRef<Fiber.Fiber<unknown, unknown> | null>(null)
-  const projectFiber = useRef<Fiber.Fiber<unknown, unknown> | null>(null)
-  const subscriptionID = useRef<string | null>(null)
+  const availableProjectsFiber = useRef<Fiber.Fiber<unknown, unknown> | null>(null)
+  const projectFibers = useRef(new Map<Project.ID, Fiber.Fiber<unknown, unknown>>())
+  const subscriptionIDs = useRef(new Map<Project.ID, string>())
 
-  const startProject = useCallback((location: Location.Ref) => {
-    if (projectFiber.current !== null) AppRuntime.runFork(Fiber.interrupt(projectFiber.current))
-    const previousSubscription = subscriptionID.current
-    if (previousSubscription !== null) {
-      AppRuntime.runFork(DesktopBridge.use((desktop) => desktop.closeProject(previousSubscription)))
-      subscriptionID.current = null
-    }
-    const program = Effect.gen(function* () {
-      const desktop = yield* DesktopBridge
-      yield* Effect.sync(() => setState({ _tag: "Loading", location }))
-      const id = yield* desktop.openProject({ location })
-      subscriptionID.current = id
-      const apply = (update: ProjectUpdate) =>
-        Effect.sync(() => {
-          if (update._tag === "Snapshot")
-            setState((current) => ({
-              _tag: "Ready",
-              snapshot: snapshot(
-                update.snapshot,
-                current._tag === "Ready" ? current.snapshot : undefined,
-              ),
-            }))
-          else if (update._tag === "Session")
-            setState((current) => {
-              if (current._tag !== "Ready") return current
-              const existing = current.snapshot.sessions.find(
-                (item) => item.id === update.session.id,
-              )
-              if (
-                existing === undefined &&
-                current.snapshot.sessions.some((item) => item.provisional)
-              )
-                return current
-              return {
-                ...current,
-                snapshot: {
-                  ...current.snapshot,
-                  sessions: [
-                    ...current.snapshot.sessions.filter((item) => item.id !== update.session.id),
-                    view(update.session, existing?.optimisticPrompts),
-                  ],
-                },
-              }
-            })
-          else if (update._tag === "Removed")
-            setState((current) =>
-              current._tag !== "Ready"
-                ? current
-                : {
-                    ...current,
-                    snapshot: {
-                      ...current.snapshot,
-                      sessions: current.snapshot.sessions.filter(
-                        (item) => item.id !== update.sessionID,
-                      ),
-                    },
-                  },
-            )
-          else setState({ _tag: "Error", message: update.message })
-        })
-      yield* desktop.watchProject(id, (update) => AppRuntime.runFork(apply(update)))
-    }).pipe(
-      Effect.catch((error) =>
-        Effect.sync(() =>
-          setState({
-            _tag: "Error",
-            message:
-              error instanceof Error ? error.message : "HydraCode could not open this project.",
+  const persistProjectSelection = useCallback(
+    (projects: ReadonlyMap<Project.ID, OpenProjectRuntime>, activeID: Project.ID | null) => {
+      const openProjectIDs = Array.from(projects.keys()).filter((id) => id !== Project.ID.global)
+      AppRuntime.runFork(
+        DesktopBridge.use((desktop) =>
+          desktop.saveProjectSelection({
+            openProjectIDs,
+            activeProjectID:
+              activeID === Project.ID.global ? (openProjectIDs[0] ?? null) : activeID,
           }),
+        ).pipe(Effect.catch((error) => Effect.sync(() => setLandingError(error.message)))),
+      )
+    },
+    [],
+  )
+
+  const updateProject = useCallback(
+    (projectID: Project.ID, update: (runtime: OpenProjectRuntime) => OpenProjectRuntime) => {
+      const runtime = projectsRef.current.get(projectID)
+      if (runtime === undefined) return
+      const next = new Map(projectsRef.current)
+      next.set(projectID, update(runtime))
+      projectsRef.current = next
+      setOpenProjects(next)
+    },
+    [],
+  )
+
+  const withProjectSubscription = useCallback(
+    <A, E, R>(
+      projectID: Project.ID,
+      cause: unknown,
+      operation: (subscriptionID: string) => Effect.Effect<A, E, R>,
+    ): Effect.Effect<A, E | DesktopBridgeError, R> => {
+      const id = subscriptionIDs.current.get(projectID)
+      return id === undefined
+        ? Effect.fail(
+            new DesktopBridgeError({
+              message: "HydraCode is not connected to this project.",
+              cause,
+            }),
+          )
+        : operation(id)
+    },
+    [],
+  )
+
+  const applyProjectUpdate = useCallback(
+    (projectID: Project.ID, update: ProjectUpdate) =>
+      Effect.sync(() => {
+        updateProject(projectID, (current) => reduceProjectUpdate(projectID, current, update))
+      }),
+    [updateProject],
+  )
+
+  const openProject = useCallback(
+    (project: AvailableProject, persist = true) => {
+      const projectID = project.project.id
+      if (projectsRef.current.has(projectID)) {
+        setActiveProjectID(projectID)
+        if (persist) persistProjectSelection(projectsRef.current, projectID)
+        return
+      }
+      const runtime: OpenProjectRuntime = {
+        projectID,
+        location: project.location,
+        status: "opening",
+        snapshot: undefined,
+        error: undefined,
+        promptRetry: null,
+        landingError: null,
+      }
+      projectsRef.current = new Map(projectsRef.current).set(projectID, runtime)
+      setOpenProjects(projectsRef.current)
+      setActiveProjectID(projectID)
+      setLandingError(null)
+      if (persist) persistProjectSelection(projectsRef.current, projectID)
+
+      const program = Effect.gen(function* () {
+        const desktop = yield* DesktopBridge
+        const subscriptionID = yield* desktop.openProject({ location: project.location })
+        subscriptionIDs.current.set(projectID, subscriptionID)
+        yield* desktop.watchProject(subscriptionID, (update) =>
+          AppRuntime.runFork(applyProjectUpdate(projectID, update)),
+        )
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.sync(() =>
+            updateProject(projectID, (current) => ({
+              ...current,
+              status: "error",
+              error: error.message,
+            })),
+          ),
         ),
-      ),
-    )
-    projectFiber.current = AppRuntime.runFork(program)
-  }, [])
+      )
+      projectFibers.current.set(projectID, AppRuntime.runFork(program))
+    },
+    [applyProjectUpdate, persistProjectSelection, updateProject],
+  )
+
+  const activateProject = useCallback(
+    (projectID: Project.ID) => {
+      if (!projectsRef.current.has(projectID)) return
+      setActiveProjectID(projectID)
+      persistProjectSelection(projectsRef.current, projectID)
+    },
+    [persistProjectSelection],
+  )
+
+  const closeProject = useCallback(
+    (projectID: Project.ID) => {
+      const fiber = projectFibers.current.get(projectID)
+      if (fiber !== undefined) AppRuntime.runFork(Fiber.interrupt(fiber))
+      projectFibers.current.delete(projectID)
+      const subscriptionID = subscriptionIDs.current.get(projectID)
+      if (subscriptionID !== undefined)
+        AppRuntime.runFork(DesktopBridge.use((desktop) => desktop.closeProject(subscriptionID)))
+      subscriptionIDs.current.delete(projectID)
+      setOpenProjects((current) => {
+        const next = new Map(current)
+        next.delete(projectID)
+        projectsRef.current = next
+        setActiveProjectID((active) => {
+          const nextActive = active === projectID ? (next.keys().next().value ?? null) : active
+          persistProjectSelection(next, nextActive)
+          return nextActive
+        })
+        return next
+      })
+    },
+    [persistProjectSelection],
+  )
 
   const submitPrompt = useCallback(
-    (sessionID: SessionView["id"], text: string) =>
-      Effect.gen(function* () {
-        const id = subscriptionID.current
-        if (id === null)
-          return yield* new DesktopBridgeError({
-            message: "HydraCode is not connected to this project.",
-            cause: sessionID,
-          })
-        const session =
-          stateRef.current._tag === "Ready"
-            ? stateRef.current.snapshot.sessions.find((item) => item.id === sessionID)
-            : undefined
-        if (session === undefined)
-          return yield* new DesktopBridgeError({
-            message: "HydraCode could not find this session.",
-            cause: sessionID,
-          })
-        const prompt = pendingPrompt(session, text.trim())
-        yield* Effect.sync(() =>
-          setState((current) =>
-            current._tag !== "Ready"
-              ? current
-              : {
-                  ...current,
-                  snapshot: {
-                    ...current.snapshot,
-                    sessions: current.snapshot.sessions.map((item) =>
-                      item.id === sessionID
-                        ? withPrompts(item, [...item.optimisticPrompts, prompt])
-                        : item,
-                    ),
-                  },
-                },
-          ),
-        )
-        return yield* DesktopBridge.use((desktop) =>
-          desktop.submitPrompt({ subscriptionID: id, sessionID, text: prompt.text }),
-        ).pipe(
-          Effect.tapError(() =>
-            Effect.sync(() =>
-              setState((current) =>
-                current._tag !== "Ready"
-                  ? current
+    (projectID: Project.ID, sessionID: SessionView["id"], text: string) =>
+      withProjectSubscription(projectID, sessionID, (subscriptionID) =>
+        Effect.gen(function* () {
+          const session = projectsRef.current
+            .get(projectID)
+            ?.snapshot?.sessions.find((item) => item.id === sessionID)
+          if (session === undefined)
+            return yield* new DesktopBridgeError({
+              message: "HydraCode could not find this session.",
+              cause: sessionID,
+            })
+          const prompt = pendingPrompt(session, text.trim())
+          yield* Effect.sync(() =>
+            updateProject(projectID, (current) => ({
+              ...current,
+              snapshot:
+                current.snapshot === undefined
+                  ? undefined
                   : {
-                      ...current,
-                      snapshot: {
-                        ...current.snapshot,
-                        sessions: current.snapshot.sessions.map((item) =>
-                          item.id === sessionID
-                            ? withPrompts(
-                                item,
-                                item.optimisticPrompts.filter(
-                                  (pending) => pending.id !== prompt.id,
-                                ),
-                              )
-                            : item,
-                        ),
-                      },
+                      ...current.snapshot,
+                      sessions: current.snapshot.sessions.map((item) =>
+                        item.id === sessionID
+                          ? withPrompts(item, [...item.optimisticPrompts, prompt])
+                          : item,
+                      ),
                     },
+            })),
+          )
+          return yield* DesktopBridge.use((desktop) =>
+            desktop.submitPrompt({ subscriptionID, sessionID, text: prompt.text }),
+          ).pipe(
+            Effect.tapError(() =>
+              Effect.sync(() =>
+                updateProject(projectID, (current) => ({
+                  ...current,
+                  snapshot:
+                    current.snapshot === undefined
+                      ? undefined
+                      : {
+                          ...current.snapshot,
+                          sessions: current.snapshot.sessions.map((item) =>
+                            item.id === sessionID
+                              ? withPrompts(
+                                  item,
+                                  item.optimisticPrompts.filter(
+                                    (pending) => pending.id !== prompt.id,
+                                  ),
+                                )
+                              : item,
+                          ),
+                        },
+                })),
               ),
             ),
-          ),
-        )
-      }),
-    [],
+          )
+        }),
+      ),
+    [updateProject, withProjectSubscription],
   )
 
   const selectSession = useCallback(
-    (sessionID: string) =>
-      Effect.gen(function* () {
-        const id = subscriptionID.current
-        if (id === null)
-          return yield* new DesktopBridgeError({
-            message: "HydraCode is not connected to this project.",
-            cause: sessionID,
-          })
-        yield* DesktopBridge.use((desktop) =>
-          desktop.selectSession({ subscriptionID: id, sessionID }),
-        )
-        return yield* Effect.sync(() => setPromptRetry(null))
-      }),
-    [],
+    (projectID: Project.ID, sessionID: string) =>
+      withProjectSubscription(projectID, sessionID, (subscriptionID) =>
+        DesktopBridge.use((desktop) => desktop.selectSession({ subscriptionID, sessionID })).pipe(
+          Effect.tap(() =>
+            Effect.sync(() =>
+              updateProject(projectID, (current) => ({ ...current, promptRetry: null })),
+            ),
+          ),
+        ),
+      ),
+    [updateProject, withProjectSubscription],
   )
 
   const createSession = useCallback(
-    (text: string, selectCreated?: (sessionID: SessionView["id"] | undefined) => void) =>
-      Effect.gen(function* () {
-        const id = subscriptionID.current
-        if (id === null)
-          return yield* new DesktopBridgeError({
-            message: "HydraCode is not connected to this project.",
-            cause: text,
-          })
-        const readyState = stateRef.current
-        if (readyState._tag !== "Ready")
-          return yield* new DesktopBridgeError({
-            message: "HydraCode is not ready to create a session.",
-            cause: text,
-          })
-        const promptText = text.trim()
-        const provisionalID = createProvisionalSessionID()
-        const authoritativeGraph = projectMessages([])
-        const provisionalBase: SessionView = {
-          id: provisionalID,
-          created: Date.now(),
-          title: "New session",
-          active: false,
-          synchronized: true,
-          execution: { _tag: "Idle" },
-          provisional: true,
-          authoritativeGraph,
-          optimisticPrompts: [],
-          graph: authoritativeGraph,
-        }
-        const prompt = pendingPrompt(provisionalBase, promptText)
-        const provisional = withPrompts(provisionalBase, [prompt])
-        yield* Effect.sync(() => {
-          setLandingError(null)
-          setPromptRetry(null)
-          setState((current) =>
-            current._tag !== "Ready"
-              ? current
-              : {
-                  ...current,
-                  snapshot: {
-                    ...current.snapshot,
-                    sessions: [...current.snapshot.sessions, provisional],
-                  },
-                },
-          )
-          selectCreated?.(provisionalID)
-        })
-        const result = yield* DesktopBridge.use((desktop) =>
-          desktop.createSession({ subscriptionID: id }),
-        ).pipe(
-          Effect.tapError((error) =>
-            Effect.sync(() => {
-              setLandingError(error.message)
-              selectCreated?.(undefined)
-              setState((current) =>
-                current._tag !== "Ready"
-                  ? current
+    (
+      projectID: Project.ID,
+      text: string,
+      selectCreated?: (sessionID: SessionView["id"] | undefined) => void,
+    ) =>
+      withProjectSubscription(projectID, text, (subscriptionID) =>
+        Effect.gen(function* () {
+          const currentSnapshot = projectsRef.current.get(projectID)?.snapshot
+          if (currentSnapshot === undefined)
+            return yield* new DesktopBridgeError({
+              message: "HydraCode is not ready to create a session.",
+              cause: text,
+            })
+          const promptText = text.trim()
+          const provisionalID = createProvisionalSessionID()
+          const authoritativeGraph = projectMessages([])
+          const provisionalBase: SessionView = {
+            id: provisionalID,
+            created: Date.now(),
+            title: "New session",
+            active: false,
+            synchronized: true,
+            execution: { _tag: "Idle" },
+            questions: [],
+            provisional: true,
+            authoritativeGraph,
+            optimisticPrompts: [],
+            graph: authoritativeGraph,
+          }
+          const prompt = pendingPrompt(provisionalBase, promptText)
+          yield* Effect.sync(() => {
+            updateProject(projectID, (current) => ({
+              ...current,
+              landingError: null,
+              promptRetry: null,
+              snapshot:
+                current.snapshot === undefined
+                  ? undefined
                   : {
-                      ...current,
-                      snapshot: {
-                        ...current.snapshot,
-                        sessions: current.snapshot.sessions.filter(
-                          (session) => session.id !== provisionalID,
-                        ),
-                      },
+                      ...current.snapshot,
+                      sessions: [
+                        ...current.snapshot.sessions,
+                        withPrompts(provisionalBase, [prompt]),
+                      ],
                     },
-              )
-            }),
-          ),
-        )
-        const session = view(result.session, [prompt])
-        yield* Effect.sync(() => {
-          selectCreated?.(session.id)
-          setState((current) =>
-            current._tag !== "Ready"
-              ? current
-              : {
-                  ...current,
-                  snapshot: {
-                    ...current.snapshot,
-                    sessions: [
-                      ...current.snapshot.sessions.filter(
-                        (item) => item.id !== provisionalID && item.id !== session.id,
-                      ),
-                      session,
-                    ],
-                    recentSessions: [
-                      {
-                        id: session.id,
-                        created: session.created,
-                        title: session.title,
-                        active: session.active,
-                      },
-                      ...current.snapshot.recentSessions.filter((item) => item.id !== session.id),
-                    ],
-                  },
-                },
-          )
-        })
-        return yield* DesktopBridge.use((desktop) =>
-          desktop.submitPrompt({ subscriptionID: id, sessionID: session.id, text: promptText }),
-        ).pipe(
-          Effect.matchEffect({
-            onFailure: (error) =>
+            }))
+            selectCreated?.(provisionalID)
+          })
+          const result = yield* DesktopBridge.use((desktop) =>
+            desktop.createSession({ subscriptionID }),
+          ).pipe(
+            Effect.tapError((error) =>
               Effect.sync(() => {
-                setPromptRetry({ sessionID: session.id, text: promptText, message: error.message })
-                setState((current) =>
-                  current._tag !== "Ready"
-                    ? current
-                    : {
-                        ...current,
-                        snapshot: {
+                selectCreated?.(undefined)
+                updateProject(projectID, (current) => ({
+                  ...current,
+                  landingError: error.message,
+                  snapshot:
+                    current.snapshot === undefined
+                      ? undefined
+                      : {
                           ...current.snapshot,
-                          sessions: current.snapshot.sessions.map((item) =>
-                            item.id === session.id ? withPrompts(item, []) : item,
+                          sessions: current.snapshot.sessions.filter(
+                            (session) => session.id !== provisionalID,
                           ),
                         },
-                      },
-                )
+                }))
               }),
-            onSuccess: () => Effect.void,
+            ),
+          )
+          const session = projectSessionView(result.session, [prompt])
+          yield* Effect.sync(() => {
+            selectCreated?.(session.id)
+            updateProject(projectID, (current) => ({
+              ...current,
+              snapshot:
+                current.snapshot === undefined
+                  ? undefined
+                  : {
+                      ...current.snapshot,
+                      sessions: [
+                        ...current.snapshot.sessions.filter(
+                          (item) => item.id !== provisionalID && item.id !== session.id,
+                        ),
+                        session,
+                      ],
+                      recentSessions: [
+                        {
+                          id: session.id,
+                          created: session.created,
+                          title: session.title,
+                          active: session.active,
+                        },
+                        ...current.snapshot.recentSessions.filter((item) => item.id !== session.id),
+                      ],
+                    },
+            }))
+          })
+          return yield* DesktopBridge.use((desktop) =>
+            desktop.submitPrompt({ subscriptionID, sessionID: session.id, text: promptText }),
+          ).pipe(
+            Effect.matchEffect({
+              onFailure: (error) =>
+                Effect.sync(() =>
+                  updateProject(projectID, (current) => ({
+                    ...current,
+                    promptRetry: {
+                      sessionID: session.id,
+                      text: promptText,
+                      message: error.message,
+                    },
+                    snapshot:
+                      current.snapshot === undefined
+                        ? undefined
+                        : {
+                            ...current.snapshot,
+                            sessions: current.snapshot.sessions.map((item) =>
+                              item.id === session.id ? withPrompts(item, []) : item,
+                            ),
+                          },
+                  })),
+                ),
+              onSuccess: () => Effect.void,
+            }),
+          )
+        }),
+      ),
+    [updateProject, withProjectSubscription],
+  )
+
+  const openHome = useCallback(
+    (text: string) => {
+      const projectID = Project.ID.global
+      const existing = projectsRef.current.get(projectID)
+      if (existing !== undefined) {
+        setActiveProjectID(projectID)
+        return createSession(projectID, text)
+      }
+      const runtime: OpenProjectRuntime = {
+        projectID,
+        location: Location.Ref.make({ directory: AbsolutePath.make("/") }),
+        status: "opening",
+        snapshot: undefined,
+        error: undefined,
+        promptRetry: null,
+        landingError: null,
+      }
+      projectsRef.current = new Map(projectsRef.current).set(projectID, runtime)
+      setOpenProjects(projectsRef.current)
+      setActiveProjectID(projectID)
+      setLandingError(null)
+
+      const program = Effect.gen(function* () {
+        const desktop = yield* DesktopBridge
+        const subscriptionID = yield* desktop.openProject({})
+        subscriptionIDs.current.set(projectID, subscriptionID)
+        let started = false
+        yield* desktop.watchProject(subscriptionID, (update) => {
+          AppRuntime.runFork(applyProjectUpdate(projectID, update))
+          if (update._tag !== "Snapshot" || started) return
+          started = true
+          AppRuntime.runFork(
+            createSession(projectID, text, (sessionID) => {
+              if (sessionID === undefined) return
+              updateProject(projectID, (current) => ({ ...current, requestedSessionID: sessionID }))
+            }).pipe(Effect.catch((error) => Effect.sync(() => setLandingError(error.message)))),
+          )
+        })
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.sync(() => {
+            updateProject(projectID, (current) => ({
+              ...current,
+              status: "error",
+              error: error.message,
+            }))
           }),
-        )
-      }),
-    [],
+        ),
+      )
+      projectFibers.current.set(projectID, AppRuntime.runFork(program))
+      return Effect.void
+    },
+    [applyProjectUpdate, createSession, updateProject],
   )
 
   const interruptSession = useCallback(
-    (sessionID: SessionView["id"]) =>
-      Effect.gen(function* () {
-        const id = subscriptionID.current
-        if (id === null)
-          return yield* new DesktopBridgeError({
-            message: "HydraCode is not connected to this project.",
-            cause: sessionID,
-          })
-        return yield* DesktopBridge.use((desktop) =>
-          desktop.interrupt({ subscriptionID: id, sessionID }),
-        )
-      }),
-    [],
+    (projectID: Project.ID, sessionID: SessionView["id"]) =>
+      withProjectSubscription(projectID, sessionID, (subscriptionID) =>
+        DesktopBridge.use((desktop) => desktop.interrupt({ subscriptionID, sessionID })),
+      ),
+    [withProjectSubscription],
+  )
+
+  const replyQuestion = useCallback(
+    (projectID: Project.ID, request: Question.Request, answers: ReadonlyArray<Question.Answer>) =>
+      withProjectSubscription(projectID, request.id, (subscriptionID) =>
+        DesktopBridge.use((desktop) =>
+          desktop.replyQuestion({
+            subscriptionID,
+            sessionID: request.sessionID,
+            requestID: request.id,
+            answers,
+          }),
+        ),
+      ),
+    [withProjectSubscription],
+  )
+
+  const rejectQuestion = useCallback(
+    (projectID: Project.ID, request: Question.Request) =>
+      withProjectSubscription(projectID, request.id, (subscriptionID) =>
+        DesktopBridge.use((desktop) =>
+          desktop.rejectQuestion({
+            subscriptionID,
+            sessionID: request.sessionID,
+            requestID: request.id,
+          }),
+        ),
+      ),
+    [withProjectSubscription],
   )
 
   const loadProjects = useCallback(() => {
-    if (catalogFiber.current !== null) AppRuntime.runFork(Fiber.interrupt(catalogFiber.current))
-    setCatalog({ _tag: "Loading" })
-    catalogFiber.current = AppRuntime.runFork(
-      DesktopBridge.use((desktop) => desktop.listProjects).pipe(
-        Effect.tap((projects) => Effect.sync(() => setCatalog({ _tag: "Ready", projects }))),
+    if (availableProjectsFiber.current !== null)
+      AppRuntime.runFork(Fiber.interrupt(availableProjectsFiber.current))
+    setAvailableProjects({ _tag: "Loading" })
+    availableProjectsFiber.current = AppRuntime.runFork(
+      DesktopBridge.use((desktop) =>
+        Effect.all([desktop.listProjects, desktop.loadApplicationState]),
+      ).pipe(
+        Effect.tap(([projects, state]) =>
+          Effect.sync(() => {
+            setAvailableProjects({ _tag: "Ready", projects })
+            const restored = restoreApplicationState(state, projects)
+            for (const project of restored.projects) openProject(project, false)
+            setActiveProjectID(restored.activeProjectID)
+            persistProjectSelection(projectsRef.current, restored.activeProjectID)
+          }),
+        ),
         Effect.catch((error) =>
-          Effect.sync(() => setCatalog({ _tag: "Error", message: error.message })),
+          Effect.sync(() => setAvailableProjects({ _tag: "Error", message: error.message })),
         ),
       ),
     )
-  }, [])
+  }, [openProject, persistProjectSelection])
 
   const newProject = useCallback(() => {
     if (selectionFiber.current !== null) AppRuntime.runFork(Fiber.interrupt(selectionFiber.current))
@@ -436,64 +543,57 @@ export function useProjectController() {
         Effect.tap((selection) =>
           Option.match(selection, {
             onNone: () => Effect.void,
-            onSome: (directory) =>
-              Effect.sync(() =>
-                startProject(Location.Ref.make({ directory: AbsolutePath.make(directory) })),
-              ),
+            onSome: (project) =>
+              Effect.sync(() => {
+                setAvailableProjects((state) =>
+                  state._tag === "Ready" &&
+                  !state.projects.some((item) => item.project.id === project.project.id)
+                    ? { _tag: "Ready", projects: [project, ...state.projects] }
+                    : state,
+                )
+                openProject(project)
+              }),
           }),
         ),
-        Effect.catch((error) =>
-          Effect.sync(() => setState({ _tag: "Error", message: error.message })),
-        ),
+        Effect.catch((error) => Effect.sync(() => setLandingError(error.message))),
       ),
     )
-  }, [startProject])
-
-  const openProject = useCallback(
-    (project: ProjectCatalogItem) => startProject(project.location),
-    [startProject],
-  )
-
-  const showProjects = useCallback(() => {
-    if (projectFiber.current !== null) {
-      AppRuntime.runFork(Fiber.interrupt(projectFiber.current))
-      projectFiber.current = null
-    }
-    const id = subscriptionID.current
-    if (id !== null) {
-      AppRuntime.runFork(DesktopBridge.use((desktop) => desktop.closeProject(id)))
-      subscriptionID.current = null
-    }
-    setState({ _tag: "Idle" })
-    loadProjects()
-  }, [loadProjects])
+  }, [openProject])
 
   useEffect(() => loadProjects(), [loadProjects])
 
   useEffect(
     () => () => {
-      const id = subscriptionID.current
-      if (id !== null) AppRuntime.runFork(DesktopBridge.use((desktop) => desktop.closeProject(id)))
-      const fibers = [selectionFiber.current, catalogFiber.current, projectFiber.current].filter(
-        (fiber): fiber is Fiber.Fiber<unknown, unknown> => fiber !== null,
+      for (const subscriptionID of subscriptionIDs.current.values())
+        AppRuntime.runFork(DesktopBridge.use((desktop) => desktop.closeProject(subscriptionID)))
+      AppRuntime.runFork(
+        Fiber.interruptAll([
+          ...projectFibers.current.values(),
+          ...[selectionFiber.current, availableProjectsFiber.current].filter(
+            (fiber): fiber is Fiber.Fiber<unknown, unknown> => fiber !== null,
+          ),
+        ]),
       )
-      AppRuntime.runFork(Fiber.interruptAll(fibers))
     },
     [],
   )
 
   return {
-    state,
-    promptRetry,
+    activeProjectID,
+    openProjects,
+    availableProjects,
     landingError,
-    catalog,
     loadProjects,
     newProject,
     openProject,
-    showProjects,
+    openHome,
+    activateProject,
+    closeProject,
     selectSession,
     createSession,
     submitPrompt,
+    replyQuestion,
+    rejectQuestion,
     interruptSession,
   } as const
 }

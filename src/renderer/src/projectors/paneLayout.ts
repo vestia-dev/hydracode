@@ -87,12 +87,27 @@ export function paneSessionIDs(layout: PaneLayout): ReadonlyArray<string> {
   return Array.from(new Set([...paneSessionIDs(layout.first), ...paneSessionIDs(layout.second)]))
 }
 
-export function paneCount(layout: PaneLayout): number {
-  return layout._tag === "Pane" ? 1 : paneCount(layout.first) + paneCount(layout.second)
-}
-
 export function firstPaneID(layout: PaneLayout): string {
   return layout._tag === "Pane" ? layout.id : firstPaneID(layout.first)
+}
+
+export function hasPane(layout: PaneLayout, paneID: string): boolean {
+  if (layout._tag === "Pane") return layout.id === paneID
+  return hasPane(layout.first, paneID) || hasPane(layout.second, paneID)
+}
+
+export function clearMissingPaneSessions(
+  layout: PaneLayout,
+  missingSessionIDs: ReadonlySet<string>,
+): PaneLayout {
+  if (layout._tag === "Pane") {
+    return layout.sessionID !== undefined && missingSessionIDs.has(layout.sessionID)
+      ? { _tag: "Pane", id: layout.id }
+      : layout
+  }
+  const first = clearMissingPaneSessions(layout.first, missingSessionIDs)
+  const second = clearMissingPaneSessions(layout.second, missingSessionIDs)
+  return first === layout.first && second === layout.second ? layout : { ...layout, first, second }
 }
 
 interface PaneBounds {

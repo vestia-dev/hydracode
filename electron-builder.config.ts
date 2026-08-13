@@ -1,14 +1,4 @@
-import { join } from "node:path"
 import type { Configuration } from "electron-builder"
-import { openCodeRuntimeTarget } from "./src/main/services/openCodeRuntime"
-
-const runtime = openCodeRuntimeTarget(process.platform, process.arch)
-
-if (runtime === undefined) {
-  throw new Error(
-    `HydraCode cannot package an OpenCode runtime for ${process.platform}/${process.arch}`,
-  )
-}
 
 const config: Configuration = {
   appId: "dev.vestia.hydracode",
@@ -18,12 +8,8 @@ const config: Configuration = {
   directories: {
     output: "dist",
   },
-  files: ["out/**/*", "package.json", "!node_modules/@opencode-ai/cli-*/**/*"],
+  files: ["out/**/*", "package.json"],
   extraResources: [
-    {
-      from: join("node_modules", runtime.packageName, "bin", runtime.executableName),
-      to: join("opencode", runtime.executableName),
-    },
     {
       from: "THIRD_PARTY_NOTICES.txt",
       to: "THIRD_PARTY_NOTICES.txt",
@@ -32,6 +18,7 @@ const config: Configuration = {
   mac: {
     category: "public.app-category.developer-tools",
     hardenedRuntime: true,
+    icon: "build/icon.png",
     target: ["dmg", "zip"],
     notarize: process.env.APPLE_API_KEY !== undefined,
   },

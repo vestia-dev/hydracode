@@ -9,19 +9,23 @@ import {
   type OpenProjectCommand,
   type CreateSessionCommand,
   type SubmitPromptCommand,
+  type ReplyQuestionCommand,
+  type QuestionCommand,
   type ProjectSessionCommand,
   UpdateState,
+  OpenCodeDiagnosticsResult,
 } from "../../../shared/ipc"
 import { ThemeResult, ProjectSelectionResult } from "../../../shared/ipc"
 import type { BundledThemeID, Theme } from "../../../shared/theme"
-import type { ProjectCatalogItem } from "../../../shared/project"
+import type { AvailableProject } from "../../../shared/project"
 import {
-  ListSavedLayoutsResult,
-  SaveLayoutResult,
-  type SaveLayoutCommand,
-  type SavedLayout,
-  type SavedProjectLayouts,
-} from "../../../shared/layout"
+  ApplicationStateResult,
+  ProjectUIStateResult,
+  type ApplicationState,
+  type ProjectSelectionState,
+  type ProjectUIState,
+} from "../../../shared/applicationState"
+import type { OpenCodeDiagnostics } from "../../../shared/openCode"
 import {
   PaneDirection,
   type PaneDirection as PaneDirectionType,
@@ -37,8 +41,17 @@ export class DesktopBridgeError extends Schema.TaggedErrorClass<DesktopBridgeErr
 interface DesktopBridgeShape {
   readonly loadTheme: Effect.Effect<Theme, DesktopBridgeError>
   readonly setBundledTheme: (id: BundledThemeID) => Effect.Effect<Theme, DesktopBridgeError>
-  readonly selectProject: Effect.Effect<Option.Option<string>, DesktopBridgeError>
-  readonly listProjects: Effect.Effect<ReadonlyArray<ProjectCatalogItem>, DesktopBridgeError>
+  readonly selectProject: Effect.Effect<Option.Option<AvailableProject>, DesktopBridgeError>
+  readonly listProjects: Effect.Effect<ReadonlyArray<AvailableProject>, DesktopBridgeError>
+  readonly loadApplicationState: Effect.Effect<ApplicationState, DesktopBridgeError>
+  readonly saveProjectSelection: (
+    state: ProjectSelectionState,
+  ) => Effect.Effect<ApplicationState, DesktopBridgeError>
+  readonly saveProjectUIState: (
+    state: ProjectUIState,
+  ) => Effect.Effect<ProjectUIState, DesktopBridgeError>
+  readonly getOpenCodeDiagnostics: Effect.Effect<OpenCodeDiagnostics, DesktopBridgeError>
+  readonly installOpenCode: Effect.Effect<void, DesktopBridgeError>
   readonly openProject: (command: OpenProjectCommand) => Effect.Effect<string, DesktopBridgeError>
   readonly closeProject: (subscriptionID: string) => Effect.Effect<void, DesktopBridgeError>
   readonly selectSession: (
@@ -48,15 +61,12 @@ interface DesktopBridgeShape {
     command: CreateSessionCommand,
   ) => Effect.Effect<Exclude<CreateSessionResult, { readonly _tag: "Failure" }>, DesktopBridgeError>
   readonly submitPrompt: (command: SubmitPromptCommand) => Effect.Effect<void, DesktopBridgeError>
+  readonly replyQuestion: (command: ReplyQuestionCommand) => Effect.Effect<void, DesktopBridgeError>
+  readonly rejectQuestion: (command: QuestionCommand) => Effect.Effect<void, DesktopBridgeError>
   readonly interrupt: (command: ProjectSessionCommand) => Effect.Effect<void, DesktopBridgeError>
-  readonly listSavedLayouts: (
-    projectID: SavedProjectLayouts["projectID"],
-  ) => Effect.Effect<ReadonlyArray<SavedLayout>, DesktopBridgeError>
-  readonly saveLayout: (
-    command: SaveLayoutCommand,
-  ) => Effect.Effect<SavedLayout, DesktopBridgeError>
   readonly checkForUpdates: Effect.Effect<UpdateState, DesktopBridgeError>
   readonly installUpdate: Effect.Effect<void, DesktopBridgeError>
+  readonly restartForUpdate: Effect.Effect<void, DesktopBridgeError>
   readonly subscribeUpdates: (
     onUpdate: (state: UpdateState) => void,
   ) => Effect.Effect<() => void, DesktopBridgeError>
@@ -74,9 +84,6 @@ interface DesktopBridgeShape {
   ) => Effect.Effect<() => void, DesktopBridgeError>
   readonly subscribeFollowLatest: (
     onFollow: () => void,
-  ) => Effect.Effect<() => void, DesktopBridgeError>
-  readonly subscribeLayoutSave: (
-    onSave: () => void,
   ) => Effect.Effect<() => void, DesktopBridgeError>
   readonly watchProject: (
     subscriptionID: string,
@@ -141,7 +148,7 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
     selectProject: invoke(() => window.hydracode.selectProject(), ProjectSelectionResult).pipe(
       Effect.flatMap((result) =>
         result._tag === "Success"
-          ? Effect.succeed(Option.fromNullishOr(result.directory))
+          ? Effect.succeed(Option.fromNullishOr(result.project))
           : Effect.fail(new DesktopBridgeError({ message: result.message, cause: result })),
       ),
     ),
@@ -152,6 +159,51 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
           : Effect.fail(new DesktopBridgeError({ message: result.message, cause: result })),
       ),
     ),
+    loadApplicationState: invoke(
+      () => window.hydracode.loadApplicationState(),
+      ApplicationStateResult,
+    ).pipe(
+      Effect.flatMap((result) =>
+        result._tag === "Success"
+          ? Effect.succeed(result.state)
+          : Effect.fail(new DesktopBridgeError({ message: result.message, cause: result })),
+      ),
+    ),
+    saveProjectSelection: (state) =>
+      invoke(() => window.hydracode.saveProjectSelection(state), ApplicationStateResult).pipe(
+        Effect.flatMap((result) =>
+          result._tag === "Success"
+            ? Effect.succeed(result.state)
+            : Effect.fail(new DesktopBridgeError({ message: result.message, cause: result })),
+        ),
+      ),
+    saveProjectUIState: (state) =>
+      invoke(() => window.hydracode.saveProjectUIState(state), ProjectUIStateResult).pipe(
+        Effect.flatMap((result) =>
+          result._tag === "Success"
+            ? Effect.succeed(result.state)
+            : Effect.fail(
+                new DesktopBridgeError({
+                  message:
+                    result._tag === "Failure"
+                      ? result.message
+                      : "HydraCode did not save the project UI state.",
+                  cause: result,
+                }),
+              ),
+        ),
+      ),
+    getOpenCodeDiagnostics: invoke(
+      () => window.hydracode.getOpenCodeDiagnostics(),
+      OpenCodeDiagnosticsResult,
+    ).pipe(
+      Effect.flatMap((result) =>
+        result._tag === "Success"
+          ? Effect.succeed(result.diagnostics)
+          : Effect.fail(new DesktopBridgeError({ message: result.message, cause: result })),
+      ),
+    ),
+    installOpenCode: command(() => window.hydracode.installOpenCode()),
     openProject: (request) =>
       invoke(() => window.hydracode.openProject(request), OpenProjectResult).pipe(
         Effect.flatMap((value) =>
@@ -172,25 +224,12 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
         ),
       ),
     submitPrompt: (request) => command(() => window.hydracode.submitPrompt(request)),
+    replyQuestion: (request) => command(() => window.hydracode.replyQuestion(request)),
+    rejectQuestion: (request) => command(() => window.hydracode.rejectQuestion(request)),
     interrupt: (request) => command(() => window.hydracode.interrupt(request)),
-    listSavedLayouts: (projectID) =>
-      invoke(() => window.hydracode.listSavedLayouts({ projectID }), ListSavedLayoutsResult).pipe(
-        Effect.flatMap((result) =>
-          result._tag === "Success"
-            ? Effect.succeed(result.layouts)
-            : Effect.fail(new DesktopBridgeError({ message: result.message, cause: result })),
-        ),
-      ),
-    saveLayout: (request) =>
-      invoke(() => window.hydracode.saveLayout(request), SaveLayoutResult).pipe(
-        Effect.flatMap((result) =>
-          result._tag === "Success"
-            ? Effect.succeed(result.layout)
-            : Effect.fail(new DesktopBridgeError({ message: result.message, cause: result })),
-        ),
-      ),
     checkForUpdates: invoke(() => window.hydracode.checkForUpdates(), UpdateState),
     installUpdate: command(() => window.hydracode.installUpdate()),
+    restartForUpdate: command(() => window.hydracode.restartForUpdate()),
     subscribeUpdates: (onUpdate) =>
       Effect.try({
         try: () =>
@@ -251,15 +290,6 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
         catch: (cause) =>
           new DesktopBridgeError({
             message: "HydraCode could not subscribe to follow-latest commands.",
-            cause,
-          }),
-      }),
-    subscribeLayoutSave: (onSave) =>
-      Effect.try({
-        try: () => window.hydracode.onLayoutSave(onSave),
-        catch: (cause) =>
-          new DesktopBridgeError({
-            message: "HydraCode could not subscribe to layout save commands.",
             cause,
           }),
       }),

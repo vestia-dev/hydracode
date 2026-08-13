@@ -52,9 +52,9 @@ export function projectSessionSummaries(
     }))
 }
 
-export function projectCatalogItems(
+export function availableProjects(
   projects: ReadonlyArray<Project.Info>,
-): ReadonlyArray<ProjectCatalogItem> {
+): ReadonlyArray<AvailableProject> {
   return projects
     .filter((project) => project.id !== Project.ID.global && project.canonical !== "/")
     .map((project) => ({
@@ -75,4 +75,4 @@ export function projectName(name: string | undefined) {
   return normalized === undefined || normalized === "" ? {} : { name: normalized }
 }
 import { Location, Project } from "@opencode-ai/client/effect"
-import type { ProjectCatalogItem } from "../project"
+import type { AvailableProject } from "../project"

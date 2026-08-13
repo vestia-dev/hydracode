@@ -1,190 +1,194 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Background, BackgroundVariant, ReactFlow } from "@xyflow/react"
 import { Effect } from "effect"
-import { ProjectView } from "./components/ProjectView"
-import { ProjectLanding } from "./components/ProjectLanding"
-import { SettingsPage } from "./components/SettingsPage"
+import { Project } from "@opencode-ai/client/effect"
+import { HomePage } from "./components/HomePage"
+import { SettingsModal } from "./components/SettingsModal"
+import { CommandMenu, type CommandMenuCommand } from "./components/CommandMenu"
+import { ProjectContainer, type ProjectContainerHandle } from "./components/ProjectContainer"
 import { useUpdater } from "./hooks/useUpdater"
 import { useProjectController } from "./hooks/useProjectController"
 import { projectDisplayName, projectInitial } from "./projectors/projectPresentation"
-import {
-  adjacentPaneID,
-  closePane,
-  firstPaneID,
-  initialPaneLayout,
-  paneInDirection,
-  paneSessionIDs,
-  restorePaneLayout,
-  savePaneLayout,
-  setPaneSession,
-  splitPane,
-  type PaneLayout,
-} from "./projectors/paneLayout"
-import type { PaneDirection, PaneSplitCommand } from "../../shared/pane"
 import { AppRuntime } from "./runtime"
 import { DesktopBridge } from "./services/DesktopBridge"
-import { DesktopBridgeError } from "./services/DesktopBridge"
-import type { SavedLayout } from "../../shared/layout"
+import type { ProjectUIState } from "../../shared/applicationState"
 
 function updateLabel(state: ReturnType<typeof useUpdater>["state"]) {
   switch (state.status) {
-    case "checking":
-      return "Checking…"
+    case "available":
+      return "Update"
     case "downloading":
-      return `Downloading ${state.version}…`
+      return "Downloading..."
     case "ready":
-      return `Restart for ${state.version}`
-    case "installing":
-      return "Restarting…"
-    case "up-to-date":
-      return "Up to date"
-    case "error":
-      return "Update failed"
+      return "Restart"
     default:
-      return "Check for updates"
+      return null
   }
 }
 
 export function App() {
   const [showSettings, setShowSettings] = useState(false)
+  const [showCommandMenu, setShowCommandMenu] = useState(false)
+  const [showProjectSwitcher, setShowProjectSwitcher] = useState(false)
+  const projectSwitcherRef = useRef<HTMLDivElement>(null)
+  const settingsReturnFocusRef = useRef<HTMLElement>(null)
+  const commandMenuReturnFocusRef = useRef<HTMLElement>(null)
+  const projectHandles = useRef(new Map<Project.ID, ProjectContainerHandle>())
+  const projectUIStateCache = useRef(new Map<string, ProjectUIState>())
+  const [applicationStateReady, setApplicationStateReady] = useState(false)
   const {
-    state,
-    promptRetry,
+    activeProjectID,
+    openProjects,
+    availableProjects,
     landingError,
-    catalog,
-    loadProjects,
     newProject,
     openProject,
-    showProjects,
+    openHome,
+    activateProject,
     selectSession,
     createSession,
     submitPrompt,
+    replyQuestion,
+    rejectQuestion,
     interruptSession,
   } = useProjectController()
-  const [paneLayout, setPaneLayout] = useState<PaneLayout>(() =>
-    initialPaneLayout(crypto.randomUUID()),
+  const activeRuntime = activeProjectID === null ? undefined : openProjects.get(activeProjectID)
+  const orderedOpenProjects = Array.from(openProjects.values()).filter(
+    (runtime) => runtime.projectID !== Project.ID.global,
   )
-  const [activePaneID, setActivePaneID] = useState(() =>
-    paneLayout._tag === "Pane" ? paneLayout.id : "",
-  )
-  const [promptFocusRequest, setPromptFocusRequest] = useState<{
-    readonly paneID: string
-    readonly sequence: number
-  } | null>(null)
-  const [followLatestRequest, setFollowLatestRequest] = useState<{
-    readonly paneID: string
-    readonly sequence: number
-  } | null>(null)
-  const promptFocusSequence = useRef(0)
-  const followLatestSequence = useRef(0)
-  const paneLayoutRef = useRef(paneLayout)
-  paneLayoutRef.current = paneLayout
-  const activePaneIDRef = useRef(activePaneID)
-  activePaneIDRef.current = activePaneID
-  const projectStateRef = useRef(state)
-  projectStateRef.current = state
-  const [savedLayouts, setSavedLayouts] = useState<ReadonlyArray<SavedLayout>>([])
-  const [savedLayoutsError, setSavedLayoutsError] = useState<string | null>(null)
-  const [layoutStatus, setLayoutStatus] = useState<string | null>(null)
-  const layoutSavePending = useRef(false)
-  const splitActivePane = useCallback((command: PaneSplitCommand) => {
-    const newPaneID = crypto.randomUUID()
-    const next = splitPane(
-      paneLayoutRef.current,
-      activePaneIDRef.current,
-      command,
-      crypto.randomUUID(),
-      newPaneID,
-    )
-    paneLayoutRef.current = next
-    activePaneIDRef.current = newPaneID
-    setPaneLayout(next)
-    setActivePaneID(newPaneID)
-  }, [])
-  const closeActivePane = useCallback(() => {
-    const current = paneLayoutRef.current
-    const paneID = activePaneIDRef.current
-    const next = closePane(current, paneID)
-    if (next === current) return
-    const nextPaneID = adjacentPaneID(current, paneID) ?? firstPaneID(next)
-    paneLayoutRef.current = next
-    activePaneIDRef.current = nextPaneID
-    setPaneLayout(next)
-    setActivePaneID(nextPaneID)
-  }, [])
-  const focusPaneInDirection = useCallback((direction: PaneDirection) => {
-    const paneID = paneInDirection(paneLayoutRef.current, activePaneIDRef.current, direction)
-    if (paneID === undefined) return
-    activePaneIDRef.current = paneID
-    setActivePaneID(paneID)
-  }, [])
-  const focusActivePrompt = useCallback(() => {
-    promptFocusSequence.current += 1
-    setPromptFocusRequest({
-      paneID: activePaneIDRef.current,
-      sequence: promptFocusSequence.current,
-    })
-  }, [])
-  const followActiveLatest = useCallback(() => {
-    followLatestSequence.current += 1
-    setFollowLatestRequest({
-      paneID: activePaneIDRef.current,
-      sequence: followLatestSequence.current,
-    })
-  }, [])
-  const saveCurrentLayout = useCallback(() => {
-    const current = projectStateRef.current
-    if (current._tag !== "Ready" || layoutSavePending.current) return
-    layoutSavePending.current = true
-    setLayoutStatus("Saving layout...")
-    const layout = paneLayoutRef.current
-    const sessionIDs = paneSessionIDs(layout)
-    const titles = sessionIDs.map(
-      (sessionID) =>
-        current.snapshot.sessions.find((session) => session.id === sessionID)?.title ??
-        current.snapshot.recentSessions.find((session) => session.id === sessionID)?.title ??
-        "Session",
-    )
-    const name =
-      titles.length === 0
-        ? "Empty layout"
-        : titles.length <= 2
-          ? titles.join(" + ")
-          : `${titles.slice(0, 2).join(" + ")} + ${titles.length - 2} more`
+  const shortcutModifier = document.documentElement.dataset.platform === "macos" ? "⌘" : "Ctrl+"
+  const activeHandle = () =>
+    activeProjectID === null ? undefined : projectHandles.current.get(activeProjectID)
+
+  useEffect(() => {
     AppRuntime.runFork(
-      DesktopBridge.use((desktop) =>
-        desktop.saveLayout({
-          projectID: current.snapshot.project.id,
-          name,
-          layout: savePaneLayout(layout),
-        }),
-      ).pipe(
-        Effect.tap((saved) =>
+      DesktopBridge.use((desktop) => desktop.loadApplicationState).pipe(
+        Effect.tap((state) =>
           Effect.sync(() => {
-            layoutSavePending.current = false
-            if (
-              projectStateRef.current._tag !== "Ready" ||
-              projectStateRef.current.snapshot.project.id !== current.snapshot.project.id
+            projectUIStateCache.current = new Map(
+              state.projects.map((projectState) => [projectState.projectID, projectState]),
             )
-              return
-            setSavedLayouts((layouts) => [saved, ...layouts.filter((item) => item.id !== saved.id)])
-            setSavedLayoutsError(null)
-            setLayoutStatus("Layout saved")
+            setApplicationStateReady(true)
           }),
         ),
-        Effect.catch((error) =>
-          Effect.sync(() => {
-            layoutSavePending.current = false
-            if (
-              projectStateRef.current._tag === "Ready" &&
-              projectStateRef.current.snapshot.project.id === current.snapshot.project.id
-            )
-              setLayoutStatus(error.message)
-          }),
-        ),
+        Effect.catch(() => Effect.sync(() => setApplicationStateReady(true))),
       ),
     )
   }, [])
+
+  const selectProject = useCallback(
+    (project: Parameters<typeof openProject>[0]) => {
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+      setShowSettings(false)
+      setShowProjectSwitcher(false)
+      if (openProjects.has(project.project.id)) activateProject(project.project.id)
+      else openProject(project)
+    },
+    [activateProject, openProject, openProjects],
+  )
+
+  useEffect(() => {
+    const openSettings = (event: KeyboardEvent) => {
+      const primaryModifier =
+        document.documentElement.dataset.platform === "macos" ? event.metaKey : event.ctrlKey
+      if (!primaryModifier || event.altKey || event.shiftKey || event.key !== ",") return
+      event.preventDefault()
+      if (!showSettings)
+        settingsReturnFocusRef.current =
+          document.activeElement instanceof HTMLElement ? document.activeElement : null
+      setShowCommandMenu(false)
+      setShowProjectSwitcher(false)
+      setShowSettings(true)
+    }
+    window.addEventListener("keydown", openSettings)
+    return () => window.removeEventListener("keydown", openSettings)
+  }, [showSettings])
+
+  useEffect(() => {
+    const openCommandMenu = (event: KeyboardEvent) => {
+      const primaryModifier =
+        document.documentElement.dataset.platform === "macos" ? event.metaKey : event.ctrlKey
+      if (
+        !primaryModifier ||
+        event.altKey ||
+        event.shiftKey ||
+        event.key.toLocaleLowerCase() !== "p"
+      )
+        return
+      event.preventDefault()
+      if (!showCommandMenu)
+        commandMenuReturnFocusRef.current =
+          document.activeElement instanceof HTMLElement ? document.activeElement : null
+      setShowSettings(false)
+      setShowCommandMenu((current) => !current)
+    }
+    window.addEventListener("keydown", openCommandMenu)
+    return () => window.removeEventListener("keydown", openCommandMenu)
+  }, [showCommandMenu])
+
+  useEffect(() => {
+    const openProjectSwitcher = (event: KeyboardEvent) => {
+      const primaryModifier =
+        document.documentElement.dataset.platform === "macos" ? event.metaKey : event.ctrlKey
+      if (
+        !primaryModifier ||
+        event.altKey ||
+        event.shiftKey ||
+        event.key.toLocaleLowerCase() !== "k"
+      )
+        return
+      event.preventDefault()
+      setShowCommandMenu(false)
+      setShowSettings(false)
+      setShowProjectSwitcher(true)
+    }
+    window.addEventListener("keydown", openProjectSwitcher)
+    return () => window.removeEventListener("keydown", openProjectSwitcher)
+  }, [])
+
+  useEffect(() => {
+    if (!showProjectSwitcher) return undefined
+    const frame = window.requestAnimationFrame(() => {
+      const menu = projectSwitcherRef.current?.querySelector<HTMLElement>(
+        '.project-switcher__menu [role="menuitem"][aria-current="true"]',
+      )
+      const first = projectSwitcherRef.current?.querySelector<HTMLElement>(
+        '.project-switcher__menu [role="menuitem"]',
+      )
+      ;(menu ?? first)?.focus()
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [showProjectSwitcher])
+
+  useEffect(() => {
+    if (!showProjectSwitcher) return undefined
+    const closeProjectSwitcher = (event: MouseEvent | KeyboardEvent) => {
+      if (event instanceof KeyboardEvent) {
+        if (event.key !== "Escape") return
+      } else if (event.target instanceof Node && projectSwitcherRef.current?.contains(event.target))
+        return
+      setShowProjectSwitcher(false)
+    }
+    window.addEventListener("mousedown", closeProjectSwitcher)
+    window.addEventListener("keydown", closeProjectSwitcher)
+    return () => {
+      window.removeEventListener("mousedown", closeProjectSwitcher)
+      window.removeEventListener("keydown", closeProjectSwitcher)
+    }
+  }, [showProjectSwitcher])
+
+  useEffect(() => {
+    const openProjectByPosition = (event: KeyboardEvent) => {
+      const primaryModifier =
+        document.documentElement.dataset.platform === "macos" ? event.metaKey : event.ctrlKey
+      if (!primaryModifier || event.altKey || event.shiftKey || !/^[1-9]$/u.test(event.key)) return
+      const project = orderedOpenProjects[Number(event.key) - 1]
+      if (project === undefined) return
+      event.preventDefault()
+      activateProject(project.projectID)
+    }
+    window.addEventListener("keydown", openProjectByPosition)
+    return () => window.removeEventListener("keydown", openProjectByPosition)
+  }, [activateProject, orderedOpenProjects])
 
   useEffect(() => {
     let remove: ReadonlyArray<() => void> | undefined
@@ -192,246 +196,266 @@ export function App() {
     void AppRuntime.runPromise(
       DesktopBridge.use((desktop) =>
         Effect.all([
-          desktop.subscribePaneSplits(splitActivePane),
-          desktop.subscribePaneFocus(focusPaneInDirection),
-          desktop.subscribePaneClose(closeActivePane),
-          desktop.subscribePromptFocus(focusActivePrompt),
-          desktop.subscribeFollowLatest(followActiveLatest),
-          desktop.subscribeLayoutSave(saveCurrentLayout),
+          desktop.subscribePaneSplits((command) => activeHandle()?.split(command)),
+          desktop.subscribePaneFocus((direction) => activeHandle()?.focus(direction)),
+          desktop.subscribePaneClose(() => activeHandle()?.closePane()),
+          desktop.subscribePromptFocus(() => activeHandle()?.focusPrompt()),
+          desktop.subscribeFollowLatest(() => activeHandle()?.followLatest()),
         ]),
       ),
     ).then((unsubscribes) => {
-      if (disposed) {
-        for (const unsubscribe of unsubscribes) unsubscribe()
-      } else remove = unsubscribes
+      if (disposed) for (const unsubscribe of unsubscribes) unsubscribe()
+      else remove = unsubscribes
     })
     return () => {
       disposed = true
       for (const unsubscribe of remove ?? []) unsubscribe()
     }
-  }, [
-    closeActivePane,
-    focusActivePrompt,
-    focusPaneInDirection,
-    followActiveLatest,
-    saveCurrentLayout,
-    splitActivePane,
-  ])
+  }, [activeProjectID])
 
-  const projectID = state._tag === "Ready" ? state.snapshot.project.id : undefined
-  useEffect(() => {
-    if (projectID === undefined) return
-    const paneID = crypto.randomUUID()
-    const layout = initialPaneLayout(paneID)
-    paneLayoutRef.current = layout
-    activePaneIDRef.current = paneID
-    setPaneLayout(layout)
-    setActivePaneID(paneID)
-    setLayoutStatus(null)
-    setSavedLayouts([])
-    setSavedLayoutsError(null)
-    layoutSavePending.current = false
-    AppRuntime.runFork(
-      DesktopBridge.use((desktop) => desktop.listSavedLayouts(projectID)).pipe(
-        Effect.tap((layouts) =>
-          Effect.sync(() => {
-            if (
-              projectStateRef.current._tag === "Ready" &&
-              projectStateRef.current.snapshot.project.id === projectID
-            )
-              setSavedLayouts(layouts)
-          }),
-        ),
-        Effect.catch((error) =>
-          Effect.sync(() => {
-            if (
-              projectStateRef.current._tag === "Ready" &&
-              projectStateRef.current.snapshot.project.id === projectID
-            )
-              setSavedLayoutsError(error.message)
-          }),
-        ),
-      ),
-    )
-  }, [projectID])
-  const openSavedLayout = useCallback(
-    (saved: SavedLayout) => {
-      const layout = restorePaneLayout(saved.layout)
-      if (layout === undefined)
-        return Effect.fail(
-          new DesktopBridgeError({
-            message: "HydraCode could not restore this saved layout.",
-            cause: saved.layout,
-          }),
-        )
-      return Effect.forEach(paneSessionIDs(layout), selectSession, {
-        concurrency: 4,
-        discard: true,
-      }).pipe(
-        Effect.tap(() =>
-          Effect.sync(() => {
-            paneLayoutRef.current = layout
-            const paneID = firstPaneID(layout)
-            activePaneIDRef.current = paneID
-            setPaneLayout(layout)
-            setActivePaneID(paneID)
-            setLayoutStatus(null)
-          }),
-        ),
-      )
-    },
-    [selectSession],
-  )
   const updater = useUpdater()
   const projectName =
-    state._tag === "Ready"
-      ? projectDisplayName(state.snapshot.project.name, state.snapshot.location.directory)
-      : state._tag === "Loading"
-        ? projectDisplayName(undefined, state.location.directory)
-        : null
+    activeProjectID === Project.ID.global
+      ? "Home"
+      : activeRuntime?.snapshot === undefined
+        ? activeRuntime === undefined
+          ? null
+          : projectDisplayName(undefined, activeRuntime.location.directory)
+        : projectDisplayName(
+            activeRuntime.snapshot.project.name,
+            activeRuntime.snapshot.location.directory,
+          )
   const projectIcon =
-    state._tag === "Ready"
-      ? (state.snapshot.project.icon?.override ?? state.snapshot.project.icon?.url)
-      : undefined
-  const projectColor = state._tag === "Ready" ? state.snapshot.project.icon?.color : undefined
+    activeRuntime?.snapshot?.project.icon?.override ?? activeRuntime?.snapshot?.project.icon?.url
+  const projectColor = activeRuntime?.snapshot?.project.icon?.color
+  const projectSwitcherLabel = projectName ?? "Projects"
+  const projectReady = activeRuntime?.status === "ready"
   const creatingSession =
-    state._tag === "Ready" && state.snapshot.sessions.some((session) => session.provisional)
+    activeRuntime?.snapshot?.sessions.some((session) => session.provisional) ?? false
+  const showProject = (action: () => void) => () => {
+    setShowSettings(false)
+    action()
+  }
+  const commandMenuCommands: ReadonlyArray<CommandMenuCommand> = [
+    {
+      id: "new-session",
+      disabled: !projectReady || creatingSession,
+      run: showProject(() => activeHandle()?.newSession()),
+    },
+    {
+      id: "open-project",
+      run: () => undefined,
+    },
+    {
+      id: "toggle-settings",
+      run: () => {
+        settingsReturnFocusRef.current = commandMenuReturnFocusRef.current
+        setShowSettings(true)
+      },
+    },
+    ...(["right", "down", "left", "up"] as const).map((direction) => ({
+      id: `split-pane-${direction}` as CommandMenuCommand["id"],
+      disabled: !projectReady,
+      run: showProject(() => activeHandle()?.split(direction)),
+    })),
+    ...(["left", "down", "up", "right"] as const).map((direction) => ({
+      id: `focus-pane-${direction}` as CommandMenuCommand["id"],
+      disabled: !projectReady,
+      run: showProject(() => activeHandle()?.focus(direction)),
+    })),
+    {
+      id: "focus-prompt",
+      disabled: !projectReady,
+      run: showProject(() => activeHandle()?.focusPrompt()),
+    },
+    {
+      id: "follow-latest-node",
+      disabled: !projectReady,
+      run: showProject(() => activeHandle()?.followLatest()),
+    },
+    {
+      id: "close-pane",
+      disabled: !projectReady,
+      run: showProject(() => activeHandle()?.closePane()),
+    },
+  ]
 
   return (
     <main className="project-shell">
+      {showCommandMenu ? (
+        <CommandMenu
+          commands={commandMenuCommands}
+          close={() => setShowCommandMenu(false)}
+          projects={availableProjects._tag === "Ready" ? availableProjects.projects : []}
+          projectsLoading={availableProjects._tag === "Loading"}
+          projectsError={availableProjects._tag === "Error" ? availableProjects.message : undefined}
+          chooseFolder={newProject}
+          openProject={selectProject}
+        />
+      ) : null}
       <header className="project-header">
-        <div
-          className="project-identity"
-          title={state._tag === "Ready" ? state.snapshot.location.directory : undefined}
-        >
-          <span
-            className="project-icon"
-            style={{ backgroundColor: projectColor }}
-            aria-hidden="true"
+        <div ref={projectSwitcherRef} className="project-switcher">
+          <button
+            type="button"
+            className="project-identity"
+            disabled={orderedOpenProjects.length === 0}
+            title={activeRuntime?.location.directory ?? "Open projects"}
+            aria-haspopup="menu"
+            aria-expanded={showProjectSwitcher}
+            onClick={() => setShowProjectSwitcher((current) => !current)}
           >
-            {projectIcon === undefined ? (
-              <span>{projectInitial(projectName ?? "HydraCode")}</span>
-            ) : (
-              <img src={projectIcon} alt="" />
-            )}
-          </span>
-          <span className="project-name">{projectName ?? "HydraCode"}</span>
+            <span
+              className="project-icon"
+              style={{ backgroundColor: projectColor }}
+              aria-hidden="true"
+            >
+              {projectIcon === undefined ? (
+                <span>{projectInitial(projectSwitcherLabel)}</span>
+              ) : (
+                <img src={projectIcon} alt="" />
+              )}
+            </span>
+            <span className="project-name">{projectSwitcherLabel}</span>
+            <svg className="project-switcher__chevrons" viewBox="0 0 12 16" aria-hidden="true">
+              <path d="m3 6 3-3 3 3M3 10l3 3 3-3" />
+            </svg>
+          </button>
+          {showProjectSwitcher ? (
+            <div
+              className="project-switcher__menu"
+              role="menu"
+              aria-label="Open projects"
+              onKeyDown={(event) => {
+                const buttons = Array.from(
+                  event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+                )
+                if (buttons.length === 0) return
+                const current = buttons.findIndex((button) => button === document.activeElement)
+                let next: number | undefined
+                if (event.key === "ArrowDown" || event.key === "ArrowRight")
+                  next = (current + 1) % buttons.length
+                else if (event.key === "ArrowUp" || event.key === "ArrowLeft")
+                  next = (current - 1 + buttons.length) % buttons.length
+                else if (event.key === "Home") next = 0
+                else if (event.key === "End") next = buttons.length - 1
+                if (next === undefined) return
+                event.preventDefault()
+                buttons[next]?.focus()
+              }}
+            >
+              {orderedOpenProjects.length === 0 ? (
+                <span className="project-switcher__status">No open projects</span>
+              ) : (
+                orderedOpenProjects.map((runtime, shortcutIndex) => {
+                  const project = runtime.snapshot?.project
+                  const location = runtime.snapshot?.location ?? runtime.location
+                  const name = projectDisplayName(project?.name, location.directory)
+                  const icon = project?.icon?.override ?? project?.icon?.url
+                  const current = runtime.projectID === activeProjectID
+                  return (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      key={runtime.projectID}
+                      aria-current={current ? "true" : undefined}
+                      onClick={() => {
+                        setShowProjectSwitcher(false)
+                        activateProject(runtime.projectID)
+                      }}
+                    >
+                      <span
+                        className="project-icon project-switcher__icon"
+                        style={{ backgroundColor: project?.icon?.color }}
+                        aria-hidden="true"
+                      >
+                        {icon === undefined ? (
+                          <span>{projectInitial(name)}</span>
+                        ) : (
+                          <img src={icon} alt="" />
+                        )}
+                      </span>
+                      <span className="project-switcher__copy">
+                        <strong>{name}</strong>
+                        <small>{location.directory}</small>
+                      </span>
+                      <span className="project-switcher__meta">
+                        {shortcutIndex !== undefined && shortcutIndex < 9 ? (
+                          <kbd>{`${shortcutModifier}${shortcutIndex + 1}`}</kbd>
+                        ) : null}
+                      </span>
+                    </button>
+                  )
+                })
+              )}
+            </div>
+          ) : null}
         </div>
         <div className="header-actions">
-          <span className="connection-state" role={layoutStatus === null ? undefined : "status"}>
-            {layoutStatus ??
-              (state._tag === "Ready"
-                ? "Connected"
-                : state._tag === "Loading"
-                  ? "Connecting"
-                  : "Not connected")}
-          </span>
-          {updater.state.status === "disabled" ? null : (
+          {updateLabel(updater.state) === null ? null : (
             <button
               type="button"
               className="update-button"
-              disabled={
-                updater.state.status === "checking" ||
-                updater.state.status === "downloading" ||
-                updater.state.status === "installing"
+              disabled={updater.state.status === "downloading"}
+              title={
+                updater.state.status === "available" || updater.state.status === "ready"
+                  ? `HydraCode ${updater.state.version}`
+                  : undefined
               }
-              title={updater.state.status === "error" ? updater.state.message : undefined}
-              onClick={updater.state.status === "ready" ? updater.install : updater.check}
+              onClick={updater.state.status === "ready" ? updater.restart : updater.install}
             >
               {updateLabel(updater.state)}
             </button>
           )}
-          {state._tag === "Ready" ? (
-            <button
-              type="button"
-              className="open-project-button"
-              disabled={creatingSession}
-              onClick={() => {
-                setShowSettings(false)
-                setPaneLayout((current) => setPaneSession(current, activePaneID, undefined))
-              }}
-            >
-              New session
-            </button>
-          ) : null}
-          {state._tag === "Ready" ? (
-            <button
-              type="button"
-              className="open-project-button"
-              disabled={creatingSession}
-              onClick={() => {
-                setShowSettings(false)
-                showProjects()
-              }}
-            >
-              Projects
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className="settings-button"
-            aria-label={showSettings ? "Close settings" : "Open settings"}
-            aria-pressed={showSettings}
-            title={showSettings ? "Close settings" : "Settings"}
-            onClick={() => setShowSettings((current) => !current)}
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 8.25A3.75 3.75 0 1 0 12 15.75 3.75 3.75 0 0 0 12 8.25Z" />
-              <path d="M19.1 13.6a7.7 7.7 0 0 0 .05-1.6 7.7 7.7 0 0 0-.05-1.6l1.75-1.35-1.8-3.1-2.05.85a7.6 7.6 0 0 0-2.75-1.6L14 3h-4l-.25 2.2A7.6 7.6 0 0 0 7 6.8l-2.05-.85-1.8 3.1L4.9 10.4a7.7 7.7 0 0 0-.05 1.6 7.7 7.7 0 0 0 .05 1.6l-1.75 1.35 1.8 3.1L7 17.2a7.6 7.6 0 0 0 2.75 1.6L10 21h4l.25-2.2A7.6 7.6 0 0 0 17 17.2l2.05.85 1.8-3.1L19.1 13.6Z" />
-            </svg>
-          </button>
         </div>
       </header>
 
-      {showSettings ? (
-        <SettingsPage />
-      ) : state._tag === "Ready" ? (
-        <ProjectView
-          snapshot={state.snapshot}
-          layout={paneLayout}
-          activePaneID={activePaneID}
-          promptFocusRequest={promptFocusRequest}
-          followLatestRequest={followLatestRequest}
-          promptRetry={promptRetry}
-          landingError={landingError}
-          savedLayouts={savedLayouts}
-          savedLayoutsError={savedLayoutsError}
-          setActivePane={setActivePaneID}
-          setLayout={setPaneLayout}
-          selectSession={selectSession}
-          createSession={createSession}
-          openSavedLayout={openSavedLayout}
-          submitPrompt={submitPrompt}
-          interruptSession={interruptSession}
-        />
-      ) : state._tag === "Loading" ? (
-        <section className="session-pane" aria-label="Project status">
-          <ReactFlow nodes={[]} edges={[]} fitView proOptions={{ hideAttribution: true }}>
-            <Background
-              variant={BackgroundVariant.Dots}
-              gap={24}
-              size={1}
-              color="var(--color-grid)"
-            />
-          </ReactFlow>
-
-          <div className="empty-state">
-            <span className="empty-mark" aria-hidden="true">
-              H
-            </span>
-            <h1>Connecting to OpenCode</h1>
-            <p>Loading sessions and their agent history…</p>
-          </div>
-        </section>
-      ) : (
-        <ProjectLanding
-          catalog={catalog}
-          error={state._tag === "Error" ? state.message : undefined}
-          openProject={openProject}
-          newProject={newProject}
-          retry={loadProjects}
-        />
-      )}
+      <div className="project-layers">
+        {showSettings ? (
+          <SettingsModal
+            close={() => setShowSettings(false)}
+            returnFocus={settingsReturnFocusRef.current}
+          />
+        ) : null}
+        <div className="project-stack" inert={showSettings}>
+          {applicationStateReady
+            ? Array.from(openProjects.values()).map((runtime) => (
+                <ProjectContainer
+                  key={runtime.projectID}
+                  ref={(handle) => {
+                    if (handle === null) projectHandles.current.delete(runtime.projectID)
+                    else projectHandles.current.set(runtime.projectID, handle)
+                  }}
+                  runtime={runtime}
+                  active={runtime.projectID === activeProjectID}
+                  initialUIState={projectUIStateCache.current.get(runtime.projectID)}
+                  uiStateCache={projectUIStateCache}
+                  selectSession={selectSession}
+                  createSession={createSession}
+                  submitPrompt={submitPrompt}
+                  replyQuestion={replyQuestion}
+                  rejectQuestion={rejectQuestion}
+                  interruptSession={interruptSession}
+                />
+              ))
+            : null}
+          {activeRuntime?.status === "opening" || !applicationStateReady ? (
+            <section
+              className="session-pane project-layer project-loading"
+              aria-label="Project status"
+            >
+              <div className="empty-state">
+                <span className="empty-mark" aria-hidden="true">
+                  H
+                </span>
+                <h1>Connecting to OpenCode</h1>
+                <p>Loading sessions and their agent history...</p>
+              </div>
+            </section>
+          ) : activeRuntime?.status === "error" || activeRuntime === undefined ? (
+            <HomePage error={activeRuntime?.error ?? landingError} createSession={openHome} />
+          ) : null}
+        </div>
+      </div>
     </main>
   )
 }
