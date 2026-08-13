@@ -9,12 +9,14 @@ describe("OpenCode installation", () => {
         platform: "darwin",
         home: "/Users/test",
         path: ["/usr/local/bin", "/opt/homebrew/bin"].join(delimiter),
+        nvmVersions: ["v24.14.1"],
       }),
     ).toEqual([
       join("/Users/test", ".opencode", "bin", "opencode2"),
       join("/Users/test", ".bun", "bin", "opencode2"),
       join("/usr/local/bin", "opencode2"),
       join("/opt/homebrew/bin", "opencode2"),
+      join("/Users/test", ".nvm", "versions", "node", "v24.14.1", "bin", "opencode2"),
     ])
   })
 

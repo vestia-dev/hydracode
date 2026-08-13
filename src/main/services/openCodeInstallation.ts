@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect"
 import { execFile, spawn } from "node:child_process"
-import { access } from "node:fs/promises"
+import { access, readdir } from "node:fs/promises"
 import { homedir } from "node:os"
 import { delimiter, join } from "node:path"
 import { promisify } from "node:util"
@@ -24,6 +24,7 @@ export function openCodeExecutableCandidates(input: {
   readonly platform: NodeJS.Platform
   readonly home: string
   readonly path?: string
+  readonly nvmVersions?: ReadonlyArray<string>
 }) {
   const executable = input.platform === "win32" ? "opencode2.exe" : "opencode2"
   const paths = [
@@ -33,6 +34,9 @@ export function openCodeExecutableCandidates(input: {
   for (const directory of input.path?.split(delimiter) ?? []) {
     if (directory !== "") paths.push(join(directory, executable))
   }
+  for (const version of input.nvmVersions ?? []) {
+    paths.push(join(input.home, ".nvm", "versions", "node", version, "bin", executable))
+  }
   if (input.platform !== "win32") {
     paths.push(join("/opt/homebrew/bin", executable), join("/usr/local/bin", executable))
   }
@@ -40,9 +44,14 @@ export function openCodeExecutableCandidates(input: {
 }
 
 export const findOpenCodeInstallation = Effect.gen(function* () {
+  const home = homedir()
+  const nvmVersions = yield* Effect.tryPromise(() =>
+    readdir(join(home, ".nvm", "versions", "node")),
+  ).pipe(Effect.orElseSucceed(() => []))
   const candidates = openCodeExecutableCandidates({
     platform: process.platform,
-    home: homedir(),
+    home,
+    nvmVersions,
     ...(process.env["PATH"] === undefined ? {} : { path: process.env["PATH"] }),
   })
   for (const executable of candidates) {
