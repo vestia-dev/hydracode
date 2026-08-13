@@ -593,17 +593,14 @@ export const ProjectRegistryLive = Layer.effect(
           return yield* Effect.fail(
             new ProjectRegistryError({ message: "Project subscription is closed" }),
           )
-        const { entry } = subscription
         if (text.trim() === "")
           return yield* Effect.fail(
             new ProjectRegistryError({ message: "Enter a prompt before sending." }),
           )
-        return yield* entry.client.session
-          .prompt({
-            sessionID: Schema.decodeUnknownSync(Session.ID)(sessionID),
-            text: text.trim(),
-          })
-          .pipe(Effect.asVoid)
+        return yield* openCode.submitPrompt(
+          Schema.decodeUnknownSync(Session.ID)(sessionID),
+          text.trim(),
+        )
       })
     const interrupt = (subscriptionID: string, sessionID: string): Effect.Effect<void, unknown> =>
       Effect.gen(function* () {

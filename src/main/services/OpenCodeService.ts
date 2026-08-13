@@ -1,7 +1,7 @@
 import { Service as LocalOpenCodeService } from "@opencode-ai/client/effect/service"
-import { OpenCode, type OpenCodeClient } from "@opencode-ai/client/effect"
+import { OpenCode, SessionPending, type OpenCodeClient } from "@opencode-ai/client/effect"
 import { Context, Effect, FileSystem, Layer, Schema } from "effect"
-import { HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { FetchHttpClient } from "effect/unstable/http"
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -24,6 +24,10 @@ export class OpenCodeServiceError extends Schema.TaggedErrorClass<OpenCodeServic
 interface OpenCodeServiceShape {
   readonly connection: Effect.Effect<OpenCodeConnection, OpenCodeServiceError>
   readonly client: Effect.Effect<OpenCodeClient, OpenCodeServiceError>
+  readonly submitPrompt: (
+    sessionID: string,
+    text: string,
+  ) => Effect.Effect<void, OpenCodeServiceError>
   readonly diagnostics: Effect.Effect<OpenCodeDiagnostics>
   readonly install: Effect.Effect<void, OpenCodeServiceError>
 }
@@ -50,6 +54,42 @@ const clientFor = (serviceConnection: OpenCodeConnection) =>
       Effect.provideService(HttpClient.HttpClient, httpClient),
     )
   }).pipe(Effect.provide(FetchHttpClient.layer))
+
+const PromptSubmissionResponse = Schema.Struct({
+  data: Schema.Union([
+    Schema.Struct({
+      id: Schema.String,
+      sessionID: Schema.String,
+      timeCreated: Schema.Number,
+      type: Schema.Literal("user"),
+      payload: Schema.Struct({ text: Schema.String }),
+      delivery: Schema.String,
+    }),
+    Schema.Struct({ data: SessionPending.User }),
+  ]),
+})
+
+const submitPromptWith = (connection: OpenCodeConnection, sessionID: string, text: string) =>
+  Effect.gen(function* () {
+    const base = yield* HttpClient.HttpClient
+    const httpClient =
+      connection.auth === undefined
+        ? base
+        : base.pipe(
+            HttpClient.mapRequest(
+              HttpClientRequest.basicAuth(connection.auth.username, connection.auth.password),
+            ),
+          )
+    const request = yield* HttpClientRequest.post(
+      `${connection.url.replace(/\/$/, "")}/api/session/${encodeURIComponent(sessionID)}/prompt`,
+    ).pipe(HttpClientRequest.bodyJson({ text }))
+    yield* httpClient
+      .execute(request)
+      .pipe(
+        Effect.flatMap(HttpClientResponse.filterStatusOk),
+        Effect.flatMap(HttpClientResponse.schemaBodyJson(PromptSubmissionResponse)),
+      )
+  }).pipe(Effect.provide(FetchHttpClient.layer), Effect.asVoid)
 
 export const OpenCodeServiceLive = Layer.effect(
   OpenCodeService,
@@ -107,6 +147,20 @@ export const OpenCodeServiceLive = Layer.effect(
       cachedConnection.pipe(Effect.flatMap(clientFor)),
       "5 minutes",
     )
+    const submitPrompt = (sessionID: string, text: string) =>
+      cachedConnection.pipe(
+        Effect.flatMap((endpoint) => submitPromptWith(endpoint, sessionID, text)),
+        Effect.mapError(
+          (cause) =>
+            new OpenCodeServiceError({
+              message:
+                cause instanceof Error && cause.message !== ""
+                  ? cause.message
+                  : "HydraCode could not submit this prompt.",
+              cause,
+            }),
+        ),
+      )
 
     const inspect = (
       source: string,
@@ -245,6 +299,7 @@ export const OpenCodeServiceLive = Layer.effect(
     return OpenCodeService.of({
       connection: cachedConnection,
       client: cachedClient,
+      submitPrompt,
       diagnostics,
       install,
     })
