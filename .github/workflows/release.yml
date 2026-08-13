@@ -20,9 +20,12 @@ jobs:
 
       - run: bun install --frozen-lockfile
       - run: bun run lint:check
+        working-directory: packages/desktop
       - run: bun run test
+        working-directory: packages/desktop
 
       - name: Verify release version
+        working-directory: packages/desktop
         run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
 
       - name: Verify release credentials
@@ -50,6 +53,7 @@ jobs:
         run: printf '%s' "$API_KEY" > "$RUNNER_TEMP/apple-api-key.p8"
 
       - name: Package signed Apple Silicon release
+        working-directory: packages/desktop
         run: bun run package:mac
         env:
           HYDRACODE_REQUIRE_CODE_SIGNING: "true"
@@ -58,12 +62,14 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
 
       - name: Verify signing and notarization
+        working-directory: packages/desktop
         run: |
           codesign --verify --deep --strict dist/mac-arm64/HydraCode.app
           spctl --assess --type execute dist/mac-arm64/HydraCode.app
           xcrun stapler validate dist/mac-arm64/HydraCode.app
 
       - name: Publish GitHub release
+        working-directory: packages/desktop
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

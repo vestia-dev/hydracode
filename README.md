@@ -6,10 +6,15 @@ HydraCode presents each agent session as a live graph of inputs, outputs, tool c
 
 ## Development
 
+Run both the desktop app and download site with Hydraterm, or start either package directly:
+
 ```sh
 bun install
+cd packages/desktop
 bun run dev
 ```
+
+The static download site is in `packages/web` and runs with `bun run dev` from that directory.
 
 ## Themes
 
@@ -52,6 +57,7 @@ Restart HydraCode after changing the selection or a theme file.
 ## Verification
 
 ```sh
+cd packages/desktop
 bun run lint
 bun run test
 bun run build
@@ -66,12 +72,14 @@ OpenCode can be installed from HydraCode Settings using its official installer.
 Build an unpacked application locally:
 
 ```sh
+cd packages/desktop
 bun run package:mac:dir
 ```
 
 Build the DMG, update ZIP, and update metadata:
 
 ```sh
+cd packages/desktop
 bun run package:mac
 ```
 
@@ -81,8 +89,9 @@ restarting and installing it. Updates are disabled in development builds.
 
 ### Publishing
 
-The release workflow runs for tags matching `v*`. The tag must equal the `package.json` version,
-for example `v0.1.0`. It requires these GitHub Actions secrets:
+The release workflow runs for tags matching `v*`. The tag must equal the
+`packages/desktop/package.json` version, for example `v0.1.0`. It requires these GitHub Actions
+secrets:
 
 - `APPLE_CERTIFICATE`: base64-encoded Developer ID Application certificate.
 - `APPLE_CERTIFICATE_PASSWORD`: password for the certificate archive.
@@ -100,8 +109,10 @@ Before the first release:
    `APPLE_CERTIFICATE_PASSWORD`.
 2. Create an App Store Connect API key, then add its P8 contents, key ID, and issuer ID as
    `APPLE_API_KEY_CONTENT`, `APPLE_API_KEY_ID`, and `APPLE_API_ISSUER`.
-3. Ensure the release commit, including the intended `package.json` version, is pushed to `main`.
-4. Run `bun run lint:check`, `bun run test`, and `bun run build` from that commit.
+3. Ensure the release commit, including the intended `packages/desktop/package.json` version, is
+   pushed to `main`.
+4. Run `bun run lint:check`, `bun run test`, and `bun run build` from `packages/desktop` at that
+   commit.
 5. Create and push the matching tag. This immediately triggers the public release workflow:
 
 ```sh

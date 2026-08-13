@@ -1,0 +1,8 @@
+{
+  "name": "@hydracode/web",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "bun --hot index.html"
+  }
+}

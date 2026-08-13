@@ -26,14 +26,14 @@
 
 ## Verification
 
-- Run `bun run lint`, `bun run test`, and `bun run build` before considering implementation work complete.
+- Run `bun run lint`, `bun run test`, and `bun run build` from `packages/desktop` before considering desktop implementation work complete.
 - Do not suppress diagnostics without documenting the concrete reason.
 - Add tests for domain behavior and event projections alongside the implementation.
 
 ### Electron UI inspection
 
 - Use the `chrome-devtools-electron` tools to inspect the real Electron renderer. Do not use the regular `chrome-devtools` tools or open the Vite URL in Chrome; standalone Chrome does not have the preload-provided `window.hydracode` API.
-- Before UI inspection, check whether `http://127.0.0.1:9333/json/version` is already available. If not, start an isolated debug instance with `bun run dev:debug`, which exposes Electron CDP on port `9333`.
+- Before UI inspection, check whether `http://127.0.0.1:9333/json/version` is already available. If not, start an isolated debug instance with `bun run dev:debug` from `packages/desktop`, which exposes Electron CDP on port `9333`.
 - Confirm the selected page is titled `HydraCode` and that `window.hydracode` exists before relying on inspection results.
 - Use snapshots, console messages, network requests, and interaction through `chrome-devtools-electron` to verify renderer changes when relevant.
 - If the agent started `bun run dev:debug`, always stop that complete process tree after inspection and verify ports `9333` and its Vite renderer port are released. Never stop a dev server or Electron instance started by the user.
