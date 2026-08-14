@@ -43,7 +43,7 @@ export function openCodeExecutableCandidates(input: {
   return [...new Set(paths)]
 }
 
-export const findOpenCodeInstallation = Effect.gen(function* () {
+export const findOpenCodeInstallations = Effect.gen(function* () {
   const home = homedir()
   const nvmVersions = yield* Effect.tryPromise(() =>
     readdir(join(home, ".nvm", "versions", "node")),
@@ -54,6 +54,7 @@ export const findOpenCodeInstallation = Effect.gen(function* () {
     nvmVersions,
     ...(process.env["PATH"] === undefined ? {} : { path: process.env["PATH"] }),
   })
+  const installations: Array<OpenCodeInstallation> = []
   for (const executable of candidates) {
     const available = yield* Effect.tryPromise(() => access(executable)).pipe(
       Effect.as(true),
@@ -65,10 +66,14 @@ export const findOpenCodeInstallation = Effect.gen(function* () {
     )
     if (result._tag === "None") continue
     const version = result.value.stdout.trim().split(/\s+/).at(-1)?.replace(/^v/, "")
-    if (version !== undefined && version !== "") return { executable, version }
+    if (version !== undefined && version !== "") installations.push({ executable, version })
   }
-  return undefined
+  return installations
 })
+
+export const findOpenCodeInstallation = findOpenCodeInstallations.pipe(
+  Effect.map((installations) => installations[0]),
+)
 
 export const installOpenCode = Effect.gen(function* () {
   if (process.platform === "win32")

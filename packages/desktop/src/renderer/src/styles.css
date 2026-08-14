@@ -655,13 +655,10 @@ html[data-platform="macos"] .project-header {
   padding: 28px 32px 40px;
 }
 
-.settings-section {
-  padding-top: 24px;
-  border-top: 1px solid var(--color-border);
-}
-
 .settings-section + .settings-section {
   margin-top: 42px;
+  padding-top: 24px;
+  border-top: 1px solid var(--color-border);
 }
 
 .settings-section__heading {
@@ -693,30 +690,29 @@ html[data-platform="macos"] .project-header {
   text-align: center;
 }
 
-.diagnostics-summary {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  overflow: hidden;
+.diagnostics-table-wrap {
+  overflow-x: auto;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-large);
   background: color-mix(in srgb, var(--color-surface) 88%, transparent);
   box-shadow: var(--shadow-subtle);
 }
 
-.diagnostics-summary > div {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 7px;
-  padding: 15px 16px;
+.diagnostics-table {
+  width: 100%;
+  min-width: 560px;
+  border-collapse: collapse;
+  table-layout: fixed;
 }
 
-.diagnostics-summary > div + div {
-  border-left: 1px solid var(--color-border);
+.diagnostics-table th,
+.diagnostics-table td {
+  padding: 12px 14px;
+  text-align: left;
+  vertical-align: top;
 }
 
-.diagnostics-summary span,
-.diagnostics-list dt {
+.diagnostics-table th {
   color: var(--color-textMuted);
   font-size: 10px;
   font-weight: 650;
@@ -724,12 +720,28 @@ html[data-platform="macos"] .project-header {
   text-transform: uppercase;
 }
 
-.diagnostics-summary strong,
-.diagnostics-summary code {
-  overflow: hidden;
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.diagnostics-table th:first-child,
+.diagnostics-table td:first-child {
+  width: 52%;
+}
+
+.diagnostics-table th:last-child,
+.diagnostics-table td:last-child {
+  width: 18%;
+}
+
+.diagnostics-table tbody tr {
+  border-top: 1px solid var(--color-border);
+}
+
+.diagnostics-table td {
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.diagnostics-table td code {
+  font-size: 10px;
 }
 
 .diagnostics-status {
@@ -741,86 +753,12 @@ html[data-platform="macos"] .project-header {
   color: var(--color-accent);
 }
 
-.diagnostics-status--unavailable {
-  color: var(--color-danger);
-}
-
-.diagnostics-runtime-path {
-  margin: 10px 2px 0;
-  overflow-wrap: anywhere;
-  color: var(--color-textMuted);
-  font-size: 10px;
-  line-height: 1.5;
-}
-
-.diagnostics-runtime-path code {
+.diagnostics-status--installed {
   color: var(--color-text);
 }
 
-.diagnostics-servers {
-  display: grid;
-  gap: 12px;
-  margin-top: 18px;
-}
-
-.diagnostics-server {
-  padding: 16px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-large);
-  background: color-mix(in srgb, var(--color-surface) 76%, transparent);
-}
-
-.diagnostics-server > header {
-  display: flex;
-  align-items: start;
-  justify-content: space-between;
-  gap: 18px;
-}
-
-.diagnostics-server h3 {
-  margin: 0 0 5px;
-  font-size: 13px;
-}
-
-.diagnostics-server header code {
-  color: var(--color-textMuted);
-  font-size: 10px;
-  overflow-wrap: anywhere;
-}
-
-.diagnostics-server > header .diagnostics-status {
-  flex: 0 0 auto;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.diagnostics-list {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin: 16px 0 0;
-  border-top: 1px solid var(--color-border);
-}
-
-.diagnostics-list > div {
-  min-width: 0;
-  padding: 12px 12px 0 0;
-}
-
-.diagnostics-list dd {
-  margin: 5px 0 0;
-  overflow-wrap: anywhere;
-  font-family: var(--typography-uiFontFamily);
-  font-size: 11px;
-  line-height: 1.45;
-}
-
-.diagnostics-server__error {
-  margin: 14px 0 0;
+.diagnostics-status--unavailable {
   color: var(--color-danger);
-  font-size: 11px;
-  line-height: 1.45;
 }
 
 .theme-options {
@@ -959,19 +897,10 @@ html[data-platform="macos"] .project-header {
     grid-template-columns: 1fr;
   }
 
-  .diagnostics-summary,
-  .diagnostics-list {
-    grid-template-columns: 1fr;
-  }
-
-  .diagnostics-summary > div + div {
-    border-top: 1px solid var(--color-border);
-    border-left: 0;
-  }
-
-  .diagnostics-server > header {
-    flex-direction: column;
-    gap: 10px;
+  .diagnostics-table th,
+  .diagnostics-table td {
+    padding-right: 10px;
+    padding-left: 10px;
   }
 }
 

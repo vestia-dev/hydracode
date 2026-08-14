@@ -54,7 +54,7 @@ jobs:
 
       - name: Package signed Apple Silicon release
         working-directory: packages/desktop
-        run: bun run package:mac
+        run: bun run release
         env:
           HYDRACODE_REQUIRE_CODE_SIGNING: "true"
           APPLE_API_KEY: ${{ runner.temp }}/apple-api-key.p8

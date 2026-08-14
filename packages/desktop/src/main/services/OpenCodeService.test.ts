@@ -185,6 +185,7 @@ it("reports healthy service metadata without exposing credentials", async () => 
     )
 
     expect(diagnostics.status).toBe("healthy")
+    expect(diagnostics.runningVersions).toEqual(["0.0.0-next-17114"])
     expect(server).toMatchObject({
       state: "healthy",
       authentication: "basic",

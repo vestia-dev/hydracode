@@ -1,6 +1,6 @@
 {
   "name": "@hydracode/desktop",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "A visual desktop client for coding agents.",
   "author": "Vestia",
@@ -9,9 +9,8 @@
   "scripts": {
     "dev": "electron-vite dev",
     "dev:debug": "electron-vite dev --remoteDebuggingPort 9333",
-    "build": "electron-vite build",
-    "package:mac": "bun run build && electron-builder --mac --arm64 --publish never --config electron-builder.config.ts",
-    "package:mac:dir": "bun run build && electron-builder --mac --arm64 --dir --config electron-builder.config.ts",
+    "build": "electron-vite build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --arm64 --dir --config electron-builder.config.ts",
+    "release": "electron-vite build && electron-builder --mac --arm64 --publish never --config electron-builder.config.ts",
     "preview": "electron-vite preview",
     "lint": "oxfmt --write . && oxlint --type-aware --type-check --fix --report-unused-disable-directives --deny-warnings .",
     "lint:check": "oxfmt --check . && oxlint --type-aware --type-check --report-unused-disable-directives --deny-warnings .",
@@ -20,8 +19,8 @@
   },
   "dependencies": {
     "@effect/platform-node": "4.0.0-beta.101",
-    "@opencode-ai/client": "0.0.0-next-17114",
-    "@opencode-ai/schema": "0.0.0-next-17114",
+    "@opencode-ai/client": "0.0.0-next-17444",
+    "@opencode-ai/schema": "0.0.0-next-17444",
     "@pierre/diffs": "1.2.10",
     "@xyflow/react": "12.11.2",
     "dompurify": "3.4.13",

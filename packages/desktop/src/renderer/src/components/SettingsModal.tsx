@@ -2,7 +2,7 @@ import { Effect, Fiber } from "effect"
 import { useCallback, useEffect, useEffectEvent, useId, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { BundledThemes, bundledThemeID, type BundledThemeID } from "../../../shared/theme"
-import type { OpenCodeDiagnostics, OpenCodeServerDiagnostics } from "../../../shared/openCode"
+import type { OpenCodeDiagnostics } from "../../../shared/openCode"
 import { AppRuntime } from "../runtime"
 import { DesktopBridge } from "../services/DesktopBridge"
 import { useTheme, useThemeUpdate } from "../theme"
@@ -12,18 +12,6 @@ const themeDescriptions: Record<BundledThemeID, string> = {
   "hydracode-dark": "Low-glare charcoal surfaces for focused work.",
   "hydracode-light": "Warm neutral surfaces with crisp contrast.",
 }
-
-const diagnosticStatus = (server: OpenCodeServerDiagnostics) => {
-  if (server.state === "healthy") return "Healthy"
-  if (server.state === "not-registered") return "Not registered"
-  if (server.state === "invalid") return "Invalid registration"
-  return "Unreachable"
-}
-
-const overallStatus = {
-  healthy: "Ready",
-  unavailable: "No healthy service",
-} as const
 
 interface SettingsModalProps {
   readonly close: () => void
@@ -186,135 +174,6 @@ export function SettingsModal({ close, returnFocus }: SettingsModalProps) {
           </IconButton>
         </header>
         <div className="settings-modal__content">
-          <section className="settings-section" aria-labelledby="opencode-title">
-            <div className="settings-section__heading">
-              <div>
-                <h2 id="opencode-title">OpenCode</h2>
-                <p>Installation and service diagnostics for the OpenCode client HydraCode uses.</p>
-              </div>
-              <div className="diagnostics-actions">
-                {diagnostics?.installation.installed === false ? (
-                  <button
-                    type="button"
-                    className="open-project-button"
-                    disabled={installingOpenCode}
-                    onClick={installOpenCode}
-                  >
-                    {installingOpenCode ? "Installing..." : "Install OpenCode"}
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  className="open-project-button"
-                  disabled={loadingDiagnostics || installingOpenCode}
-                  onClick={loadDiagnostics}
-                >
-                  {loadingDiagnostics ? "Inspecting..." : "Refresh"}
-                </button>
-              </div>
-            </div>
-
-            {diagnostics === undefined ? (
-              <div className="diagnostics-empty" aria-live="polite">
-                {loadingDiagnostics
-                  ? "Inspecting local OpenCode services..."
-                  : "No diagnostics loaded."}
-              </div>
-            ) : (
-              <>
-                <div className="diagnostics-summary">
-                  <div>
-                    <span>HydraCode status</span>
-                    <strong
-                      className={`diagnostics-status diagnostics-status--${diagnostics.status}`}
-                    >
-                      {overallStatus[diagnostics.status]}
-                    </strong>
-                  </div>
-                  <div>
-                    <span>OpenCode installation</span>
-                    <strong>
-                      {diagnostics.installation.installed ? "Installed" : "Not installed"}
-                    </strong>
-                  </div>
-                  <div>
-                    <span>Installed version</span>
-                    <code>{diagnostics.installation.version ?? "Not available"}</code>
-                  </div>
-                </div>
-
-                {diagnostics.installation.executable === undefined ? null : (
-                  <p className="diagnostics-runtime-path">
-                    Installed executable <code>{diagnostics.installation.executable}</code>
-                  </p>
-                )}
-
-                <div className="diagnostics-servers">
-                  {diagnostics.servers.map((server) => (
-                    <article className="diagnostics-server" key={server.registrationFile}>
-                      <header>
-                        <div>
-                          <h3>{server.source}</h3>
-                          <code>{server.registrationFile}</code>
-                        </div>
-                        <span
-                          className={`diagnostics-status diagnostics-status--${
-                            server.state === "healthy" ? "compatible" : "unavailable"
-                          }`}
-                        >
-                          {diagnosticStatus(server)}
-                        </span>
-                      </header>
-                      <dl className="diagnostics-list">
-                        <div>
-                          <dt>Registered URL</dt>
-                          <dd>{server.registeredUrl ?? "Not registered"}</dd>
-                        </div>
-                        <div>
-                          <dt>Server version</dt>
-                          <dd>
-                            {server.serverVersion ?? server.registeredVersion ?? "Not reported"}
-                          </dd>
-                        </div>
-                        <div>
-                          <dt>Process ID</dt>
-                          <dd>{server.serverPid ?? server.registeredPid ?? "Not reported"}</dd>
-                        </div>
-                        <div>
-                          <dt>Authentication</dt>
-                          <dd>
-                            {server.authentication === "basic" ? "Basic auth configured" : "None"}
-                          </dd>
-                        </div>
-                        <div>
-                          <dt>Instance ID</dt>
-                          <dd>{server.instanceID ?? "Not reported"}</dd>
-                        </div>
-                        <div>
-                          <dt>Advertised URLs</dt>
-                          <dd>
-                            {server.advertisedUrls.length === 0
-                              ? "None reported"
-                              : server.advertisedUrls.join(", ")}
-                          </dd>
-                        </div>
-                      </dl>
-                      {server.error === undefined ? null : (
-                        <p className="diagnostics-server__error">{server.error}</p>
-                      )}
-                    </article>
-                  ))}
-                </div>
-              </>
-            )}
-
-            {diagnosticsError === undefined ? null : (
-              <p className="settings-error" role="alert">
-                {diagnosticsError}
-              </p>
-            )}
-          </section>
-
           <section className="settings-section" aria-labelledby="appearance-title">
             <div className="settings-section__heading">
               <div>
@@ -365,6 +224,134 @@ export function SettingsModal({ close, returnFocus }: SettingsModalProps) {
             {error === undefined ? null : (
               <p className="settings-error" role="alert">
                 {error}
+              </p>
+            )}
+          </section>
+
+          <section className="settings-section" aria-labelledby="opencode-title">
+            <div className="settings-section__heading">
+              <div>
+                <h2 id="opencode-title">OpenCode</h2>
+                <p>Installation and service status for the OpenCode client HydraCode uses.</p>
+              </div>
+              <div className="diagnostics-actions">
+                {diagnostics?.installations.length === 0 ? (
+                  <button
+                    type="button"
+                    className="open-project-button"
+                    disabled={installingOpenCode}
+                    onClick={installOpenCode}
+                  >
+                    {installingOpenCode ? "Installing..." : "Install OpenCode"}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="open-project-button"
+                  disabled={loadingDiagnostics || installingOpenCode}
+                  onClick={loadDiagnostics}
+                >
+                  {loadingDiagnostics ? "Inspecting..." : "Refresh"}
+                </button>
+              </div>
+            </div>
+
+            {diagnostics === undefined ? (
+              <div className="diagnostics-empty" aria-live="polite">
+                {loadingDiagnostics
+                  ? "Inspecting local OpenCode services..."
+                  : "No diagnostics loaded."}
+              </div>
+            ) : (
+              <div className="diagnostics-table-wrap">
+                <table className="diagnostics-table">
+                  <thead>
+                    <tr>
+                      <th>Location</th>
+                      <th>Version</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {diagnostics.installations.map((installation) => {
+                      const runningServer = diagnostics.servers.find(
+                        (server) =>
+                          server.state === "healthy" &&
+                          server.serverVersion === installation.version,
+                      )
+                      const running = runningServer !== undefined
+                      return (
+                        <tr key={installation.executable}>
+                          <td>
+                            <code>{installation.executable}</code>
+                          </td>
+                          <td>
+                            <code>{installation.version}</code>
+                          </td>
+                          <td>
+                            <strong
+                              className={`diagnostics-status diagnostics-status--${
+                                running ? "compatible" : "installed"
+                              }`}
+                            >
+                              {running
+                                ? `Running (PID ${runningServer.serverPid ?? runningServer.registeredPid ?? "unknown"})`
+                                : "Not running"}
+                            </strong>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                    {diagnostics.runningVersions
+                      .filter(
+                        (version) =>
+                          !diagnostics.installations.some(
+                            (installation) => installation.version === version,
+                          ),
+                      )
+                      .map((version) => {
+                        const runningServer = diagnostics.servers.find(
+                          (server) =>
+                            server.state === "healthy" && server.serverVersion === version,
+                        )
+                        return (
+                          <tr key={`running-${version}`}>
+                            <td>Location unavailable</td>
+                            <td>
+                              <code>{version}</code>
+                            </td>
+                            <td>
+                              <strong className="diagnostics-status diagnostics-status--compatible">
+                                Running (PID{" "}
+                                {runningServer?.serverPid ??
+                                  runningServer?.registeredPid ??
+                                  "unknown"}
+                                )
+                              </strong>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    {diagnostics.installations.length === 0 &&
+                    diagnostics.runningVersions.length === 0 ? (
+                      <tr>
+                        <td>Not installed</td>
+                        <td>Not available</td>
+                        <td>
+                          <strong className="diagnostics-status diagnostics-status--unavailable">
+                            Not running
+                          </strong>
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {diagnosticsError === undefined ? null : (
+              <p className="settings-error" role="alert">
+                {diagnosticsError}
               </p>
             )}
           </section>

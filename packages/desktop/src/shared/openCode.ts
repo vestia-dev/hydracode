@@ -24,13 +24,15 @@ export const OpenCodeServerDiagnostics = Schema.Struct({
 })
 export type OpenCodeServerDiagnostics = typeof OpenCodeServerDiagnostics.Type
 
+export const OpenCodeInstallationDiagnostics = Schema.Struct({
+  executable: Schema.String,
+  version: Schema.String,
+})
+
 export const OpenCodeDiagnostics = Schema.Struct({
   status: Schema.Literals(["healthy", "unavailable"]),
-  installation: Schema.Struct({
-    installed: Schema.Boolean,
-    executable: Schema.optional(Schema.String),
-    version: Schema.optional(Schema.String),
-  }),
+  installations: Schema.Array(OpenCodeInstallationDiagnostics),
+  runningVersions: Schema.Array(Schema.String),
   servers: Schema.Array(OpenCodeServerDiagnostics),
 })
 export type OpenCodeDiagnostics = typeof OpenCodeDiagnostics.Type

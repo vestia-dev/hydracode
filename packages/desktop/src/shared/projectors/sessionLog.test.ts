@@ -73,13 +73,13 @@ it.effect("uses log.synced as the replay watermark", () =>
   }),
 )
 
-it.effect("advances the durable cursor when promoted input needs targeted hydration", () =>
+it.effect("advances the durable cursor when delivered input needs targeted hydration", () =>
   Effect.sync(() => {
     const reduction = reduceSessionLog(
       createSessionLogState("session-1"),
-      durable("session.input.promoted", 1, {
+      durable("session.inbox.delivered", 1, {
         sessionID: "session-1",
-        inputID: "input-1",
+        inboxID: "input-1",
       }),
     )
 
@@ -232,12 +232,12 @@ it.effect(
     Effect.sync(() => {
       let state = createSessionLogState("session-1")
       const events = [
-        durable("session.input.admitted", 1, {
+        durable("session.inbox.enqueued", 1, {
           sessionID: "session-1",
-          inputID: "input-1",
-          input: { type: "user", data: { text: "hello" }, delivery: "queue" },
+          inboxID: "input-1",
+          item: { type: "user", payload: { text: "hello" }, delivery: "queue" },
         }),
-        durable("session.input.promoted", 2, { sessionID: "session-1", inputID: "input-1" }),
+        durable("session.inbox.delivered", 2, { sessionID: "session-1", inboxID: "input-1" }),
         durable("session.step.started", 3, {
           sessionID: "session-1",
           assistantMessageID: "assistant-1",

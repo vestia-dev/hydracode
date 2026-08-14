@@ -1,5 +1,5 @@
 import { Service as LocalOpenCodeService } from "@opencode-ai/client/effect/service"
-import { OpenCode, SessionPending, type OpenCodeClient } from "@opencode-ai/client/effect"
+import { OpenCode, type OpenCodeClient } from "@opencode-ai/client/effect"
 import { Context, Effect, FileSystem, Layer, Schema } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { FetchHttpClient } from "effect/unstable/http"
@@ -56,17 +56,14 @@ const clientFor = (serviceConnection: OpenCodeConnection) =>
   }).pipe(Effect.provide(FetchHttpClient.layer))
 
 const PromptSubmissionResponse = Schema.Struct({
-  data: Schema.Union([
-    Schema.Struct({
-      id: Schema.String,
-      sessionID: Schema.String,
-      timeCreated: Schema.Number,
-      type: Schema.Literal("user"),
-      payload: Schema.Struct({ text: Schema.String }),
-      delivery: Schema.String,
-    }),
-    Schema.Struct({ data: SessionPending.User }),
-  ]),
+  data: Schema.Struct({
+    id: Schema.String,
+    sessionID: Schema.String,
+    timeCreated: Schema.Number,
+    type: Schema.Literal("user"),
+    payload: Schema.Struct({ text: Schema.String }),
+    delivery: Schema.String,
+  }),
 })
 
 const submitPromptWith = (connection: OpenCodeConnection, sessionID: string, text: string) =>
@@ -266,21 +263,25 @@ export const OpenCodeServiceLive = Layer.effect(
           ]
     const diagnostics = Effect.all(
       [
-        OpenCodeInstallation.findOpenCodeInstallation,
+        OpenCodeInstallation.findOpenCodeInstallations,
         Effect.forEach(serviceFiles, ([source, file]) => inspect(source, file), {
           concurrency: "unbounded",
         }),
       ],
       { concurrency: "unbounded" },
     ).pipe(
-      Effect.map(([installation, servers]): OpenCodeDiagnostics => ({
+      Effect.map(([installations, servers]): OpenCodeDiagnostics => ({
         status: servers.some((server) => server.state === "healthy") ? "healthy" : "unavailable",
-        installation: {
-          installed: installation !== undefined,
-          ...(installation === undefined
-            ? {}
-            : { executable: installation.executable, version: installation.version }),
-        },
+        installations,
+        runningVersions: Array.from(
+          new Set(
+            servers.flatMap((server) =>
+              server.state === "healthy" && server.serverVersion !== undefined
+                ? [server.serverVersion]
+                : [],
+            ),
+          ),
+        ),
         servers,
       })),
     )

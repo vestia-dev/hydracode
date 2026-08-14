@@ -69,18 +69,18 @@ The first supported release target is macOS on Apple Silicon. HydraCode connects
 OpenCode V2 service and starts the installed `opencode2` executable when no service is available.
 OpenCode can be installed from HydraCode Settings using its official installer.
 
-Build an unpacked application locally:
+Build an unsigned, unpacked application locally:
 
 ```sh
 cd packages/desktop
-bun run package:mac:dir
+bun run build
 ```
 
-Build the DMG, update ZIP, and update metadata:
+Build the signed and notarized DMG, update ZIP, and update metadata for release:
 
 ```sh
 cd packages/desktop
-bun run package:mac
+bun run release
 ```
 
 The packaged updater checks GitHub Releases on startup and every ten minutes. It downloads an

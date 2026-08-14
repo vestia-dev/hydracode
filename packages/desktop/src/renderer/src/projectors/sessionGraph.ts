@@ -522,6 +522,14 @@ function messageNode(
         detail: `${message.model.providerID}/${message.model.id}`,
         status: "completed",
       }
+    case "location-switched":
+      return {
+        ...common,
+        kind: "system",
+        title: "Location switched",
+        detail: message.location.directory,
+        status: "completed",
+      }
     case "compaction":
       return {
         ...common,

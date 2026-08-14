@@ -349,9 +349,9 @@ export const ProjectRegistryLive = Layer.effect(
           yield* reconcileSessions(entry)
           return
         }
-        if (event.type === "project.directories.updated") {
+        if (event.type === "worktree.updated") {
           if (event.data.projectID !== entry.project.id) return
-          const directories = yield* entry.client.project.directories({
+          const directories = yield* entry.client.worktree.list({
             projectID: entry.project.id,
           })
           entry.directories.clear()
@@ -470,7 +470,7 @@ export const ProjectRegistryLive = Layer.effect(
               },
         )
         const [projects, directories] = yield* Effect.all(
-          [client.project.list(), client.project.directories({ projectID: current.id })],
+          [client.project.list(), client.worktree.list({ projectID: current.id })],
           { concurrency: "unbounded" },
         )
         const info = projects.find((project) => project.id === current.id)

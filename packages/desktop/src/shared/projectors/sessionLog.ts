@@ -5,7 +5,6 @@ import {
   Session,
   type EventLog,
   type OpenCodeEvent,
-  type SessionPending,
 } from "@opencode-ai/client/effect"
 import { DateTime } from "effect"
 
@@ -15,6 +14,7 @@ type Text = Extract<AssistantContent, { type: "text" }>
 type Reasoning = Extract<AssistantContent, { type: "reasoning" }>
 type Tool = Extract<AssistantContent, { type: "tool" }>
 type Compaction = Extract<SessionMessage.Info, { type: "compaction" }>
+type InboxItem = Extract<OpenCodeEvent, { type: "session.inbox.enqueued" }>["data"]["item"]
 
 export type SessionLogEvent = OpenCodeEvent | EventLog.Synced
 
@@ -24,7 +24,7 @@ export interface SessionLogState {
   readonly durableSeq?: number
   readonly synchronized: boolean
   readonly execution: SessionExecutionState
-  readonly pending: ReadonlyMap<string, SessionPending.Message>
+  readonly pending: ReadonlyMap<string, InboxItem>
   readonly questions: ReadonlyArray<Question.Request>
 }
 
@@ -220,7 +220,7 @@ function project(
   const result = (
     messages: ReadonlyArray<SessionMessage.Info>,
     touched: ReadonlyArray<string> = [],
-    pending: ReadonlyMap<string, SessionPending.Message> = state.pending,
+    pending: ReadonlyMap<string, InboxItem> = state.pending,
   ) => ({
     status: "applied" as const,
     state: { ...state, messages, pending },
@@ -284,38 +284,43 @@ function project(
         },
         touched: [],
       }
-    case "session.input.admitted": {
+    case "session.inbox.enqueued": {
       const pending = new Map(state.pending)
-      pending.set(event.data.inputID, event.data.input)
+      pending.set(event.data.inboxID, event.data.item)
       return result(state.messages, [], pending)
     }
-    case "session.input.promoted": {
-      const input = state.pending.get(event.data.inputID)
+    case "session.inbox.delivered": {
+      const input = state.pending.get(event.data.inboxID)
       if (input === undefined)
-        return { status: "missing-input", state, inputID: event.data.inputID }
+        return { status: "missing-input", state, inputID: event.data.inboxID }
       const pending = new Map(state.pending)
-      pending.delete(event.data.inputID)
-      const message: SessionMessage.Info =
+      pending.delete(event.data.inboxID)
+      const message: SessionMessage.Info | undefined =
         input.type === "user"
           ? {
-              id: event.data.inputID,
+              id: event.data.inboxID,
               type: "user" as const,
-              text: input.data.text,
-              ...(input.data.metadata === undefined ? {} : { metadata: input.data.metadata }),
-              ...(input.data.files === undefined ? {} : { files: input.data.files }),
-              ...(input.data.agents === undefined ? {} : { agents: input.data.agents }),
+              text: input.payload.text,
+              ...(input.payload.metadata === undefined ? {} : { metadata: input.payload.metadata }),
+              ...(input.payload.files === undefined ? {} : { files: input.payload.files }),
+              ...(input.payload.agents === undefined ? {} : { agents: input.payload.agents }),
               time: { created: event.created },
             }
-          : {
-              id: event.data.inputID,
-              type: "synthetic" as const,
-              text: input.data.text,
-              ...(input.data.metadata === undefined ? {} : { metadata: input.data.metadata }),
-              ...(input.data.description === undefined
-                ? {}
-                : { description: input.data.description }),
-              time: { created: event.created },
-            }
+          : input.type === "synthetic"
+            ? {
+                id: event.data.inboxID,
+                type: "synthetic" as const,
+                text: input.payload.text,
+                ...(input.payload.metadata === undefined
+                  ? {}
+                  : { metadata: input.payload.metadata }),
+                ...(input.payload.description === undefined
+                  ? {}
+                  : { description: input.payload.description }),
+                time: { created: event.created },
+              }
+            : undefined
+      if (message === undefined) return result(state.messages, [], pending)
       return result(
         state.messages.some((item) => item.id === message.id)
           ? state.messages
@@ -324,9 +329,9 @@ function project(
         pending,
       )
     }
-    case "session.input.cancelled": {
+    case "session.inbox.cancelled": {
       const pending = new Map(state.pending)
-      pending.delete(event.data.inputID)
+      pending.delete(event.data.inboxID)
       return result(state.messages, [], pending)
     }
     case "session.execution.started":
