@@ -1,5 +1,5 @@
 import { BaseEdge, type Edge, type EdgeProps } from "@xyflow/react"
-import { spokePath } from "../projectors/spokePath"
+import { spokePath } from "../domain/spokePath"
 
 interface SessionSpokeEdgeData extends Record<string, unknown> {
   readonly toggleBranch?: () => void

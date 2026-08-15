@@ -8,7 +8,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { afterEach, expect, it, vi } from "vitest"
-import { OpenCodeService, OpenCodeServiceLive } from "./OpenCodeService"
+import { OpenCodeService, OpenCodeServiceLive } from "./index"
 
 afterEach(() => vi.restoreAllMocks())
 

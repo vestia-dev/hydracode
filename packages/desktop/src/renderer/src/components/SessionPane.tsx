@@ -25,10 +25,10 @@ import {
   splitRoundToolsWidth,
   subagentTimelinePosition,
   timelinePositions,
-} from "../projectors/sessionLayout"
-import { projectPromptComposer } from "../projectors/sessionComposer"
-import { classifyToolCall } from "../projectors/sessionGraph"
-import { matchSubagentLaunchers } from "../projectors/projectSessions"
+} from "../domain/sessionLayout"
+import { createPromptComposerState } from "../domain/sessionComposer"
+import { classifyToolCall } from "../domain/sessionGraph"
+import { matchSubagentLaunchers } from "../domain/projectSessions"
 import type { SessionView } from "../services/OpenCodeGateway"
 import type { DesktopBridge, DesktopBridgeError } from "../services/DesktopBridge"
 import { SessionRoundNode, type SessionRoundFlowNode } from "./SessionRoundNode"
@@ -47,6 +47,7 @@ import { SessionQuestionNode, type SessionQuestionFlowNode } from "./SessionQues
 import { SessionSpokeEdge } from "./SessionSpokeEdge"
 import { useTheme } from "../theme"
 import { AppRuntime } from "../runtime"
+import { recordStartupMeasure } from "../startupTiming"
 import type { PaneUIState } from "../../../shared/applicationState"
 
 const nodeTypes: NodeTypes = {
@@ -330,6 +331,7 @@ function SessionCanvas({
   }, [])
 
   const flow = useMemo(() => {
+    const started = performance.now()
     const sessions = [session, ...descendants]
     const questionRequest = sessions.flatMap((current) => current.questions)[0]
     const composerWidth = questionRequest === undefined ? PROMPT_WIDTH : QUESTION_WIDTH
@@ -348,7 +350,7 @@ function SessionCanvas({
       descendantsByParent.set(child.parentID, siblings)
     }
 
-    const composer = projectPromptComposer(session.id, session.graph.nodes)
+    const composer = createPromptComposerState(session.id, session.graph.nodes)
     let composerPosition = { x: 0, y: 480 }
     const positions = new Map<string, { readonly x: number; readonly y: number }>()
     const childConnections: Array<{ readonly source: string; readonly target: string }> = []
@@ -781,7 +783,7 @@ function SessionCanvas({
         markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
       })
     }
-    return {
+    const result = {
       nodes: nodes.map((node) => {
         const measured = measuredNodeSizes.current.get(node.id)
         return measured === undefined ? node : Object.assign(node, { measured })
@@ -790,6 +792,12 @@ function SessionCanvas({
       focusNodeID: composer.precedingNodeID,
       promptNodeID: composer.id,
     }
+    recordStartupMeasure("session-flow-build", started, {
+      sessions: sessions.length,
+      nodes: result.nodes.length,
+      edges: result.edges.length,
+    })
+    return result
   }, [
     descendants,
     expandedRounds,

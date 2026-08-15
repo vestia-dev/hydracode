@@ -7,18 +7,19 @@ import type {
   ProjectSnapshot as ProjectViewSnapshot,
   SessionView,
 } from "../services/OpenCodeGateway"
-import { projectMessages } from "../projectors/sessionGraph"
+import { buildSessionGraph } from "../domain/sessionGraph"
 import {
   createProvisionalSessionID,
-  projectOptimisticPrompts,
+  applyOptimisticPrompts,
   type OptimisticPrompt,
-} from "../projectors/optimisticPrompts"
+} from "../domain/optimisticPrompts"
 import type { AvailableProject, ProjectUpdate } from "../../../shared/project"
 import {
   applyProjectUpdate as reduceProjectUpdate,
-  projectSessionView,
-} from "../projectors/projectRuntime"
-import { restoreApplicationState } from "../projectors/applicationState"
+  createSessionView,
+} from "../domain/projectRuntime"
+import { restoreApplicationState } from "../domain/applicationState"
+import { markStartup } from "../startupTiming"
 
 export interface PromptRetry {
   readonly sessionID: SessionView["id"]
@@ -60,7 +61,7 @@ function withPrompts(
   return {
     ...session,
     optimisticPrompts,
-    graph: projectOptimisticPrompts(session.authoritativeGraph, optimisticPrompts),
+    graph: applyOptimisticPrompts(session.authoritativeGraph, optimisticPrompts),
   }
 }
 
@@ -305,7 +306,7 @@ export function useProjectController() {
             })
           const promptText = text.trim()
           const provisionalID = createProvisionalSessionID()
-          const authoritativeGraph = projectMessages([])
+          const authoritativeGraph = buildSessionGraph([])
           const provisionalBase: SessionView = {
             id: provisionalID,
             created: Date.now(),
@@ -360,7 +361,7 @@ export function useProjectController() {
               }),
             ),
           )
-          const session = projectSessionView(result.session, [prompt])
+          const session = createSessionView(result.session, [prompt])
           yield* Effect.sync(() => {
             selectCreated?.(session.id)
             updateProject(projectID, (current) => ({
@@ -516,6 +517,7 @@ export function useProjectController() {
     if (availableProjectsFiber.current !== null)
       AppRuntime.runFork(Fiber.interrupt(availableProjectsFiber.current))
     setAvailableProjects({ _tag: "Loading" })
+    markStartup("project-catalog-load-start")
     availableProjectsFiber.current = AppRuntime.runFork(
       DesktopBridge.use((desktop) =>
         Effect.all([desktop.listProjects, desktop.loadApplicationState]),
@@ -524,9 +526,13 @@ export function useProjectController() {
           Effect.sync(() => {
             setAvailableProjects({ _tag: "Ready", projects })
             const restored = restoreApplicationState(state, projects)
-            for (const project of restored.projects) openProject(project, false)
+            for (const project of restored.projects) {
+              if (project.project.id === restored.activeProjectID) markStartup("project-open-start")
+              openProject(project, false)
+            }
             setActiveProjectID(restored.activeProjectID)
             persistProjectSelection(projectsRef.current, restored.activeProjectID)
+            markStartup("project-selection-ready")
           }),
         ),
         Effect.catch((error) =>

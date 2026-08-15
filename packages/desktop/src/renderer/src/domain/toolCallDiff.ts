@@ -1,4 +1,4 @@
-import type { GraphToolDiff, GraphToolDiffFile } from "../domain/graph"
+import type { GraphToolDiff, GraphToolDiffFile } from "./graph"
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -43,7 +43,7 @@ function diffFile(value: unknown): GraphToolDiffFile | undefined {
   }
 }
 
-export function projectToolDiff(
+export function createToolDiff(
   name: string,
   metadata: Readonly<Record<string, unknown>> | undefined,
 ): GraphToolDiff | undefined {

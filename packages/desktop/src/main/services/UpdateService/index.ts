@@ -1,7 +1,7 @@
 import { app } from "electron"
 import electronUpdater from "electron-updater"
 import { Context, Effect, Layer, Schema } from "effect"
-import type { UpdateState } from "../../shared/update"
+import type { UpdateState } from "../../../shared/update"
 import { createUpdateController } from "./updateController"
 
 const { autoUpdater } = electronUpdater

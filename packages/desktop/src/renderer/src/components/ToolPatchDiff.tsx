@@ -1,7 +1,7 @@
 import { Component, useEffect, useMemo, useState, type ReactNode } from "react"
 import { FileDiff, type FileDiffProps } from "@pierre/diffs/react"
 import type { GraphToolDiff, GraphToolDiffFile } from "../domain/graph"
-import { parsePierrePatch } from "../projectors/pierrePatch"
+import { parsePierrePatch } from "../domain/pierrePatch"
 import { useTheme } from "../theme"
 
 function pierreOptions(

@@ -1,14 +1,14 @@
-import type { SemanticGraphNode } from "../domain/graph"
+import type { SemanticGraphNode } from "./graph"
 
-export interface PromptComposerProjection {
+export interface PromptComposerState {
   readonly id: string
   readonly precedingNodeID?: string
 }
 
-export function projectPromptComposer(
+export function createPromptComposerState(
   sessionID: string,
   nodes: ReadonlyArray<SemanticGraphNode>,
-): PromptComposerProjection {
+): PromptComposerState {
   const timelineNodes = nodes.filter(
     (node) => node.kind !== "round-tools" && node.kind !== "round-artifacts",
   )

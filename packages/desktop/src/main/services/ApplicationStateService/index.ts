@@ -1,12 +1,12 @@
 import { Context, Effect, FileSystem, Layer, Ref, Schema, Semaphore } from "effect"
-import { homedir } from "node:os"
+import { app } from "electron"
 import { dirname, join } from "node:path"
 import {
   ApplicationState,
   type ApplicationState as ApplicationStateType,
   type ProjectSelectionState,
   type ProjectUIState,
-} from "../../shared/applicationState"
+} from "../../../shared/applicationState"
 
 export class ApplicationStateServiceError extends Schema.TaggedErrorClass<ApplicationStateServiceError>()(
   "ApplicationStateServiceError",
@@ -29,8 +29,7 @@ export class ApplicationStateService extends Context.Service<
 >()("HydraCode/ApplicationStateService") {}
 
 interface ApplicationStateServiceOptions {
-  readonly configHome?: string
-  readonly home?: string
+  readonly dataDirectory?: string
 }
 
 const emptyState: ApplicationStateType = {
@@ -41,8 +40,7 @@ const emptyState: ApplicationStateType = {
 }
 
 export function applicationStatePath(options: ApplicationStateServiceOptions = {}) {
-  const configHome = options.configHome || join(options.home ?? homedir(), ".config")
-  return join(configHome, "hydracode", "application-state.json")
+  return join(options.dataDirectory ?? app.getPath("userData"), "application-state.json")
 }
 
 export function makeApplicationStateServiceLive(options: ApplicationStateServiceOptions = {}) {
@@ -131,6 +129,4 @@ export function makeApplicationStateServiceLive(options: ApplicationStateService
   )
 }
 
-export const ApplicationStateServiceLive = makeApplicationStateServiceLive(
-  process.env.XDG_CONFIG_HOME === undefined ? {} : { configHome: process.env.XDG_CONFIG_HOME },
-)
+export const ApplicationStateServiceLive = makeApplicationStateServiceLive()

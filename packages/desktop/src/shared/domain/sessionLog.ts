@@ -80,7 +80,7 @@ export function createSessionLogState(
   }
 }
 
-export function hydrateSessionLogState(
+export function initializeSessionLogState(
   sessionID: string,
   messages: ReadonlyArray<SessionMessage.Info>,
   durableSeq?: number,
@@ -182,28 +182,23 @@ export function reduceSessionLog(
     if (seq > expected) return { status: "gap", state, expected, received: seq }
   }
 
-  const projection = project(state, event)
-  if (projection.status === "missing-input") {
+  const applied = applyEvent(state, event)
+  if (applied.status === "missing-input") {
     return {
-      ...projection,
+      ...applied,
       state:
-        "durable" in event
-          ? { ...projection.state, durableSeq: event.durable.seq }
-          : projection.state,
+        "durable" in event ? { ...applied.state, durableSeq: event.durable.seq } : applied.state,
     }
   }
 
   return {
     status: "applied",
-    state:
-      "durable" in event
-        ? { ...projection.state, durableSeq: event.durable.seq }
-        : projection.state,
-    touched: projection.touched,
+    state: "durable" in event ? { ...applied.state, durableSeq: event.durable.seq } : applied.state,
+    touched: applied.touched,
   }
 }
 
-function project(
+function applyEvent(
   state: SessionLogState,
   event: OpenCodeEvent,
 ):

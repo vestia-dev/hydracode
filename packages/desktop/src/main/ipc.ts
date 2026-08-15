@@ -180,11 +180,13 @@ export function registerDesktopIpc() {
   })
   ipcMain.handle(DesktopChannels.selectSession, (_event, input: unknown) => {
     const command = Schema.decodeUnknownSync(ProjectSessionCommand)(input)
-    return result(
+    return MainRuntime.runPromise(
       ProjectRegistry.use((registry) =>
         registry.selectSession(command.subscriptionID, command.sessionID),
       ),
     )
+      .then((timing) => ({ _tag: "Success" as const, timing }))
+      .catch((cause) => ({ _tag: "Failure" as const, message: failureMessage(cause) }))
   })
   ipcMain.handle(DesktopChannels.createSession, (_event, input: unknown) => {
     const command = Schema.decodeUnknownSync(CreateSessionCommand)(input)

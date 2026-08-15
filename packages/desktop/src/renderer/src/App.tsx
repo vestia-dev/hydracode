@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Effect } from "effect"
+import { Effect, Fiber } from "effect"
 import { Project } from "@opencode-ai/client/effect"
 import { HomePage } from "./components/HomePage"
 import { SettingsModal } from "./components/SettingsModal"
 import { CommandMenu, type CommandMenuCommand } from "./components/CommandMenu"
+import { LaunchScreen } from "./components/LaunchScreen"
 import { ProjectContainer, type ProjectContainerHandle } from "./components/ProjectContainer"
 import { useUpdater } from "./hooks/useUpdater"
 import { useProjectController } from "./hooks/useProjectController"
-import { projectDisplayName, projectInitial } from "./projectors/projectPresentation"
+import { projectDisplayName, projectInitial } from "./domain/projectPresentation"
 import { AppRuntime } from "./runtime"
 import { DesktopBridge } from "./services/DesktopBridge"
+import { markStartup, markStartupAfterPaint, measureStartup } from "./startupTiming"
 import type { ProjectUIState } from "../../shared/applicationState"
 
 function updateLabel(state: ReturnType<typeof useUpdater>["state"]) {
@@ -34,6 +36,11 @@ export function App() {
   const commandMenuReturnFocusRef = useRef<HTMLElement>(null)
   const projectHandles = useRef(new Map<Project.ID, ProjectContainerHandle>())
   const projectUIStateCache = useRef(new Map<string, ProjectUIState>())
+  const [launchDelayElapsed, setLaunchDelayElapsed] = useState(false)
+  const [initialLaunchComplete, setInitialLaunchComplete] = useState(false)
+  const [restoredProjectIDs, setRestoredProjectIDs] = useState<ReadonlySet<Project.ID>>(
+    () => new Set(),
+  )
   const [applicationStateReady, setApplicationStateReady] = useState(false)
   const {
     activeProjectID,
@@ -60,6 +67,19 @@ export function App() {
     activeProjectID === null ? undefined : projectHandles.current.get(activeProjectID)
 
   useEffect(() => {
+    markStartup("react-mounted")
+    const fiber = AppRuntime.runFork(
+      Effect.sleep("500 millis").pipe(
+        Effect.tap(() => Effect.sync(() => setLaunchDelayElapsed(true))),
+      ),
+    )
+    return () => {
+      AppRuntime.runFork(Fiber.interrupt(fiber))
+    }
+  }, [])
+
+  useEffect(() => {
+    markStartup("application-state-load-start")
     AppRuntime.runFork(
       DesktopBridge.use((desktop) => desktop.loadApplicationState).pipe(
         Effect.tap((state) =>
@@ -68,12 +88,49 @@ export function App() {
               state.projects.map((projectState) => [projectState.projectID, projectState]),
             )
             setApplicationStateReady(true)
+            markStartup("application-state-ready")
           }),
         ),
-        Effect.catch(() => Effect.sync(() => setApplicationStateReady(true))),
+        Effect.catch(() =>
+          Effect.sync(() => {
+            setApplicationStateReady(true)
+            markStartup("application-state-ready")
+          }),
+        ),
       ),
     )
   }, [])
+
+  useEffect(() => {
+    if (!initialLaunchComplete) return undefined
+    return markStartupAfterPaint("first-project-paint", true)
+  }, [initialLaunchComplete])
+
+  useEffect(() => {
+    if (activeRuntime?.status === "ready") markStartup("project-snapshot-ready")
+  }, [activeRuntime?.status])
+
+  useEffect(() => {
+    if (
+      initialLaunchComplete ||
+      !launchDelayElapsed ||
+      !applicationStateReady ||
+      availableProjects._tag === "Loading" ||
+      (activeProjectID !== null &&
+        activeRuntime?.status !== "error" &&
+        !restoredProjectIDs.has(activeProjectID))
+    )
+      return
+    setInitialLaunchComplete(true)
+  }, [
+    activeProjectID,
+    activeRuntime,
+    applicationStateReady,
+    availableProjects._tag,
+    initialLaunchComplete,
+    launchDelayElapsed,
+    restoredProjectIDs,
+  ])
 
   const selectProject = useCallback(
     (project: Parameters<typeof openProject>[0]) => {
@@ -282,12 +339,13 @@ export function App() {
 
   return (
     <main className="project-shell">
+      {initialLaunchComplete ? null : <LaunchScreen />}
       {showCommandMenu ? (
         <CommandMenu
           commands={commandMenuCommands}
           close={() => setShowCommandMenu(false)}
           projects={availableProjects._tag === "Ready" ? availableProjects.projects : []}
-          projectsLoading={availableProjects._tag === "Loading"}
+          projectsLoading={false}
           projectsError={availableProjects._tag === "Error" ? availableProjects.message : undefined}
           chooseFolder={newProject}
           openProject={selectProject}
@@ -428,6 +486,20 @@ export function App() {
                   runtime={runtime}
                   active={runtime.projectID === activeProjectID}
                   initialUIState={projectUIStateCache.current.get(runtime.projectID)}
+                  initialRestorationComplete={() =>
+                    setRestoredProjectIDs((current) => {
+                      if (current.has(runtime.projectID)) return current
+                      if (runtime.projectID === activeProjectID) {
+                        markStartup("session-restoration-ready")
+                        measureStartup(
+                          "session-restoration",
+                          "session-restoration-start",
+                          "session-restoration-ready",
+                        )
+                      }
+                      return new Set(current).add(runtime.projectID)
+                    })
+                  }
                   uiStateCache={projectUIStateCache}
                   selectSession={selectSession}
                   createSession={createSession}

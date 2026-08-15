@@ -9,7 +9,7 @@ import {
   ApplicationStateService,
   applicationStatePath,
   makeApplicationStateServiceLive,
-} from "./ApplicationStateService"
+} from "./index"
 
 const temporaryDirectories: string[] = []
 const id = (value: string) => Schema.decodeUnknownSync(Project.ID)(value)
@@ -30,27 +30,27 @@ afterEach(async () => {
   )
 })
 
-function run<A>(configHome: string, effect: Effect.Effect<A, unknown, ApplicationStateService>) {
+function run<A>(dataDirectory: string, effect: Effect.Effect<A, unknown, ApplicationStateService>) {
   return Effect.runPromise(
     effect.pipe(
-      Effect.provide(makeApplicationStateServiceLive({ configHome })),
+      Effect.provide(makeApplicationStateServiceLive({ dataDirectory })),
       Effect.provide(NodeFileSystem.layer),
     ),
   )
 }
 
 it("loads empty state and persists normalized project references", async () => {
-  const configHome = await mkdtemp(join(tmpdir(), "hydracode-application-state-"))
-  temporaryDirectories.push(configHome)
+  const dataDirectory = await mkdtemp(join(tmpdir(), "hydracode-application-state-"))
+  temporaryDirectories.push(dataDirectory)
   await expect(
     run(
-      configHome,
+      dataDirectory,
       ApplicationStateService.use((service) => service.load),
     ),
   ).resolves.toEqual({ version: 1, openProjectIDs: [], activeProjectID: null, projects: [] })
 
   const saved = await run(
-    configHome,
+    dataDirectory,
     ApplicationStateService.use((service) =>
       service.saveSelection({
         openProjectIDs: [id("second"), id("first"), id("second")],
@@ -64,15 +64,15 @@ it("loads empty state and persists normalized project references", async () => {
     activeProjectID: "second",
     projects: [],
   })
-  expect(JSON.parse(await readFile(applicationStatePath({ configHome }), "utf8"))).toEqual(saved)
+  expect(JSON.parse(await readFile(applicationStatePath({ dataDirectory }), "utf8"))).toEqual(saved)
 })
 
 it("keeps closed-project UI state when project selection changes", async () => {
-  const configHome = await mkdtemp(join(tmpdir(), "hydracode-application-state-project-ui-"))
-  temporaryDirectories.push(configHome)
+  const dataDirectory = await mkdtemp(join(tmpdir(), "hydracode-application-state-project-ui-"))
+  temporaryDirectories.push(dataDirectory)
 
   const state = await run(
-    configHome,
+    dataDirectory,
     ApplicationStateService.use((service) =>
       Effect.gen(function* () {
         yield* service.saveProjectUIState(projectUIState)

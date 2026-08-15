@@ -1,7 +1,7 @@
 import type { Question, Session } from "@opencode-ai/client/effect"
 import { Schema } from "effect"
 import type { SemanticGraph } from "../domain/graph"
-import type { OptimisticPrompt } from "../projectors/optimisticPrompts"
+import type { OptimisticPrompt } from "../domain/optimisticPrompts"
 import type { ProjectSessionExecution } from "../../../shared/project"
 import type { AbsolutePath, Location, Project } from "@opencode-ai/client/effect"
 

@@ -1,4 +1,4 @@
-import type { UpdateState } from "../../shared/update"
+import type { UpdateState } from "../../../shared/update"
 
 export interface UpdateBackend {
   readonly currentVersion: string

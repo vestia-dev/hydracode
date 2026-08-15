@@ -9,8 +9,8 @@ import {
   DefaultThemeSettings,
   HydraCodeDarkTheme,
   HydraCodeLightTheme,
-} from "../../shared/theme"
-import { makeThemeServiceLive, ThemeService, themePaths } from "./ThemeService"
+} from "../../../shared/theme"
+import { makeThemeServiceLive, ThemeService, themePaths } from "./index"
 
 const temporaryDirectories: string[] = []
 
@@ -70,25 +70,6 @@ it("loads the theme selected by its ID in settings", async () => {
 
   await expect(loadTheme(configHome)).resolves.toEqual(customTheme)
 })
-
-it.each([
-  ["current", HydraCodeLightTheme],
-  ["legacy", (({ diff: _, ...theme }) => theme)(HydraCodeLightTheme)],
-])(
-  "migrates the %s generated light theme to the bundled dark default",
-  async (_, generatedTheme) => {
-    const configHome = await temporaryDirectory()
-    await loadTheme(configHome)
-    const paths = themePaths({ configHome })
-    const file = paths.theme("hydracode-light")
-    await writeFile(file, JSON.stringify(generatedTheme))
-    await writeFile(paths.settings, JSON.stringify({ theme: "hydracode-light" }))
-
-    await expect(loadTheme(configHome)).resolves.toEqual(HydraCodeDarkTheme)
-    await expect(readFile(paths.settings, "utf8").then(JSON.parse)).resolves.toEqual({})
-    await expect(readFile(file, "utf8")).rejects.toMatchObject({ code: "ENOENT" })
-  },
-)
 
 it("reserves bundled theme IDs without deleting a conflicting custom file", async () => {
   const configHome = await temporaryDirectory()

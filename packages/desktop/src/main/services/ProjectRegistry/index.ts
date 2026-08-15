@@ -8,30 +8,33 @@ import {
 } from "@opencode-ai/client/effect"
 import { Context, DateTime, Effect, Fiber, Layer, Scope, Stream } from "effect"
 import { Schema } from "effect"
+import { performance } from "node:perf_hooks"
 import {
   reduceSessionLog,
-  hydrateSessionLogState,
+  initializeSessionLogState,
   questionFormAnswer,
   questionFormID,
   questionFromForm,
   sessionIDFromEvent,
   type SessionLogState,
-} from "../../shared/projectors/sessionLog"
+} from "../../../shared/domain/sessionLog"
 import type {
   ProjectDetails,
   AvailableProject,
   ProjectSession,
   ProjectSnapshot,
   ProjectUpdate,
-} from "../../shared/project"
-import type { CreateSessionResult } from "../../shared/project"
+  SessionLoadTiming,
+  SessionSelectionTiming,
+} from "../../../shared/project"
+import type { CreateSessionResult } from "../../../shared/project"
 import {
   availableProjects,
   projectName,
-  projectSessionSummaries,
+  createSessionSummaries,
   sessionRootID,
-} from "../../shared/projectors/projectCatalog"
-import { OpenCodeService } from "./OpenCodeService"
+} from "../../../shared/domain/projectCatalog"
+import { OpenCodeService } from "../OpenCodeService"
 
 export class ProjectRegistryError extends Schema.TaggedErrorClass<ProjectRegistryError>()(
   "ProjectRegistryError",
@@ -69,7 +72,7 @@ interface ProjectRegistryShape {
   readonly selectSession: (
     subscriptionID: string,
     sessionID: string,
-  ) => Effect.Effect<void, unknown>
+  ) => Effect.Effect<SessionSelectionTiming, unknown>
   readonly createSession: (subscriptionID: string) => Effect.Effect<CreateSessionResult, unknown>
   readonly submitPrompt: (
     subscriptionID: string,
@@ -109,7 +112,7 @@ const snapshot = (entry: Entry, location: Location.Ref): ProjectSnapshot => {
     project: entry.project,
     location,
     sessions: Array.from(entry.logs, ([sessionID, state]) => sessionView(entry, sessionID, state)),
-    recentSessions: projectSessionSummaries(sessionMetadata, entry.active),
+    recentSessions: createSessionSummaries(sessionMetadata, entry.active),
   }
 }
 const sessionView = (entry: Entry, sessionID: string, state: SessionLogState): ProjectSession => {
@@ -213,15 +216,47 @@ export const ProjectRegistryLive = Layer.effect(
       if (entry.ready) emit(entry, { _tag: "Session", projectID: entry.project.id, session: next })
     }
 
-    const hydrate = (entry: Entry, info: Session.Info) =>
+    const loadSessionState = (
+      entry: Entry,
+      info: Session.Info,
+      selectionStarted?: number,
+      timings?: Array<SessionLoadTiming>,
+    ) =>
       Effect.gen(function* () {
+        const started = performance.now()
         entry.info.set(info.id, info)
+        const watermarkStarted = performance.now()
         const sequence = yield* captureWatermark(entry.client, info.id)
+        const watermarkDuration = performance.now() - watermarkStarted
+        let contextDuration = 0
+        let questionsDuration = 0
+        let formsDuration = 0
+        const contextStarted = performance.now()
+        const questionsStarted = performance.now()
+        const formsStarted = performance.now()
         const [messages, questions, forms] = yield* Effect.all(
           [
-            entry.client.session.context({ sessionID: info.id }),
-            entry.client.question.list({ sessionID: info.id }),
-            entry.client.form.list({ sessionID: info.id }),
+            entry.client.session.context({ sessionID: info.id }).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  contextDuration = performance.now() - contextStarted
+                }),
+              ),
+            ),
+            entry.client.question.list({ sessionID: info.id }).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  questionsDuration = performance.now() - questionsStarted
+                }),
+              ),
+            ),
+            entry.client.form.list({ sessionID: info.id }).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  formsDuration = performance.now() - formsStarted
+                }),
+              ),
+            ),
           ],
           { concurrency: "unbounded" },
         )
@@ -229,11 +264,27 @@ export const ProjectRegistryLive = Layer.effect(
           const question = questionFromForm(form)
           return question === undefined ? [] : [question]
         })
+        const stateBuildStarted = performance.now()
         entry.logs.set(
           info.id,
-          hydrateSessionLogState(info.id, messages, sequence, [...questions, ...formQuestions]),
+          initializeSessionLogState(info.id, messages, sequence, [...questions, ...formQuestions]),
         )
         publish(entry, info.id)
+        const stateBuildDuration = performance.now() - stateBuildStarted
+        if (selectionStarted !== undefined && timings !== undefined) {
+          timings.push({
+            offset: started - selectionStarted,
+            duration: performance.now() - started,
+            watermarkDuration,
+            contextDuration,
+            questionsDuration,
+            formsDuration,
+            stateBuildDuration,
+            messages: messages.length,
+            questions: questions.length,
+            forms: forms.length,
+          })
+        }
       })
 
     const refreshSession = (entry: Entry, sessionID: Session.ID) =>
@@ -246,7 +297,7 @@ export const ProjectRegistryLive = Layer.effect(
             return Effect.void
           }
           const state = entry.logs.get(info.id)
-          if (state === undefined) return hydrate(entry, info)
+          if (state === undefined) return loadSessionState(entry, info)
           const next = sessionView(entry, info.id, state)
           if (entry.ready) {
             emit(entry, { _tag: "Session", projectID: entry.project.id, session: next })
@@ -255,8 +306,10 @@ export const ProjectRegistryLive = Layer.effect(
         }),
       )
 
-    const rehydrateSession = (entry: Entry, sessionID: Session.ID) =>
-      entry.client.session.get({ sessionID }).pipe(Effect.flatMap((info) => hydrate(entry, info)))
+    const reloadSessionState = (entry: Entry, sessionID: Session.ID) =>
+      entry.client.session
+        .get({ sessionID })
+        .pipe(Effect.flatMap((info) => loadSessionState(entry, info)))
 
     const apply = (entry: Entry, event: OpenCodeEvent): Effect.Effect<void, ProjectRegistryError> =>
       Effect.gen(function* () {
@@ -270,7 +323,7 @@ export const ProjectRegistryLive = Layer.effect(
         }
         const reduction = reduceSessionLog(current, event)
         if (reduction.status === "gap") {
-          yield* rehydrateSession(entry, sessionID)
+          yield* reloadSessionState(entry, sessionID)
           return
         }
         if (reduction.status === "duplicate" || reduction.status === "ignored") return
@@ -291,7 +344,7 @@ export const ProjectRegistryLive = Layer.effect(
               Effect.mapError(
                 () =>
                   new ProjectRegistryError({
-                    message: `Could not hydrate session input ${reduction.inputID}`,
+                    message: `Could not load missing session message ${reduction.inputID}`,
                   }),
               ),
             )
@@ -336,7 +389,9 @@ export const ProjectRegistryLive = Layer.effect(
           if (!page.data.some((info) => info.id === rootID)) entry.selectedRootIDs.delete(rootID)
         }
         const selected = page.data.filter((info) => isSelected(entry, info))
-        yield* Effect.forEach(selected, (info) => hydrate(entry, info), { concurrency: 4 })
+        yield* Effect.forEach(selected, (info) => loadSessionState(entry, info), {
+          concurrency: 4,
+        })
         if (entry.ready) emitSnapshot(entry)
       })
 
@@ -536,8 +591,11 @@ export const ProjectRegistryLive = Layer.effect(
     const selectSession = (
       subscriptionID: string,
       sessionID: string,
-    ): Effect.Effect<void, unknown> =>
+    ): Effect.Effect<SessionSelectionTiming, unknown> =>
       Effect.gen(function* () {
+        const started = performance.now()
+        let sessionGetDuration = 0
+        const loadTimings: Array<SessionLoadTiming> = []
         const subscription = subscriptions.get(subscriptionID)
         if (subscription === undefined)
           return yield* Effect.fail(
@@ -546,9 +604,11 @@ export const ProjectRegistryLive = Layer.effect(
         const { entry } = subscription
         let target = entry.info.get(sessionID)
         if (target === undefined) {
+          const sessionGetStarted = performance.now()
           target = yield* entry.client.session.get({
             sessionID: Schema.decodeUnknownSync(Session.ID)(sessionID),
           })
+          sessionGetDuration = performance.now() - sessionGetStarted
           entry.info.set(target.id, target)
         }
         const rootID = sessionRootID(target, entry.info)
@@ -556,8 +616,21 @@ export const ProjectRegistryLive = Layer.effect(
         const family = Array.from(entry.info.values()).filter(
           (info) => sessionRootID(info, entry.info) === rootID,
         )
-        yield* Effect.forEach(family, (info) => hydrate(entry, info), { concurrency: 4 })
-        return yield* Effect.sync(() => emitSnapshot(entry))
+        yield* Effect.forEach(
+          family,
+          (info) => loadSessionState(entry, info, started, loadTimings),
+          { concurrency: 4 },
+        )
+        const snapshotStarted = performance.now()
+        yield* Effect.sync(() => emitSnapshot(entry))
+        const snapshotDuration = performance.now() - snapshotStarted
+        return {
+          duration: performance.now() - started,
+          sessionGetDuration,
+          familySize: family.length,
+          snapshotDuration,
+          sessions: loadTimings,
+        }
       })
     const createSession = (subscriptionID: string): Effect.Effect<CreateSessionResult, unknown> =>
       Effect.gen(function* () {
@@ -572,7 +645,7 @@ export const ProjectRegistryLive = Layer.effect(
         })
         entry.info.set(info.id, info)
         entry.selectedRootIDs.add(info.id)
-        yield* hydrate(entry, info)
+        yield* loadSessionState(entry, info)
         emitSnapshot(entry)
         const state = entry.logs.get(info.id)
         if (state === undefined)

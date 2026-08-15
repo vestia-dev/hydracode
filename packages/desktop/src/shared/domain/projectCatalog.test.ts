@@ -1,7 +1,7 @@
 import { expect, it } from "@effect/vitest"
 import { Project } from "@opencode-ai/client/effect"
 import { Effect, Schema } from "effect"
-import { availableProjects, projectSessionSummaries, selectedSessionFamily } from "./projectCatalog"
+import { availableProjects, createSessionSummaries, selectedSessionFamily } from "./projectCatalog"
 
 const sessions = [
   { id: "older-root", created: 1_000, title: "Older" },
@@ -12,7 +12,7 @@ const sessions = [
 
 it.effect("lists only root sessions newest first and carries descendant activity", () =>
   Effect.sync(() => {
-    expect(projectSessionSummaries(sessions, new Set(["grandchild"]))).toEqual([
+    expect(createSessionSummaries(sessions, new Set(["grandchild"]))).toEqual([
       { id: "newer-root", created: 2_000, title: "Newer", active: true },
       { id: "older-root", created: 1_000, title: "Older", active: false },
     ])

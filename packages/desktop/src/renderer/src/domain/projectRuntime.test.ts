@@ -66,7 +66,7 @@ describe("applyProjectUpdate", () => {
   })
 
   it("still removes sessions through explicit removal updates", () => {
-    const hydrated = applyProjectUpdate(projectA, opening(projectA), {
+    const ready = applyProjectUpdate(projectA, opening(projectA), {
       _tag: "Snapshot",
       snapshot: {
         project: { id: projectA, canonical: AbsolutePath.make("/tmp/project-a") },
@@ -94,7 +94,7 @@ describe("applyProjectUpdate", () => {
       },
     })
 
-    const removed = applyProjectUpdate(projectA, hydrated, {
+    const removed = applyProjectUpdate(projectA, ready, {
       _tag: "Removed",
       projectID: projectA,
       sessionID: "session-a",

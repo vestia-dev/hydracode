@@ -7,8 +7,7 @@
   "type": "module",
   "main": "out/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev",
-    "dev:debug": "electron-vite dev --remoteDebuggingPort 9333",
+    "dev": "electron-vite dev --remoteDebuggingPort 9333",
     "build": "electron-vite build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --arm64 --dir --config electron-builder.config.ts",
     "release": "electron-vite build && electron-builder --mac --arm64 --publish never --config electron-builder.config.ts",
     "preview": "electron-vite preview",

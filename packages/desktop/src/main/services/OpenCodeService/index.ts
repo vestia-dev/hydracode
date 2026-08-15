@@ -5,7 +5,7 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstab
 import { FetchHttpClient } from "effect/unstable/http"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import type { OpenCodeDiagnostics, OpenCodeServerDiagnostics } from "../../shared/openCode"
+import type { OpenCodeDiagnostics, OpenCodeServerDiagnostics } from "../../../shared/openCode"
 import * as OpenCodeInstallation from "./openCodeInstallation"
 
 export interface OpenCodeConnection {

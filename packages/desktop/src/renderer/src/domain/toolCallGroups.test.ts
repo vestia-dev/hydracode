@@ -1,6 +1,6 @@
 import { expect, it } from "@effect/vitest"
 import { Effect } from "effect"
-import type { GraphToolCall } from "../domain/graph"
+import type { GraphToolCall } from "./graph"
 import { groupToolCalls } from "./toolCallGroups"
 
 function call(id: string, messageID: string, name: string, detail: string): GraphToolCall {

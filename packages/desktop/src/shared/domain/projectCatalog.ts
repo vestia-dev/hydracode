@@ -31,7 +31,7 @@ export function selectedSessionFamily<T extends CatalogSession>(
   return sessions.filter((session) => sessionRootID(session, sessionsByID) === selectedRootID)
 }
 
-export function projectSessionSummaries(
+export function createSessionSummaries(
   sessions: ReadonlyArray<CatalogSession>,
   activeIDs: ReadonlySet<string>,
 ) {

@@ -1,5 +1,5 @@
 import { Session, type SessionMessage } from "@opencode-ai/client/effect"
-import type { SemanticGraph, SemanticGraphEdge, SemanticGraphNode } from "../domain/graph"
+import type { SemanticGraph, SemanticGraphEdge, SemanticGraphNode } from "./graph"
 
 export interface OptimisticPrompt {
   readonly id: string
@@ -65,7 +65,7 @@ function promptNode(prompt: OptimisticPrompt): SemanticGraphNode {
   }
 }
 
-export function projectOptimisticPrompts(
+export function applyOptimisticPrompts(
   graph: SemanticGraph,
   prompts: ReadonlyArray<OptimisticPrompt>,
 ): SemanticGraph {

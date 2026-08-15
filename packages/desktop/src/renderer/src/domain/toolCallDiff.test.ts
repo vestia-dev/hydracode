@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest"
-import { formatToolDiffDetail, projectToolDiff } from "./toolCallDiff"
+import { formatToolDiffDetail, createToolDiff } from "./toolCallDiff"
 
-describe("projectToolDiff", () => {
+describe("createToolDiff", () => {
   it("projects legacy OpenCode apply_patch file metadata", () => {
-    const diff = projectToolDiff("apply_patch", {
+    const diff = createToolDiff("apply_patch", {
       files: [
         {
           filePath: "/code/src/app.ts",
@@ -33,7 +33,7 @@ describe("projectToolDiff", () => {
 
   it("accepts newer file metadata and ignores malformed entries", () => {
     expect(
-      projectToolDiff("apply-patch", {
+      createToolDiff("apply-patch", {
         files: [
           { file: "old.ts", status: "deleted", patch: "patch", additions: 0, deletions: 3 },
           { file: "missing-patch.ts", additions: 1 },
@@ -53,8 +53,8 @@ describe("projectToolDiff", () => {
   })
 
   it("does not project unrelated tools or metadata without valid files", () => {
-    expect(projectToolDiff("edit", { files: [] })).toBeUndefined()
-    expect(projectToolDiff("apply_patch", { files: "invalid" })).toBeUndefined()
-    expect(projectToolDiff("apply_patch", { files: [{ file: "missing.ts" }] })).toBeUndefined()
+    expect(createToolDiff("edit", { files: [] })).toBeUndefined()
+    expect(createToolDiff("apply_patch", { files: "invalid" })).toBeUndefined()
+    expect(createToolDiff("apply_patch", { files: [{ file: "missing.ts" }] })).toBeUndefined()
   })
 })

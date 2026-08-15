@@ -5,6 +5,7 @@ import {
   ProjectUpdateEnvelope,
   ProjectUpdate,
   ProjectCommandResult,
+  SelectSessionResult,
   OpenProjectResult,
   type OpenProjectCommand,
   type CreateSessionCommand,
@@ -15,6 +16,7 @@ import {
   UpdateState,
   OpenCodeDiagnosticsResult,
 } from "../../../shared/ipc"
+import { recordStartupDuration } from "../startupTiming"
 import { ThemeResult, ProjectSelectionResult } from "../../../shared/ipc"
 import type { BundledThemeID, Theme } from "../../../shared/theme"
 import type { AvailableProject } from "../../../shared/project"
@@ -214,7 +216,66 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
       ),
     closeProject: (subscriptionID) =>
       command(() => window.hydracode.closeProject({ subscriptionID })),
-    selectSession: (request) => command(() => window.hydracode.selectSession(request)),
+    selectSession: (request) =>
+      Effect.suspend(() => {
+        const started = performance.now()
+        return invoke(() => window.hydracode.selectSession(request), SelectSessionResult).pipe(
+          Effect.flatMap((result) => {
+            if (result._tag === "Failure")
+              return Effect.fail(new DesktopBridgeError({ message: result.message, cause: result }))
+            const timing = result.timing
+            recordStartupDuration("main-session-selection", started, timing.duration, {
+              familySize: timing.familySize,
+              sessionGetDuration: timing.sessionGetDuration,
+              snapshotDuration: timing.snapshotDuration,
+            })
+            for (const session of timing.sessions) {
+              const sessionStarted = started + session.offset
+              const fetchStarted = sessionStarted + session.watermarkDuration
+              const stateBuildStarted =
+                fetchStarted +
+                Math.max(session.contextDuration, session.questionsDuration, session.formsDuration)
+              const counts = {
+                messages: session.messages,
+                questions: session.questions,
+                forms: session.forms,
+              }
+              recordStartupDuration("main-session-load", sessionStarted, session.duration, counts)
+              recordStartupDuration(
+                "main-session-watermark",
+                sessionStarted,
+                session.watermarkDuration,
+                counts,
+              )
+              recordStartupDuration(
+                "main-session-context",
+                fetchStarted,
+                session.contextDuration,
+                counts,
+              )
+              recordStartupDuration(
+                "main-session-questions",
+                fetchStarted,
+                session.questionsDuration,
+                counts,
+              )
+              recordStartupDuration(
+                "main-session-forms",
+                fetchStarted,
+                session.formsDuration,
+                counts,
+              )
+              recordStartupDuration(
+                "main-session-state-build",
+                stateBuildStarted,
+                session.stateBuildDuration,
+                counts,
+              )
+            }
+            return Effect.void
+          }),
+        )
+      }),
     createSession: (request) =>
       invoke(() => window.hydracode.createSession(request), CreateSessionResult).pipe(
         Effect.flatMap((result) =>

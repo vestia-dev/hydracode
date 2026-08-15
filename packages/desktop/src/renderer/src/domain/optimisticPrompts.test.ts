@@ -3,7 +3,7 @@ import { expect, it } from "@effect/vitest"
 import { Brand, DateTime, Effect } from "effect"
 import {
   createProvisionalSessionID,
-  projectOptimisticPrompts,
+  applyOptimisticPrompts,
   reconcileOptimisticPrompts,
 } from "./optimisticPrompts"
 
@@ -25,7 +25,7 @@ it.effect("creates provisional IDs accepted by the OpenCode session schema", () 
 
 it.effect("appends an optimistic prompt as the next timeline round", () =>
   Effect.sync(() => {
-    const graph = projectOptimisticPrompts(
+    const graph = applyOptimisticPrompts(
       {
         nodes: [
           {

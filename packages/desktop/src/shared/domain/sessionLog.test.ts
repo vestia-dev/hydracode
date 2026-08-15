@@ -3,7 +3,7 @@ import type { OpenCodeEvent, SessionMessage } from "@opencode-ai/client/effect"
 import { Effect } from "effect"
 import {
   createSessionLogState,
-  hydrateSessionLogState,
+  initializeSessionLogState,
   questionFormAnswer,
   reduceSessionLog,
 } from "./sessionLog"
@@ -73,7 +73,7 @@ it.effect("uses log.synced as the replay watermark", () =>
   }),
 )
 
-it.effect("advances the durable cursor when delivered input needs targeted hydration", () =>
+it.effect("advances the durable cursor when delivered input needs targeted loading", () =>
   Effect.sync(() => {
     const reduction = reduceSessionLog(
       createSessionLogState("session-1"),
@@ -91,13 +91,13 @@ it.effect("advances the durable cursor when delivered input needs targeted hydra
   }),
 )
 
-it.effect("hydrates existing context at the captured durable watermark", () =>
+it.effect("initializes existing context at the captured durable watermark", () =>
   Effect.sync(() => {
     const existing = { id: "message-1", type: "system", text: "existing", time: { created: 1000 } }
     // Fixtures intentionally bridge the SDK's branded decoded message type.
     // oxlint-disable-next-line no-unsafe-type-assertion
     const message = existing as unknown as SessionMessage.Info
-    const state = hydrateSessionLogState("session-1", [message], 307)
+    const state = initializeSessionLogState("session-1", [message], 307)
 
     expect(state).toMatchObject({
       durableSeq: 307,

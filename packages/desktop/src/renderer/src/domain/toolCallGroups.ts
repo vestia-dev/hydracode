@@ -1,4 +1,4 @@
-import type { GraphNodeStatus, GraphToolCall } from "../domain/graph"
+import type { GraphNodeStatus, GraphToolCall } from "./graph"
 
 export interface ToolCallGroup {
   readonly id: string

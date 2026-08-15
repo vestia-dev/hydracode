@@ -7,11 +7,10 @@ import {
   DefaultTheme,
   DefaultThemeSettings,
   findBundledTheme,
-  HydraCodeLightTheme,
   Theme,
   type ThemeID,
   ThemeSettings,
-} from "../../shared/theme"
+} from "../../../shared/theme"
 
 export class ThemeServiceError extends Schema.TaggedErrorClass<ThemeServiceError>()(
   "ThemeServiceError",
@@ -33,17 +32,6 @@ export class ThemeService extends Context.Service<ThemeService, ThemeServiceShap
 interface ThemeServiceOptions {
   readonly configHome?: string
   readonly home?: string
-}
-
-const LegacyDefaultThemeID: ThemeID = "hydracode-light"
-const { diff: _, ...LegacyHydraCodeLightTheme } = HydraCodeLightTheme
-
-function isGeneratedLightTheme(theme: Theme) {
-  const serialized = JSON.stringify(theme)
-  return (
-    serialized === JSON.stringify(HydraCodeLightTheme) ||
-    serialized === JSON.stringify(LegacyHydraCodeLightTheme)
-  )
 }
 
 export function themePaths(options: ThemeServiceOptions = {}) {
@@ -87,29 +75,10 @@ export function makeThemeServiceLive(options: ThemeServiceOptions = {}) {
         )
         if (settings.theme === undefined) return DefaultTheme
 
-        const selectedThemeFile = paths.theme(settings.theme)
-        if (settings.theme === LegacyDefaultThemeID) {
-          const generatedTheme = yield* fileSystem.readFileString(selectedThemeFile).pipe(
-            Effect.flatMap((source) =>
-              Effect.try({
-                try: () => JSON.parse(source) as unknown,
-                catch: (cause) => cause,
-              }),
-            ),
-            Effect.flatMap(Schema.decodeUnknownEffect(Theme)),
-            Effect.map(isGeneratedLightTheme),
-            Effect.catch(() => Effect.succeed(false)),
-          )
-          if (generatedTheme) {
-            yield* writeSettings(DefaultThemeSettings)
-            yield* fileSystem.remove(selectedThemeFile)
-            return DefaultTheme
-          }
-        }
-
         const bundledTheme = findBundledTheme(settings.theme)
         if (bundledTheme !== undefined) return bundledTheme
 
+        const selectedThemeFile = paths.theme(settings.theme)
         return yield* fileSystem.readFileString(selectedThemeFile).pipe(
           Effect.flatMap((source) =>
             Effect.try({

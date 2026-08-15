@@ -16,9 +16,9 @@ import type {
   SemanticGraph,
   SemanticGraphEdge,
   SemanticGraphNode,
-} from "../domain/graph"
+} from "./graph"
 import { formatToolCallDetail } from "./toolCallDetail"
-import { formatToolDiffDetail, projectToolDiff } from "./toolCallDiff"
+import { formatToolDiffDetail, createToolDiff } from "./toolCallDiff"
 
 const MAX_DETAIL_LENGTH = 280
 const READ_TOOLS = new Set([
@@ -176,7 +176,7 @@ function toolCall(
   const result = toolResult(content)
   const input = toolInputValue(content)
   const metadata = toolMetadata(content)
-  const diff = projectToolDiff(content.name, metadata)
+  const diff = createToolDiff(content.name, metadata)
   const sessionID = metadata?.["sessionId"] ?? metadata?.["sessionID"]
   return {
     id: `${message.id}:${contentIndex}`,
@@ -580,7 +580,7 @@ function branchEdges(nodes: ReadonlyArray<SemanticGraphNode>): ReadonlyArray<Sem
   return edges
 }
 
-export function projectMessages(
+export function buildSessionGraph(
   messages: ReadonlyArray<SessionMessage.Info>,
   sessionActive = false,
 ): SemanticGraph {

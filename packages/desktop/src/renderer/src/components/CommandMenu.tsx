@@ -1,8 +1,8 @@
 import { useEffect, useId, useRef, useState } from "react"
 import { createPortal } from "react-dom"
-import { filterCommandMenuDefinitions, type CommandMenuCommandID } from "../projectors/commandMenu"
+import { filterCommandMenuDefinitions, type CommandMenuCommandID } from "../domain/commandMenu"
 import type { AvailableProject } from "../../../shared/project"
-import { projectDisplayName, projectInitial } from "../projectors/projectPresentation"
+import { projectDisplayName, projectInitial } from "../domain/projectPresentation"
 
 export interface CommandMenuCommand {
   readonly id: CommandMenuCommandID

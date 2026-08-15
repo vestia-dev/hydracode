@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react"
 import { Handle, Position, useUpdateNodeInternals, type Node, type NodeProps } from "@xyflow/react"
 import type { GraphNodeStatus, GraphRoundTools } from "../domain/graph"
-import { groupToolCalls } from "../projectors/toolCallGroups"
+import { groupToolCalls } from "../domain/toolCallGroups"
 
 export interface SessionRoundToolsNodeData extends Record<string, unknown> {
   readonly id: string

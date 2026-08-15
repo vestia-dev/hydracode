@@ -1,7 +1,7 @@
 import type { SessionMessage } from "@opencode-ai/client/effect"
 import { expect, it } from "@effect/vitest"
 import { Brand, DateTime, Effect } from "effect"
-import { classifyToolCall, projectMessages } from "./sessionGraph"
+import { classifyToolCall, buildSessionGraph } from "./sessionGraph"
 import { spokePath } from "./spokePath"
 
 function timestamp(value: number) {
@@ -138,7 +138,7 @@ function effectSessionMessages() {
 
 it.effect("projects a user prompt and consecutive assistant run as one round", () =>
   Effect.sync(() => {
-    const graph = projectMessages(effectSessionMessages())
+    const graph = buildSessionGraph(effectSessionMessages())
     const roundNode = graph.nodes.find((node) => node.kind === "round")
     const tools = graph.nodes.find((node) => node.kind === "round-tools")?.roundTools
 
@@ -166,7 +166,7 @@ it.effect("projects a user prompt and consecutive assistant run as one round", (
 
 it.effect("hides system messages without splitting their surrounding round", () =>
   Effect.sync(() => {
-    const graph = projectMessages([
+    const graph = buildSessionGraph([
       userMessage(),
       assistantMessage(
         "message-assistant-1",
@@ -196,7 +196,7 @@ it.effect("hides system messages without splitting their surrounding round", () 
 
 it.effect("hides restart context without splitting the surrounding round", () =>
   Effect.sync(() => {
-    const graph = projectMessages([
+    const graph = buildSessionGraph([
       userMessage(),
       assistantMessage(
         "message-assistant-before-restart",
@@ -223,7 +223,7 @@ it.effect("hides restart context without splitting the surrounding round", () =>
 
 it.effect("keeps completed subagent results inside their originating round", () =>
   Effect.sync(() => {
-    const graph = projectMessages([
+    const graph = buildSessionGraph([
       userMessage(),
       assistantMessage(
         "message-launch-1",
@@ -278,7 +278,7 @@ it.effect("keeps completed subagent results inside their originating round", () 
 
 it.effect("keeps commentary, reasoning, and response inside the round exactly once", () =>
   Effect.sync(() => {
-    const graph = projectMessages(effectSessionMessages())
+    const graph = buildSessionGraph(effectSessionMessages())
     const narratives = graph.nodes.find((node) => node.kind === "round")?.agent?.narratives
 
     expect(narratives?.map((item) => item.kind)).toEqual(["commentary", "reasoning", "response"])
@@ -292,7 +292,7 @@ it.effect("keeps commentary, reasoning, and response inside the round exactly on
 
 it.effect("retains chronological round history with message-level provenance", () =>
   Effect.sync(() => {
-    const graph = projectMessages(effectSessionMessages())
+    const graph = buildSessionGraph(effectSessionMessages())
     const history = graph.nodes.find((node) => node.kind === "round")?.round?.history
 
     expect(history?.map((item) => item.kind)).toEqual([
@@ -318,8 +318,8 @@ it.effect("retains chronological round history with message-level provenance", (
 
 it.effect("keeps a stable round identity before assistant work arrives", () =>
   Effect.sync(() => {
-    const pending = projectMessages([userMessage()])
-    const completed = projectMessages([
+    const pending = buildSessionGraph([userMessage()])
+    const completed = buildSessionGraph([
       userMessage(),
       assistantMessage("message-assistant", [{ type: "text", text: "Done" }], 2_000),
     ])
@@ -333,7 +333,7 @@ it.effect("keeps a stable round identity before assistant work arrives", () =>
 
 it.effect("marks the latest round running while its session is active", () =>
   Effect.sync(() => {
-    const graph = projectMessages(
+    const graph = buildSessionGraph(
       [
         userMessage(),
         assistantMessage("message-assistant", [{ type: "text", text: "Streaming text" }], 2_000),
@@ -347,7 +347,7 @@ it.effect("marks the latest round running while its session is active", () =>
 
 it.effect("records completed subagent sessions from hidden result messages", () =>
   Effect.sync(() => {
-    const graph = projectMessages([
+    const graph = buildSessionGraph([
       userMessage(),
       subagentResult("subagent-result", "child-1", 2_000),
     ])
@@ -359,7 +359,7 @@ it.effect("records completed subagent sessions from hidden result messages", () 
 it.effect("preserves message whitespace so Markdown structure reaches the renderer", () =>
   Effect.sync(() => {
     const markdown = "## Summary\n\n- first\n- second\n\n```ts\nconst value = 1\n```"
-    const graph = projectMessages([
+    const graph = buildSessionGraph([
       {
         id: messageID("message-user-markdown"),
         type: "user",
@@ -378,7 +378,7 @@ it.effect("preserves message whitespace so Markdown structure reaches the render
 
 it.effect("projects every tool call into one chronological round list", () =>
   Effect.sync(() => {
-    const graph = projectMessages([
+    const graph = buildSessionGraph([
       userMessage(),
       assistantMessage(
         "message-assistant-1",
@@ -411,7 +411,7 @@ it.effect("projects every tool call into one chronological round list", () =>
 
 it.effect("keeps mixed read and write calls in the same round list", () =>
   Effect.sync(() => {
-    const graph = projectMessages([
+    const graph = buildSessionGraph([
       assistantMessage(
         "message-assistant",
         [
@@ -433,7 +433,7 @@ it.effect("keeps mixed read and write calls in the same round list", () =>
 
 it.effect("keeps skill and apply_patch calls together in their original order", () =>
   Effect.sync(() => {
-    const graph = projectMessages([
+    const graph = buildSessionGraph([
       assistantMessage(
         "message-assistant",
         [
@@ -473,7 +473,7 @@ it.effect("classifies shell conservatively and defaults unknown tools to actions
 
 it.effect("retains subagent session IDs on the unified tool list", () =>
   Effect.sync(() => {
-    const graph = projectMessages([
+    const graph = buildSessionGraph([
       assistantMessage(
         "message-assistant-task",
         [
@@ -502,8 +502,8 @@ it.effect("retains subagent session IDs on the unified tool list", () =>
 
 it.effect("creates one stable tool list across assistant messages", () =>
   Effect.sync(() => {
-    const first = projectMessages(effectSessionMessages())
-    const second = projectMessages(effectSessionMessages())
+    const first = buildSessionGraph(effectSessionMessages())
+    const second = buildSessionGraph(effectSessionMessages())
     const tools = first.nodes.find((node) => node.kind === "round-tools")
 
     expect(tools?.id).toBe("round:message-user:tools")
@@ -515,7 +515,7 @@ it.effect("creates one stable tool list across assistant messages", () =>
 it.effect("projects authoritative apply_patch metadata for diff rendering", () =>
   Effect.sync(() => {
     const patch = "--- src/app.ts\n+++ src/app.ts\n@@ -1 +1 @@\n-old\n+new"
-    const graph = projectMessages([
+    const graph = buildSessionGraph([
       assistantMessage(
         "message-assistant-patch",
         [
@@ -568,7 +568,7 @@ it.effect("projects authoritative apply_patch metadata for diff rendering", () =
 
 it.effect("retains unified tool provenance and timing", () =>
   Effect.sync(() => {
-    const graph = projectMessages([
+    const graph = buildSessionGraph([
       assistantMessage(
         "message-assistant",
         [tool("call-read", "read", { filePath: "one.ts" }, 1_010)],

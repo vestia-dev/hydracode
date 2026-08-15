@@ -144,3 +144,32 @@ export const ProjectCommandResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Failure"), message: Schema.String }),
 ])
 export type ProjectCommandResult = typeof ProjectCommandResult.Type
+
+export const SessionLoadTiming = Schema.Struct({
+  offset: Schema.Number,
+  duration: Schema.Number,
+  watermarkDuration: Schema.Number,
+  contextDuration: Schema.Number,
+  questionsDuration: Schema.Number,
+  formsDuration: Schema.Number,
+  stateBuildDuration: Schema.Number,
+  messages: Schema.Number,
+  questions: Schema.Number,
+  forms: Schema.Number,
+})
+export type SessionLoadTiming = typeof SessionLoadTiming.Type
+
+export const SessionSelectionTiming = Schema.Struct({
+  duration: Schema.Number,
+  sessionGetDuration: Schema.Number,
+  familySize: Schema.Number,
+  snapshotDuration: Schema.Number,
+  sessions: Schema.Array(SessionLoadTiming),
+})
+export type SessionSelectionTiming = typeof SessionSelectionTiming.Type
+
+export const SelectSessionResult = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal("Success"), timing: SessionSelectionTiming }),
+  Schema.Struct({ _tag: Schema.Literal("Failure"), message: Schema.String }),
+])
+export type SelectSessionResult = typeof SelectSessionResult.Type

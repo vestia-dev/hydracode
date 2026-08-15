@@ -15,7 +15,7 @@ import {
   setPaneSession,
   splitPane,
   type PaneLayout,
-} from "../projectors/paneLayout"
+} from "../domain/paneLayout"
 import type { PaneDirection, PaneSplitCommand } from "../../../shared/pane"
 import type { PaneUIState, ProjectUIState } from "../../../shared/applicationState"
 import type { OpenProjectRuntime } from "../hooks/useProjectController"
@@ -26,6 +26,7 @@ import {
   DesktopBridgeError,
 } from "../services/DesktopBridge"
 import { AppRuntime } from "../runtime"
+import { markStartup, recordStartupMeasure } from "../startupTiming"
 
 export interface ProjectContainerHandle {
   readonly split: (command: PaneSplitCommand) => void
@@ -40,6 +41,7 @@ interface ProjectContainerProps {
   readonly runtime: OpenProjectRuntime
   readonly active: boolean
   readonly initialUIState: ProjectUIState | undefined
+  readonly initialRestorationComplete: () => void
   readonly uiStateCache: React.MutableRefObject<Map<string, ProjectUIState>>
   readonly selectSession: (
     projectID: Project.ID,
@@ -229,17 +231,32 @@ export const ProjectContainer = forwardRef<ProjectContainerHandle, ProjectContai
     useEffect(() => {
       if (props.runtime.status !== "ready" || restorationStarted.current) return
       restorationStarted.current = true
+      if (props.active) markStartup("session-restoration-start")
       const projectID = props.runtime.projectID
-      if (restoredLayout !== undefined)
-        AppRuntime.runFork(
-          Effect.forEach(
-            paneSessionIDs(restoredLayout),
-            (sessionID) =>
-              props.selectSession(projectID, sessionID).pipe(Effect.catch(() => Effect.void)),
-            { concurrency: 4, discard: true },
-          ),
-        )
-    }, [props.runtime.projectID, props.runtime.status, props.selectSession])
+      AppRuntime.runFork(
+        (restoredLayout === undefined
+          ? Effect.void
+          : Effect.forEach(
+              paneSessionIDs(restoredLayout),
+              (sessionID) => {
+                const started = performance.now()
+                return props.selectSession(projectID, sessionID).pipe(
+                  Effect.ensuring(
+                    Effect.sync(() => recordStartupMeasure("session-selection", started)),
+                  ),
+                  Effect.catch(() => Effect.void),
+                )
+              },
+              { concurrency: 4, discard: true },
+            )
+        ).pipe(Effect.ensuring(Effect.sync(props.initialRestorationComplete))),
+      )
+    }, [
+      props.initialRestorationComplete,
+      props.runtime.projectID,
+      props.runtime.status,
+      props.selectSession,
+    ])
 
     useEffect(() => {
       const sessionID = props.runtime.requestedSessionID

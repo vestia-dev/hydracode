@@ -6,20 +6,22 @@ import type {
   ProjectSnapshot as ProjectViewSnapshot,
   SessionView,
 } from "../services/OpenCodeGateway"
-import { projectMessages } from "./sessionGraph"
+import { buildSessionGraph } from "./sessionGraph"
+import { recordStartupMeasure } from "../startupTiming"
 import {
-  projectOptimisticPrompts,
+  applyOptimisticPrompts,
   reconcileOptimisticPrompts,
   type OptimisticPrompt,
 } from "./optimisticPrompts"
 
-export function projectSessionView(
+export function createSessionView(
   value: ProjectSession,
   optimisticPrompts: ReadonlyArray<OptimisticPrompt> = [],
 ): SessionView {
-  const authoritativeGraph = projectMessages(value.messages, value.active)
+  const started = performance.now()
+  const authoritativeGraph = buildSessionGraph(value.messages, value.active)
   const reconciled = reconcileOptimisticPrompts(optimisticPrompts, value.messages)
-  return {
+  const view = {
     id: Schema.decodeUnknownSync(Session.ID)(value.id),
     ...(value.parentID === undefined
       ? {}
@@ -33,25 +35,31 @@ export function projectSessionView(
     provisional: false,
     authoritativeGraph,
     optimisticPrompts: reconciled,
-    graph: projectOptimisticPrompts(authoritativeGraph, reconciled),
+    graph: applyOptimisticPrompts(authoritativeGraph, reconciled),
   }
+  recordStartupMeasure("session-graph-build", started, {
+    messages: value.messages.length,
+    nodes: view.graph.nodes.length,
+    edges: view.graph.edges.length,
+  })
+  return view
 }
 
-function projectSnapshot(
+function createProjectViewState(
   value: ProjectSnapshot,
   previous?: ProjectViewSnapshot,
 ): ProjectViewSnapshot {
-  const projected = value.sessions.map((session) => {
+  const sessions = value.sessions.map((session) => {
     const current = previous?.sessions.find((item) => item.id === session.id)
-    return projectSessionView(session, current?.optimisticPrompts)
+    return createSessionView(session, current?.optimisticPrompts)
   })
   const provisional = previous?.sessions.filter(
-    (session) => session.provisional && !projected.some((item) => item.id === session.id),
+    (session) => session.provisional && !sessions.some((item) => item.id === session.id),
   )
   return {
     project: value.project,
     location: value.location,
-    sessions: [...projected, ...(provisional ?? [])],
+    sessions: [...sessions, ...(provisional ?? [])],
     recentSessions: value.recentSessions.map((session) => ({
       ...session,
       id: Schema.decodeUnknownSync(Session.ID)(session.id),
@@ -69,7 +77,7 @@ export function applyProjectUpdate(
     return {
       ...current,
       status: "ready",
-      snapshot: projectSnapshot(update.snapshot, current.snapshot),
+      snapshot: createProjectViewState(update.snapshot, current.snapshot),
       error: undefined,
     }
   }
@@ -96,7 +104,7 @@ export function applyProjectUpdate(
       ...current.snapshot,
       sessions: [
         ...current.snapshot.sessions.filter((item) => item.id !== update.session.id),
-        projectSessionView(update.session, existing?.optimisticPrompts),
+        createSessionView(update.session, existing?.optimisticPrompts),
       ],
     },
   }
