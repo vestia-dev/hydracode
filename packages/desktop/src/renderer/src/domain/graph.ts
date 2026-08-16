@@ -118,21 +118,43 @@ export interface GraphRoundArtifacts {
   readonly time: GraphTime
 }
 
-export interface SemanticGraphNode {
+interface SemanticGraphNodeBase {
   readonly id: string
-  readonly kind: GraphNodeKind
   readonly title: string
   readonly detail: string
   readonly status: GraphNodeStatus
   readonly artifacts: ReadonlyArray<GraphArtifact>
   readonly provenance: GraphProvenance
   readonly time?: GraphTime
-  readonly agentRunID?: string
-  readonly agent?: GraphAgent
-  readonly round?: GraphRound
-  readonly roundTools?: GraphRoundTools
-  readonly roundArtifacts?: GraphRoundArtifacts
 }
+
+export interface SemanticRoundNode extends SemanticGraphNodeBase {
+  readonly kind: "round"
+  readonly agentRunID: string
+  readonly round: GraphRound
+}
+
+export interface SemanticRoundToolsNode extends SemanticGraphNodeBase {
+  readonly kind: "round-tools"
+  readonly agentRunID: string
+  readonly roundTools: GraphRoundTools
+}
+
+export interface SemanticRoundArtifactsNode extends SemanticGraphNodeBase {
+  readonly kind: "round-artifacts"
+  readonly agentRunID: string
+  readonly roundArtifacts: GraphRoundArtifacts
+}
+
+export interface SemanticEventNode extends SemanticGraphNodeBase {
+  readonly kind: Exclude<GraphNodeKind, "round" | "round-tools" | "round-artifacts">
+}
+
+export type SemanticGraphNode =
+  | SemanticRoundNode
+  | SemanticRoundToolsNode
+  | SemanticRoundArtifactsNode
+  | SemanticEventNode
 
 export interface SemanticGraphEdge {
   readonly id: string

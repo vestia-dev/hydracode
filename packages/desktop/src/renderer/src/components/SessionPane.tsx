@@ -15,7 +15,12 @@ import {
   type NodeTypes,
   type Viewport,
 } from "@xyflow/react"
-import type { SemanticGraphNode } from "../domain/graph"
+import type {
+  SemanticGraphNode,
+  SemanticRoundArtifactsNode,
+  SemanticRoundNode,
+  SemanticRoundToolsNode,
+} from "../domain/graph"
 import {
   collapsedSubagentPosition,
   horizontalRoundSideNodePosition,
@@ -191,8 +196,8 @@ interface ActivitySummary {
   readonly targetSide: "bottom" | "left" | "top"
 }
 
-function activityShells(node: SemanticGraphNode | undefined): ReadonlyArray<ActivityShell> {
-  return (node?.roundTools?.calls ?? []).flatMap((call) => {
+function activityShells(node: SemanticRoundToolsNode | undefined): ReadonlyArray<ActivityShell> {
+  return (node?.roundTools.calls ?? []).flatMap((call) => {
     const name = call.name.toLowerCase().replaceAll(/[-_]/g, "")
     if (name !== "shell" && name !== "bash") return []
     return [
@@ -215,8 +220,14 @@ function activityShells(node: SemanticGraphNode | undefined): ReadonlyArray<Acti
   })
 }
 
-function isRoundSideNode(node: SemanticGraphNode) {
+function isRoundSideNode(
+  node: SemanticGraphNode,
+): node is SemanticRoundToolsNode | SemanticRoundArtifactsNode {
   return node.kind === "round-tools" || node.kind === "round-artifacts"
+}
+
+function isRoundToolsNode(node: SemanticGraphNode): node is SemanticRoundToolsNode {
+  return node.kind === "round-tools"
 }
 
 function roundNeedsBranchClearance(
@@ -224,10 +235,10 @@ function roundNeedsBranchClearance(
   nodes: ReadonlyArray<SemanticGraphNode>,
 ) {
   if (node.kind !== "round") return false
-  const tools = nodes.find(
-    (candidate) => candidate.kind === "round-tools" && candidate.agentRunID === node.agentRunID,
-  )
-  const hasSubagents = (tools?.roundTools?.calls ?? []).some(
+  const tools = nodes
+    .filter(isRoundToolsNode)
+    .find((candidate) => candidate.agentRunID === node.agentRunID)
+  const hasSubagents = (tools?.roundTools.calls ?? []).some(
     (call) => classifyToolCall(call.name, call.input) === "subagent",
   )
   const hasShells = activityShells(tools).length > 0
@@ -263,7 +274,7 @@ function eventFlowNode(
 }
 
 function roundFlowNode(
-  node: SemanticGraphNode & { readonly round: NonNullable<SemanticGraphNode["round"]> },
+  node: SemanticRoundNode,
   position: { readonly x: number; readonly y: number },
   subagentRoot: boolean,
   hasTools: boolean,
@@ -532,25 +543,23 @@ function SessionCanvas({
 
       const children = descendantsByParent.get(current.id) ?? []
       const launchers = current.graph.nodes.flatMap((node) => {
+        if (node.kind !== "round-tools") return []
         const roundID = node.agentRunID
-        return node.roundTools === undefined || roundID === undefined
-          ? []
-          : node.roundTools.calls.flatMap((call) =>
-              classifyToolCall(call.name, call.input) !== "subagent"
-                ? []
-                : [
-                    {
-                      id: call.id,
-                      nodeID: node.id,
-                      roundID,
-                      status: call.status,
-                      executionMode: call.executionMode ?? "foreground",
-                      created: call.time.created,
-                      sessionIDs:
-                        call.subagentSessionID === undefined ? [] : [call.subagentSessionID],
-                    },
-                  ],
-            )
+        return node.roundTools.calls.flatMap((call) =>
+          classifyToolCall(call.name, call.input) !== "subagent"
+            ? []
+            : [
+                {
+                  id: call.id,
+                  nodeID: node.id,
+                  roundID,
+                  status: call.status,
+                  executionMode: call.executionMode ?? "foreground",
+                  created: call.time.created,
+                  sessionIDs: call.subagentSessionID === undefined ? [] : [call.subagentSessionID],
+                },
+              ],
+        )
       })
       const launchersByChild = matchSubagentLaunchers(children, launchers)
       const matchedLauncherIDs = new Set(launchersByChild.values())
@@ -574,15 +583,15 @@ function SessionCanvas({
           width: ROUND_WIDTH,
           height: ROUND_COLLAPSED_HEIGHT,
         }
-        const tools = current.graph.nodes.find(
-          (node) => node.kind === "round-tools" && node.agentRunID === round.agentRunID,
-        )
+        const tools = current.graph.nodes
+          .filter(isRoundToolsNode)
+          .find((node) => node.agentRunID === round.agentRunID)
         const artifacts = current.graph.nodes.find(
           (node) => node.kind === "round-artifacts" && node.agentRunID === round.agentRunID,
         )
         if (tools !== undefined) {
           const toolsHeight =
-            sideNodeSizes.get(tools.id)?.height ?? 42 + (tools.roundTools?.calls.length ?? 0) * 31
+            sideNodeSizes.get(tools.id)?.height ?? 42 + tools.roundTools.calls.length * 31
           const split = splitToolNodeIDs.has(tools.id)
           const toolsWidth = split
             ? splitRoundToolsWidth(roundSize.width, nodeDistance.horizontal)
@@ -734,7 +743,11 @@ function SessionCanvas({
           )
           const precedingChildHeights = precedingChildHeightsByRound.get(parentRound.id) ?? []
           const agent =
-            firstChildNode.round?.agent?.agents.join(", ") || firstChildNode.title || "Subagent"
+            (firstChildNode.kind === "round"
+              ? firstChildNode.round.agent?.agents.join(", ")
+              : undefined) ||
+            firstChildNode.title ||
+            "Subagent"
           const expanded = expandedSubagents.has(child.id)
           const running = child.active
           const status =
@@ -759,10 +772,12 @@ function SessionCanvas({
           if (existing !== undefined) {
             existing.subagents.push(subagent)
           } else {
-            const tools = current.graph.nodes.find((node) => node.id === launcher.nodeID)
+            const tools = current.graph.nodes
+              .filter(isRoundToolsNode)
+              .find((node) => node.id === launcher.nodeID)
             const toolsHeight =
               sideNodeSizes.get(launcher.nodeID)?.height ??
-              42 + (tools?.roundTools?.calls.length ?? 0) * 31
+              42 + (tools?.roundTools.calls.length ?? 0) * 31
             const toolsWidth = splitRoundToolsWidth(parentSize.width, nodeDistance.horizontal)
             const collapsedID = `subagents:${parentRound.id}`
             const collapsedSize = sideNodeSizes.get(collapsedID) ?? {
@@ -813,7 +828,7 @@ function SessionCanvas({
       for (const node of current.graph.nodes) {
         const position = positions.get(node.id)
         if (position === undefined) continue
-        if (node.kind === "round" && node.round !== undefined) {
+        if (node.kind === "round") {
           const latestRound = current.graph.nodes.findLast(
             (candidate) => candidate.kind === "round",
           )
@@ -828,11 +843,9 @@ function SessionCanvas({
               positions.has(candidate.id),
           )
           const backgroundableToolActive = current.graph.nodes
-            .find(
-              (candidate) =>
-                candidate.kind === "round-tools" && candidate.agentRunID === node.agentRunID,
-            )
-            ?.roundTools?.calls.some((call) => {
+            .filter(isRoundToolsNode)
+            .find((candidate) => candidate.agentRunID === node.agentRunID)
+            ?.roundTools.calls.some((call) => {
               const name = call.name.toLowerCase().replaceAll(/[-_]/g, "")
               return (
                 call.status === "running" &&
@@ -843,12 +856,12 @@ function SessionCanvas({
             (candidate) =>
               candidate.kind === "round-artifacts" &&
               candidate.agentRunID === node.agentRunID &&
-              (candidate.roundArtifacts?.diff.files.length ?? 0) > 0 &&
+              candidate.roundArtifacts.diff.files.length > 0 &&
               positions.has(candidate.id),
           )
           nodes.push(
             roundFlowNode(
-              { ...node, status, round: node.round },
+              { ...node, status },
               position,
               subagentRootNodeIDs.has(node.id),
               hasTools,
@@ -877,8 +890,8 @@ function SessionCanvas({
               toggleRound,
             ),
           )
-        } else if (node.kind === "round-tools" && node.roundTools !== undefined) {
-          const roundWidth = roundSizes.get(node.agentRunID ?? "")?.width ?? ROUND_WIDTH
+        } else if (node.kind === "round-tools") {
+          const roundWidth = roundSizes.get(node.agentRunID)?.width ?? ROUND_WIDTH
           nodes.push({
             id: node.id,
             type: "sessionRoundTools",
@@ -894,13 +907,12 @@ function SessionCanvas({
               ...(current.parentID === undefined
                 ? {}
                 : {
-                    maxHeight:
-                      roundSizes.get(node.agentRunID ?? "")?.height ?? ROUND_COLLAPSED_HEIGHT,
+                    maxHeight: roundSizes.get(node.agentRunID)?.height ?? ROUND_COLLAPSED_HEIGHT,
                   }),
               reportSize: reportSideNodeSize,
             },
           })
-        } else if (node.kind === "round-artifacts" && node.roundArtifacts !== undefined) {
+        } else if (node.kind === "round-artifacts") {
           nodes.push({
             id: node.id,
             type: "sessionRoundArtifacts",
@@ -909,17 +921,16 @@ function SessionCanvas({
               id: node.id,
               width: splitArtifactNodeIDs.has(node.id)
                 ? splitRoundToolsWidth(
-                    roundSizes.get(node.agentRunID ?? "")?.width ?? ROUND_WIDTH,
+                    roundSizes.get(node.agentRunID)?.width ?? ROUND_WIDTH,
                     nodeDistance.horizontal,
                   )
-                : (roundSizes.get(node.agentRunID ?? "")?.width ?? ROUND_WIDTH),
+                : (roundSizes.get(node.agentRunID)?.width ?? ROUND_WIDTH),
               artifacts: node.roundArtifacts,
               targetSide: current.parentID === undefined ? "top" : "left",
               ...(current.parentID === undefined
                 ? {}
                 : {
-                    maxHeight:
-                      roundSizes.get(node.agentRunID ?? "")?.height ?? ROUND_COLLAPSED_HEIGHT,
+                    maxHeight: roundSizes.get(node.agentRunID)?.height ?? ROUND_COLLAPSED_HEIGHT,
                   }),
               reportSize: reportSideNodeSize,
             },

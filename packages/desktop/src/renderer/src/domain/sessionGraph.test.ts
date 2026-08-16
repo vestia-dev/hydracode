@@ -170,7 +170,7 @@ it.effect("projects a user prompt and consecutive assistant run as one round", (
 
     expect(graph.nodes.map((node) => node.kind)).toEqual(["round", "round-tools"])
     expect(roundNode?.round?.input?.text).toBe("What is in this project?")
-    expect(roundNode?.agent?.messageIDs).toEqual([
+    expect(roundNode?.round.agent?.messageIDs).toEqual([
       "message-assistant-1",
       "message-assistant-2",
       "message-assistant-3",
@@ -336,7 +336,7 @@ it.effect("hides restart context without splitting the surrounding round", () =>
 
     expect(graph.nodes.filter((node) => node.kind === "round")).toHaveLength(1)
     expect(graph.nodes.some((node) => node.id === "message-restart")).toBe(false)
-    expect(graph.nodes.find((node) => node.kind === "round")?.agent?.messageIDs).toEqual([
+    expect(graph.nodes.find((node) => node.kind === "round")?.round.agent?.messageIDs).toEqual([
       "message-assistant-before-restart",
       "message-assistant-after-restart",
     ])
@@ -384,7 +384,7 @@ it.effect("keeps completed subagent results inside their originating round", () 
     ])
 
     expect(graph.nodes.map((node) => node.kind)).toEqual(["round", "round-tools"])
-    expect(graph.nodes.find((node) => node.kind === "round")?.agent?.messageIDs).toEqual([
+    expect(graph.nodes.find((node) => node.kind === "round")?.round.agent?.messageIDs).toEqual([
       "message-launch-1",
       "message-launch-2",
       "message-launch-3",
@@ -401,7 +401,7 @@ it.effect("keeps completed subagent results inside their originating round", () 
 it.effect("keeps commentary, reasoning, and response inside the round exactly once", () =>
   Effect.sync(() => {
     const graph = buildSessionGraph(effectSessionMessages())
-    const narratives = graph.nodes.find((node) => node.kind === "round")?.agent?.narratives
+    const narratives = graph.nodes.find((node) => node.kind === "round")?.round.agent?.narratives
 
     expect(narratives?.map((item) => item.kind)).toEqual(["commentary", "reasoning", "response"])
     expect(narratives?.map((item) => item.detail)).toEqual([
@@ -448,8 +448,10 @@ it.effect("keeps a stable round identity before assistant work arrives", () =>
 
     expect(pending.nodes[0]?.id).toBe("round:message-user")
     expect(completed.nodes[0]?.id).toBe("round:message-user")
-    expect(pending.nodes[0]?.round?.agent).toBeUndefined()
-    expect(completed.nodes[0]?.round?.agent?.messageIDs).toEqual(["message-assistant"])
+    expect(pending.nodes.find((node) => node.kind === "round")?.round.agent).toBeUndefined()
+    expect(completed.nodes.find((node) => node.kind === "round")?.round.agent?.messageIDs).toEqual([
+      "message-assistant",
+    ])
   }),
 )
 
@@ -492,9 +494,9 @@ it.effect("preserves message whitespace so Markdown structure reaches the render
     ])
 
     expect(graph.nodes.find((node) => node.kind === "round")?.round?.input?.text).toBe(markdown)
-    expect(graph.nodes.find((node) => node.kind === "round")?.agent?.narratives[0]?.detail).toBe(
-      markdown,
-    )
+    expect(
+      graph.nodes.find((node) => node.kind === "round")?.round.agent?.narratives[0]?.detail,
+    ).toBe(markdown)
   }),
 )
 

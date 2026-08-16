@@ -11,14 +11,38 @@ const provenance = {
 }
 
 function node(id: string, kind: SemanticGraphNode["kind"]): SemanticGraphNode {
-  return {
+  const common = {
     id,
-    kind,
     title: id,
     detail: "",
-    status: "completed",
+    status: "completed" as const,
     artifacts: [],
     provenance,
+  }
+  switch (kind) {
+    case "round":
+      return { ...common, kind, agentRunID: id, round: { history: [] } }
+    case "round-tools":
+      return {
+        ...common,
+        kind,
+        agentRunID: id,
+        roundTools: { id, calls: [], provenance, time: { created: 0 } },
+      }
+    case "round-artifacts":
+      return {
+        ...common,
+        kind,
+        agentRunID: id,
+        roundArtifacts: {
+          id,
+          diff: { files: [] },
+          provenance,
+          time: { created: 0 },
+        },
+      }
+    default:
+      return { ...common, kind }
   }
 }
 

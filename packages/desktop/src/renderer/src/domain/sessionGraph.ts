@@ -458,7 +458,6 @@ function roundNode(
     provenance: roundProvenance,
     ...(roundTime === undefined ? {} : { time: roundTime }),
     agentRunID: runID,
-    ...(agent === undefined ? {} : { agent }),
     round,
   }
 

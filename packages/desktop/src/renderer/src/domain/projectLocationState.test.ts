@@ -17,7 +17,17 @@ const provenance = {
 }
 
 function graphNode(id: string, status: SemanticGraphNode["status"]): SemanticGraphNode {
-  return { id, status, kind: "round", title: id, detail: id, artifacts: [], provenance }
+  return {
+    id,
+    status,
+    kind: "round",
+    title: id,
+    detail: id,
+    artifacts: [],
+    provenance,
+    agentRunID: id,
+    round: { history: [] },
+  }
 }
 
 function graph(nodes: ReadonlyArray<SemanticGraphNode>): SemanticGraph {
