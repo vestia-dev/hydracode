@@ -30,10 +30,10 @@ function updateLabel(state: ReturnType<typeof useUpdater>["state"]) {
   }
 }
 
+type AppOverlayState = "none" | "settings" | "command-menu" | "project-switcher"
+
 export function App() {
-  const [showSettings, setShowSettings] = useState(false)
-  const [showCommandMenu, setShowCommandMenu] = useState(false)
-  const [showProjectSwitcher, setShowProjectSwitcher] = useState(false)
+  const [overlay, setOverlay] = useState<AppOverlayState>("none")
   const projectSwitcherRef = useRef<HTMLDivElement>(null)
   const settingsReturnFocusRef = useRef<HTMLElement>(null)
   const commandMenuReturnFocusRef = useRef<HTMLElement>(null)
@@ -176,8 +176,7 @@ export function App() {
       selectedLocation?: Location.Ref,
     ) => {
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
-      setShowSettings(false)
-      setShowProjectSwitcher(false)
+      setOverlay("none")
       const rememberedKey = projectLocationRecency.get(project.project.id)
       const location =
         selectedLocation ??
@@ -196,16 +195,14 @@ export function App() {
         document.documentElement.dataset.platform === "macos" ? event.metaKey : event.ctrlKey
       if (!primaryModifier || event.altKey || event.shiftKey || event.key !== ",") return
       event.preventDefault()
-      if (!showSettings)
+      if (overlay !== "settings")
         settingsReturnFocusRef.current =
           document.activeElement instanceof HTMLElement ? document.activeElement : null
-      setShowCommandMenu(false)
-      setShowProjectSwitcher(false)
-      setShowSettings(true)
+      setOverlay("settings")
     }
     window.addEventListener("keydown", openSettings)
     return () => window.removeEventListener("keydown", openSettings)
-  }, [showSettings])
+  }, [overlay])
 
   useEffect(() => {
     const openCommandMenu = (event: KeyboardEvent) => {
@@ -219,15 +216,14 @@ export function App() {
       )
         return
       event.preventDefault()
-      if (!showCommandMenu)
+      if (overlay !== "command-menu")
         commandMenuReturnFocusRef.current =
           document.activeElement instanceof HTMLElement ? document.activeElement : null
-      setShowSettings(false)
-      setShowCommandMenu((current) => !current)
+      setOverlay((current) => (current === "command-menu" ? "none" : "command-menu"))
     }
     window.addEventListener("keydown", openCommandMenu)
     return () => window.removeEventListener("keydown", openCommandMenu)
-  }, [showCommandMenu])
+  }, [overlay])
 
   useEffect(() => {
     const openLocationSwitcher = (event: KeyboardEvent) => {
@@ -241,16 +237,14 @@ export function App() {
       )
         return
       event.preventDefault()
-      setShowCommandMenu(false)
-      setShowSettings(false)
-      setShowProjectSwitcher(true)
+      setOverlay("project-switcher")
     }
     window.addEventListener("keydown", openLocationSwitcher)
     return () => window.removeEventListener("keydown", openLocationSwitcher)
   }, [])
 
   useEffect(() => {
-    if (!showProjectSwitcher) return undefined
+    if (overlay !== "project-switcher") return undefined
     const frame = window.requestAnimationFrame(() => {
       const menu = projectSwitcherRef.current?.querySelector<HTMLElement>(
         '.project-switcher__menu [role="menuitem"][aria-current="true"]',
@@ -261,16 +255,16 @@ export function App() {
       ;(menu ?? first)?.focus()
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [showProjectSwitcher])
+  }, [overlay])
 
   useEffect(() => {
-    if (!showProjectSwitcher) return undefined
+    if (overlay !== "project-switcher") return undefined
     const closeLocationSwitcher = (event: MouseEvent | KeyboardEvent) => {
       if (event instanceof KeyboardEvent) {
         if (event.key !== "Escape") return
       } else if (event.target instanceof Node && projectSwitcherRef.current?.contains(event.target))
         return
-      setShowProjectSwitcher(false)
+      setOverlay("none")
     }
     window.addEventListener("mousedown", closeLocationSwitcher)
     window.addEventListener("keydown", closeLocationSwitcher)
@@ -278,7 +272,7 @@ export function App() {
       window.removeEventListener("mousedown", closeLocationSwitcher)
       window.removeEventListener("keydown", closeLocationSwitcher)
     }
-  }, [showProjectSwitcher])
+  }, [overlay])
 
   useEffect(() => {
     const openLocationByPosition = (event: KeyboardEvent) => {
@@ -365,7 +359,7 @@ export function App() {
   const creatingSession =
     activeLocationState?.snapshot?.sessions.some((session) => session.provisional) ?? false
   const showProject = (action: () => void) => () => {
-    setShowSettings(false)
+    setOverlay("none")
     action()
   }
   const commandMenuCommands: ReadonlyArray<CommandMenuCommand> = [
@@ -382,7 +376,7 @@ export function App() {
       id: "toggle-settings",
       run: () => {
         settingsReturnFocusRef.current = commandMenuReturnFocusRef.current
-        setShowSettings(true)
+        setOverlay("settings")
       },
     },
     ...(["right", "down", "left", "up"] as const).map((direction) => ({
@@ -415,10 +409,10 @@ export function App() {
   return (
     <main className="project-shell">
       {initialLaunchComplete ? null : <LaunchScreen />}
-      {showCommandMenu ? (
+      {overlay === "command-menu" ? (
         <CommandMenu
           commands={commandMenuCommands}
-          close={() => setShowCommandMenu(false)}
+          close={() => setOverlay("none")}
           projects={availableProjects._tag === "Ready" ? availableProjects.projects : []}
           projectsLoading={false}
           projectsError={availableProjects._tag === "Error" ? availableProjects.message : undefined}
@@ -441,8 +435,12 @@ export function App() {
               "Open projects"
             }
             aria-haspopup="menu"
-            aria-expanded={showProjectSwitcher}
-            onClick={() => setShowProjectSwitcher((current) => !current)}
+            aria-expanded={overlay === "project-switcher"}
+            onClick={() =>
+              setOverlay((current) =>
+                current === "project-switcher" ? "none" : "project-switcher",
+              )
+            }
           >
             <span
               className="project-icon"
@@ -465,7 +463,7 @@ export function App() {
               <path d="m3 6 3-3 3 3M3 10l3 3 3-3" />
             </svg>
           </button>
-          {showProjectSwitcher ? (
+          {overlay === "project-switcher" ? (
             <div
               className="project-switcher__menu"
               role="menu"
@@ -508,7 +506,7 @@ export function App() {
                       key={`switcher-${state.projectID}`}
                       aria-current={current ? "true" : undefined}
                       onClick={() => {
-                        setShowProjectSwitcher(false)
+                        setOverlay("none")
                         activateLocation(locationState.locationKey)
                       }}
                     >
@@ -542,7 +540,7 @@ export function App() {
                     globalLocationState?.locationKey === activeLocationKey ? "true" : undefined
                   }
                   onClick={() => {
-                    setShowProjectSwitcher(false)
+                    setOverlay("none")
                     if (globalLocationState !== undefined)
                       activateLocation(globalLocationState.locationKey)
                     else openLocation(globalProject)
@@ -583,13 +581,13 @@ export function App() {
       </header>
 
       <div className="project-layers">
-        {showSettings ? (
+        {overlay === "settings" ? (
           <SettingsModal
-            close={() => setShowSettings(false)}
+            close={() => setOverlay("none")}
             returnFocus={settingsReturnFocusRef.current}
           />
         ) : null}
-        <div className="project-stack" inert={showSettings}>
+        <div className="project-stack" inert={overlay === "settings"}>
           {initialStateResolved
             ? [
                 ...orderedOpenProjects,
