@@ -9,7 +9,7 @@ import { SessionLanding } from "./SessionLanding"
 import { SessionPane } from "./SessionPane"
 import type { PaneContent, PaneUIState } from "../../../shared/applicationState"
 import type { ProjectCatalogEntry } from "../../../shared/project"
-import type { OpenLocationState } from "../hooks/useProjectController"
+import type { OpenLocationState } from "../domain/projectLocationState"
 import { locationKey } from "../../../shared/domain/projectCatalog"
 
 interface ProjectViewProps {

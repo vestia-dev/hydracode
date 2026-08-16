@@ -24,7 +24,7 @@ import {
 } from "../domain/paneLayout"
 import type { PaneDirection, PaneSplitCommand } from "../../../shared/pane"
 import type { PaneUIState, ProjectUIState } from "../../../shared/applicationState"
-import type { OpenLocationState } from "../hooks/useProjectController"
+import type { OpenLocationState } from "../domain/projectLocationState"
 import type { SessionView } from "../services/OpenCodeGateway"
 import type { DesktopBridge } from "../services/DesktopBridge"
 import type { ProjectCatalogEntry } from "../../../shared/project"

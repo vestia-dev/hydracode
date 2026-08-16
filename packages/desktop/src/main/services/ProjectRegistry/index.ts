@@ -792,9 +792,7 @@ export const ProjectRegistryLive = Layer.effect(
           ...record,
           state: {
             ...record.state,
-            questions: record.state.questions.filter(
-              (request) => request.id !== decodedRequestID,
-            ),
+            questions: record.state.questions.filter((request) => request.id !== decodedRequestID),
           },
         })
         publish(entry, decodedSessionID)
@@ -829,9 +827,7 @@ export const ProjectRegistryLive = Layer.effect(
           ...record,
           state: {
             ...record.state,
-            questions: record.state.questions.filter(
-              (request) => request.id !== decodedRequestID,
-            ),
+            questions: record.state.questions.filter((request) => request.id !== decodedRequestID),
           },
         })
         publish(entry, decodedSessionID)

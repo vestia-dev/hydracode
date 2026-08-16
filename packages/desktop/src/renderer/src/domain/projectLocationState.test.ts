@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import { Schema } from "effect"
 import { AbsolutePath, Location, Project } from "@opencode-ai/client/effect"
 import type { ProjectUpdate } from "../../../shared/project"
-import type { OpenLocationState } from "../hooks/useProjectController"
+import type { OpenLocationState } from "./projectLocationState"
 import type { SemanticGraph, SemanticGraphNode } from "./graph"
 import { applyProjectUpdate, preserveCompletedGraph } from "./projectLocationState"
 

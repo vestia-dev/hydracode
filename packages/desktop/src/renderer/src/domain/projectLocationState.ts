@@ -1,7 +1,6 @@
 import { Schema } from "effect"
-import { Project, Session } from "@opencode-ai/client/effect"
+import { Location, Project, Session } from "@opencode-ai/client/effect"
 import type { ProjectSession, ProjectSnapshot, ProjectUpdate } from "../../../shared/project"
-import type { OpenLocationState } from "../hooks/useProjectController"
 import type {
   ProjectSnapshot as ProjectViewSnapshot,
   SessionView,
@@ -14,6 +13,40 @@ import {
   reconcileOptimisticPrompts,
   type OptimisticPrompt,
 } from "./optimisticPrompts"
+
+export interface PromptRetry {
+  readonly sessionID: SessionView["id"]
+  readonly text: string
+  readonly message: string
+}
+
+interface OpenLocationCommon {
+  readonly locationKey: string
+  readonly projectID: Project.ID
+  readonly location: Location.Ref
+  readonly promptRetry: PromptRetry | null
+  readonly landingError: string | null
+  readonly requestedSessionID?: SessionView["id"] | undefined
+}
+
+export type OpenLocationState = OpenLocationCommon &
+  (
+    | {
+        readonly status: "opening"
+        readonly snapshot: undefined
+        readonly error: undefined
+      }
+    | {
+        readonly status: "ready"
+        readonly snapshot: ProjectViewSnapshot
+        readonly error: undefined
+      }
+    | {
+        readonly status: "error"
+        readonly snapshot: ProjectViewSnapshot | undefined
+        readonly error: string
+      }
+  )
 
 export function createSessionView(
   value: ProjectSession,
