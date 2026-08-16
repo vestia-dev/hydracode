@@ -7,7 +7,7 @@ import {
   type OpenCodeClient,
   type OpenCodeEvent,
 } from "@opencode-ai/client/effect"
-import { Context, DateTime, Effect, Fiber, Layer, Scope, Stream } from "effect"
+import { Context, DateTime, Effect, Fiber, Layer, Queue, Scope, Stream } from "effect"
 import { Schema } from "effect"
 import { performance } from "node:perf_hooks"
 import {
@@ -66,9 +66,8 @@ interface Entry {
   readonly sessions: Map<string, SessionRecord>
   readonly active: Set<string>
   readonly subscribers: Map<string, Subscriber>
-  readonly queued: Array<OpenCodeEvent>
+  readonly events: Queue.Queue<OpenCodeEvent>
   readonly selectedRootIDs: Set<string>
-  bootstrapping: boolean
   ready: boolean
   fiber?: Fiber.Fiber<never, unknown>
 }
@@ -519,13 +518,9 @@ export const ProjectRegistryLive = Layer.effect(
       )
 
     const watchProject = (entry: Entry) => {
-      const handle = (event: OpenCodeEvent): Effect.Effect<void, ProjectRegistryError> =>
-        entry.bootstrapping
-          ? Effect.sync(() => {
-              entry.queued.push(event)
-            })
-          : processEvent(entry, event)
-      const consume = entry.client.event.subscribe().pipe(Stream.runForEach(handle))
+      const consume = entry.client.event
+        .subscribe()
+        .pipe(Stream.runForEach((event) => Queue.offer(entry.events, event).pipe(Effect.asVoid)))
       const loop: Effect.Effect<never> = consume.pipe(
         Effect.catch((cause) =>
           Effect.gen(function* () {
@@ -546,20 +541,22 @@ export const ProjectRegistryLive = Layer.effect(
 
     const start = (entry: Entry) =>
       Effect.gen(function* () {
+        yield* Effect.forkChild(watchProject(entry))
+        yield* Effect.yieldNow
         const [page, active] = yield* Effect.all(
           [listSessions(entry, entry.location), entry.client.session.active()],
           { concurrency: "unbounded" },
         )
         for (const id of Object.keys(active)) entry.active.add(id)
         for (const info of page.data) setSessionInfo(entry, info)
-        entry.bootstrapping = true
-        yield* Effect.forkChild(watchProject(entry))
-        entry.bootstrapping = false
-        const queued = entry.queued.splice(0)
-        yield* Effect.forEach(queued, (event) => processEvent(entry, event), { concurrency: 1 })
         entry.ready = true
         emitSnapshot(entry)
-        return yield* Effect.never
+        return yield* Effect.forever(
+          Queue.take(entry.events).pipe(
+            Effect.flatMap((event) => processEvent(entry, event)),
+            Effect.catch((cause) => Effect.logWarning("Could not process OpenCode event", cause)),
+          ),
+        )
       })
 
     const open = (
@@ -600,6 +597,7 @@ export const ProjectRegistryLive = Layer.effect(
         const key = `${current.id}:${locationKey(resolvedLocation)}`
         let entry = entries.get(key)
         if (entry === undefined) {
+          const events = yield* Queue.unbounded<OpenCodeEvent>()
           entry = {
             project,
             location: resolvedLocation,
@@ -609,8 +607,7 @@ export const ProjectRegistryLive = Layer.effect(
             active: new Set(),
             selectedRootIDs: new Set(),
             subscribers: new Map(),
-            queued: [],
-            bootstrapping: false,
+            events,
             ready: false,
           }
         } else {
