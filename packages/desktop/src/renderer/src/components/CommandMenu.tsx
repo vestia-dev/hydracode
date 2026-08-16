@@ -1,7 +1,9 @@
 import { useEffect, useId, useRef, useState } from "react"
 import { createPortal } from "react-dom"
+import { Project, type Location } from "@opencode-ai/client/effect"
 import { filterCommandMenuDefinitions, type CommandMenuCommandID } from "../domain/commandMenu"
-import type { AvailableProject } from "../../../shared/project"
+import type { ProjectCatalogEntry } from "../../../shared/project"
+import { projectCatalogMatches } from "../../../shared/domain/projectCatalog"
 import { projectDisplayName, projectInitial } from "../domain/projectPresentation"
 
 export interface CommandMenuCommand {
@@ -13,11 +15,15 @@ export interface CommandMenuCommand {
 interface CommandMenuProps {
   readonly commands: ReadonlyArray<CommandMenuCommand>
   readonly close: () => void
-  readonly projects: ReadonlyArray<AvailableProject>
+  readonly projects: ReadonlyArray<ProjectCatalogEntry>
   readonly projectsLoading: boolean
   readonly projectsError?: string | undefined
   readonly chooseFolder: () => void
-  readonly openProject: (project: AvailableProject) => void
+  readonly openProject: (
+    project: ProjectCatalogEntry,
+    persist?: boolean,
+    location?: Location.Ref,
+  ) => void
 }
 
 function shortcutLabel(shortcut: string) {
@@ -54,14 +60,12 @@ export function CommandMenu({
     ({ id }) => !commands.find((command) => command.id === id)?.disabled,
   )
   const activeID = availableDefinitions[activeIndex]?.id
-  const filteredProjects = projects.filter((project) => {
-    const search = query.trim().toLocaleLowerCase()
-    if (search === "") return true
-    return [project.project.name, project.location.directory]
-      .filter((value): value is string => value !== undefined)
-      .some((value) => value.toLocaleLowerCase().includes(search))
-  })
-  const projectOptionCount = filteredProjects.length + 1
+  const filteredProjects = projects.filter((project) => projectCatalogMatches(project, query))
+  const orderedProjects = [
+    ...filteredProjects.filter((project) => project.project.id !== Project.ID.global),
+    ...filteredProjects.filter((project) => project.project.id === Project.ID.global),
+  ]
+  const projectOptionCount = orderedProjects.length + 1
 
   useEffect(() => {
     searchRef.current?.focus()
@@ -124,10 +128,10 @@ export function CommandMenu({
               close()
               chooseFolder()
             } else {
-              const project = filteredProjects[activeIndex - 1]
+              const project = orderedProjects[activeIndex - 1]
               if (project !== undefined) {
                 close()
-                openProject(project)
+                openProject(project, true)
               }
             }
           } else if (event.key === "ArrowDown" && availableDefinitions.length > 0) {
@@ -213,8 +217,13 @@ export function CommandMenu({
               ) : projectsError !== undefined ? (
                 <div className="command-menu__empty">{projectsError}</div>
               ) : (
-                filteredProjects.map((project, index) => {
-                  const name = projectDisplayName(project.project.name, project.location.directory)
+                orderedProjects.map((project, index) => {
+                  const global = project.project.id === Project.ID.global
+                  const name = projectDisplayName(
+                    project.project.name,
+                    project.project.canonical,
+                    project.project.id,
+                  )
                   const icon = project.project.icon?.override ?? project.project.icon?.url
                   const active = activeIndex === index + 1
                   return (
@@ -227,19 +236,24 @@ export function CommandMenu({
                       onMouseMove={() => setActiveIndex(index + 1)}
                       onClick={() => {
                         close()
-                        openProject(project)
+                        openProject(project, true)
                       }}
                     >
                       <span className="project-icon command-menu__project-icon" aria-hidden="true">
-                        {icon === undefined ? (
+                        {global ? (
+                          <svg className="project-icon__globe" viewBox="0 0 16 16">
+                            <circle cx="8" cy="8" r="5.5" />
+                            <path d="M2.5 8h11M8 2.5c1.7 1.5 2.5 3.3 2.5 5.5S9.7 12 8 13.5C6.3 12 5.5 10.2 5.5 8S6.3 4 8 2.5Z" />
+                          </svg>
+                        ) : icon === undefined ? (
                           <span>{projectInitial(name)}</span>
                         ) : (
                           <img src={icon} alt="" />
                         )}
                       </span>
                       <span className="command-menu__item-copy">
-                        <strong>{name}</strong>
-                        <small>{project.location.directory}</small>
+                        <strong>{global ? "Global" : name}</strong>
+                        <small>{global ? "Global project" : project.project.canonical}</small>
                       </span>
                     </button>
                   )

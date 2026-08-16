@@ -14,6 +14,7 @@ export const DesktopChannels = {
   submitPrompt: "hydracode:submit-prompt",
   replyQuestion: "hydracode:reply-question",
   rejectQuestion: "hydracode:reject-question",
+  backgroundSession: "hydracode:background-session",
   interrupt: "hydracode:interrupt",
   openCodeDiagnostics: "hydracode:opencode-diagnostics",
   installOpenCode: "hydracode:install-opencode",

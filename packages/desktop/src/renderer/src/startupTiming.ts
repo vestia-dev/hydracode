@@ -13,20 +13,29 @@ export type StartupMark =
   | "application-state-load-start"
   | "application-state-ready"
   | "project-catalog-load-start"
+  | "project-catalog-ready"
   | "project-selection-ready"
   | "project-open-start"
+  | "project-subscription-ready"
+  | "project-snapshot-received"
+  | "project-snapshot-projected"
   | "project-snapshot-ready"
   | "session-restoration-start"
+  | "session-restoration-dispatched"
+  | "session-selections-ready"
   | "session-restoration-ready"
+  | "launch-completion-requested"
+  | "launch-completion-committed"
   | "first-project-paint"
 
 function entryName(name: StartupMark) {
   return `${prefix}${name}`
 }
 
-export function markStartup(name: StartupMark) {
+export function markStartup(name: StartupMark, detail?: Record<string, number | string>) {
   const fullName = entryName(name)
-  if (performance.getEntriesByName(fullName, "mark").length === 0) performance.mark(fullName)
+  if (performance.getEntriesByName(fullName, "mark").length === 0)
+    performance.mark(fullName, detail === undefined ? undefined : { detail })
 }
 
 export function measureStartup(name: string, start: StartupMark, end: StartupMark) {
@@ -62,11 +71,16 @@ export function recordStartupDuration(
   })
 }
 
-export function markStartupAfterPaint(name: StartupMark, summarize = false) {
+export function markStartupAfterPaint(
+  name: StartupMark,
+  summarize = false,
+  measureFrom?: StartupMark,
+) {
   let secondFrame: number | undefined
   const firstFrame = window.requestAnimationFrame(() => {
     secondFrame = window.requestAnimationFrame(() => {
       markStartup(name)
+      if (measureFrom !== undefined) measureStartup(`${measureFrom}-to-${name}`, measureFrom, name)
       if (summarize) logStartupSummary()
     })
   })

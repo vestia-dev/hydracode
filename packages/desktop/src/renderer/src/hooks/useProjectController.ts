@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { startTransition, useCallback, useEffect, useRef, useState } from "react"
 import { Effect, Fiber, Option } from "effect"
 import { AbsolutePath, Location, Project, type Question } from "@opencode-ai/client/effect"
 import { AppRuntime } from "../runtime"
@@ -13,13 +13,14 @@ import {
   applyOptimisticPrompts,
   type OptimisticPrompt,
 } from "../domain/optimisticPrompts"
-import type { AvailableProject, ProjectUpdate } from "../../../shared/project"
+import type { ProjectCatalogEntry, ProjectUpdate } from "../../../shared/project"
 import {
   applyProjectUpdate as reduceProjectUpdate,
   createSessionView,
-} from "../domain/projectRuntime"
+} from "../domain/projectLocationState"
 import { restoreApplicationState } from "../domain/applicationState"
-import { markStartup } from "../startupTiming"
+import { markStartup, recordStartupMeasure } from "../startupTiming"
+import { locationKey, mergeProjectCatalogEntry } from "../../../shared/domain/projectCatalog"
 
 export interface PromptRetry {
   readonly sessionID: SessionView["id"]
@@ -27,7 +28,8 @@ export interface PromptRetry {
   readonly message: string
 }
 
-export interface OpenProjectRuntime {
+export interface OpenLocationState {
+  readonly locationKey: string
   readonly projectID: Project.ID
   readonly location: Location.Ref
   readonly status: "opening" | "ready" | "error"
@@ -40,7 +42,10 @@ export interface OpenProjectRuntime {
 
 export type AvailableProjectsState =
   | { readonly _tag: "Loading" }
-  | { readonly _tag: "Ready"; readonly projects: ReadonlyArray<AvailableProject> }
+  | {
+      readonly _tag: "Ready"
+      readonly projects: ReadonlyArray<ProjectCatalogEntry>
+    }
   | { readonly _tag: "Error"; readonly message: string }
 
 function pendingPrompt(session: SessionView, text: string): OptimisticPrompt {
@@ -66,30 +71,45 @@ function withPrompts(
 }
 
 export function useProjectController() {
-  const [activeProjectID, setActiveProjectID] = useState<Project.ID | null>(null)
-  const [openProjects, setOpenProjects] = useState<ReadonlyMap<Project.ID, OpenProjectRuntime>>(
+  const [activeLocationKey, setActiveLocationKey] = useState<string | null>(null)
+  const activeLocationKeyRef = useRef(activeLocationKey)
+  activeLocationKeyRef.current = activeLocationKey
+  const [openLocations, setOpenLocations] = useState<ReadonlyMap<string, OpenLocationState>>(
     () => new Map(),
   )
-  const projectsRef = useRef(openProjects)
-  projectsRef.current = openProjects
+  const locationsRef = useRef(openLocations)
+  locationsRef.current = openLocations
   const [availableProjects, setAvailableProjects] = useState<AvailableProjectsState>({
     _tag: "Loading",
   })
+  const [restoredProjectUIStates, setRestoredProjectUIStates] = useState<
+    ReadonlyArray<import("../../../shared/applicationState").ProjectUIState>
+  >([])
   const [landingError, setLandingError] = useState<string | null>(null)
   const selectionFiber = useRef<Fiber.Fiber<unknown, unknown> | null>(null)
   const availableProjectsFiber = useRef<Fiber.Fiber<unknown, unknown> | null>(null)
-  const projectFibers = useRef(new Map<Project.ID, Fiber.Fiber<unknown, unknown>>())
-  const subscriptionIDs = useRef(new Map<Project.ID, string>())
+  const locationFibers = useRef(new Map<string, Fiber.Fiber<unknown, unknown>>())
+  const subscriptionIDs = useRef(new Map<string, string>())
 
-  const persistProjectSelection = useCallback(
-    (projects: ReadonlyMap<Project.ID, OpenProjectRuntime>, activeID: Project.ID | null) => {
-      const openProjectIDs = Array.from(projects.keys()).filter((id) => id !== Project.ID.global)
+  const persistLocationSelection = useCallback(
+    (projects: ReadonlyMap<string, OpenLocationState>, activeID: string | null) => {
+      const locationsToPersist = Array.from(projects.values()).filter(
+        (location) => location.projectID !== Project.ID.global,
+      )
       AppRuntime.runFork(
         DesktopBridge.use((desktop) =>
           desktop.saveProjectSelection({
-            openProjectIDs,
-            activeProjectID:
-              activeID === Project.ID.global ? (openProjectIDs[0] ?? null) : activeID,
+            openLocations: locationsToPersist.map((location) => ({
+              projectID: location.projectID,
+              location: location.location,
+            })),
+            activeLocationKey:
+              activeID !== null &&
+              locationsToPersist.some((location) => location.locationKey === activeID)
+                ? activeID
+                : locationsToPersist[0] === undefined
+                  ? null
+                  : locationsToPersist[0].locationKey,
           }),
         ).pipe(Effect.catch((error) => Effect.sync(() => setLandingError(error.message)))),
       )
@@ -98,24 +118,24 @@ export function useProjectController() {
   )
 
   const updateProject = useCallback(
-    (projectID: Project.ID, update: (runtime: OpenProjectRuntime) => OpenProjectRuntime) => {
-      const runtime = projectsRef.current.get(projectID)
-      if (runtime === undefined) return
-      const next = new Map(projectsRef.current)
-      next.set(projectID, update(runtime))
-      projectsRef.current = next
-      setOpenProjects(next)
+    (locationKeyValue: string, update: (state: OpenLocationState) => OpenLocationState) => {
+      const state = locationsRef.current.get(locationKeyValue)
+      if (state === undefined) return
+      const next = new Map(locationsRef.current)
+      next.set(locationKeyValue, update(state))
+      locationsRef.current = next
+      setOpenLocations(next)
     },
     [],
   )
 
   const withProjectSubscription = useCallback(
     <A, E, R>(
-      projectID: Project.ID,
+      locationKeyValue: string,
       cause: unknown,
       operation: (subscriptionID: string) => Effect.Effect<A, E, R>,
     ): Effect.Effect<A, E | DesktopBridgeError, R> => {
-      const id = subscriptionIDs.current.get(projectID)
+      const id = subscriptionIDs.current.get(locationKeyValue)
       return id === undefined
         ? Effect.fail(
             new DesktopBridgeError({
@@ -127,49 +147,87 @@ export function useProjectController() {
     },
     [],
   )
+  const startupLocationKey = useRef<string | null>(null)
 
   const applyProjectUpdate = useCallback(
-    (projectID: Project.ID, update: ProjectUpdate) =>
+    (locationKeyValue: string, update: ProjectUpdate) =>
       Effect.sync(() => {
-        updateProject(projectID, (current) => reduceProjectUpdate(projectID, current, update))
+        const started = performance.now()
+        const initialStartupSnapshot =
+          locationKeyValue === startupLocationKey.current && update._tag === "Snapshot"
+        if (initialStartupSnapshot)
+          markStartup("project-snapshot-received", {
+            sessions: update.snapshot.sessions.length,
+          })
+        const projectUpdate = () =>
+          updateProject(locationKeyValue, (current) =>
+            reduceProjectUpdate(current.projectID, current, update),
+          )
+        if (update._tag === "Session") startTransition(projectUpdate)
+        else projectUpdate()
+        recordStartupMeasure("project-update-projection", started, {
+          locationKey: locationKeyValue,
+          update: update._tag,
+          ...(update._tag === "Snapshot" ? { sessions: update.snapshot.sessions.length } : {}),
+        })
+        if (initialStartupSnapshot) markStartup("project-snapshot-projected")
       }),
     [updateProject],
   )
 
-  const openProject = useCallback(
-    (project: AvailableProject, persist = true) => {
+  const openLocation = useCallback(
+    (
+      project: ProjectCatalogEntry,
+      persist = true,
+      selectedLocation?: Location.Ref,
+      activate = true,
+    ) => {
       const projectID = project.project.id
-      if (projectsRef.current.has(projectID)) {
-        setActiveProjectID(projectID)
-        if (persist) persistProjectSelection(projectsRef.current, projectID)
+      const location = selectedLocation ?? project.locations[0]?.ref
+      if (location === undefined) return
+      const key = locationKey(location)
+      const existing = locationsRef.current.get(key)
+      if (existing !== undefined) {
+        if (activate) setActiveLocationKey(key)
+        if (persist)
+          persistLocationSelection(
+            locationsRef.current,
+            activate ? key : activeLocationKeyRef.current,
+          )
         return
       }
-      const runtime: OpenProjectRuntime = {
+      const state: OpenLocationState = {
+        locationKey: key,
         projectID,
-        location: project.location,
+        location,
         status: "opening",
         snapshot: undefined,
         error: undefined,
         promptRetry: null,
         landingError: null,
       }
-      projectsRef.current = new Map(projectsRef.current).set(projectID, runtime)
-      setOpenProjects(projectsRef.current)
-      setActiveProjectID(projectID)
+      locationsRef.current = new Map(locationsRef.current).set(key, state)
+      setOpenLocations(locationsRef.current)
+      if (activate) setActiveLocationKey(key)
       setLandingError(null)
-      if (persist) persistProjectSelection(projectsRef.current, projectID)
+      if (persist)
+        persistLocationSelection(
+          locationsRef.current,
+          activate ? key : activeLocationKeyRef.current,
+        )
 
       const program = Effect.gen(function* () {
         const desktop = yield* DesktopBridge
-        const subscriptionID = yield* desktop.openProject({ location: project.location })
-        subscriptionIDs.current.set(projectID, subscriptionID)
+        const subscriptionID = yield* desktop.openProject({ location })
+        subscriptionIDs.current.set(key, subscriptionID)
+        if (key === startupLocationKey.current) markStartup("project-subscription-ready")
         yield* desktop.watchProject(subscriptionID, (update) =>
-          AppRuntime.runFork(applyProjectUpdate(projectID, update)),
+          AppRuntime.runFork(applyProjectUpdate(key, update)),
         )
       }).pipe(
         Effect.catch((error) =>
           Effect.sync(() =>
-            updateProject(projectID, (current) => ({
+            updateProject(key, (current) => ({
               ...current,
               status: "error",
               error: error.message,
@@ -177,50 +235,57 @@ export function useProjectController() {
           ),
         ),
       )
-      projectFibers.current.set(projectID, AppRuntime.runFork(program))
+      locationFibers.current.set(key, AppRuntime.runFork(program))
     },
-    [applyProjectUpdate, persistProjectSelection, updateProject],
+    [applyProjectUpdate, persistLocationSelection, updateProject],
   )
 
-  const activateProject = useCallback(
-    (projectID: Project.ID) => {
-      if (!projectsRef.current.has(projectID)) return
-      setActiveProjectID(projectID)
-      persistProjectSelection(projectsRef.current, projectID)
-    },
-    [persistProjectSelection],
+  const ensureLocation = useCallback(
+    (project: ProjectCatalogEntry, location: Location.Ref) =>
+      openLocation(project, true, location, false),
+    [openLocation],
   )
 
-  const closeProject = useCallback(
-    (projectID: Project.ID) => {
-      const fiber = projectFibers.current.get(projectID)
+  const activateLocation = useCallback(
+    (locationKeyValue: string) => {
+      if (!locationsRef.current.has(locationKeyValue)) return
+      setActiveLocationKey(locationKeyValue)
+      persistLocationSelection(locationsRef.current, locationKeyValue)
+    },
+    [persistLocationSelection],
+  )
+
+  const closeLocation = useCallback(
+    (locationKeyValue: string) => {
+      const fiber = locationFibers.current.get(locationKeyValue)
       if (fiber !== undefined) AppRuntime.runFork(Fiber.interrupt(fiber))
-      projectFibers.current.delete(projectID)
-      const subscriptionID = subscriptionIDs.current.get(projectID)
+      locationFibers.current.delete(locationKeyValue)
+      const subscriptionID = subscriptionIDs.current.get(locationKeyValue)
       if (subscriptionID !== undefined)
         AppRuntime.runFork(DesktopBridge.use((desktop) => desktop.closeProject(subscriptionID)))
-      subscriptionIDs.current.delete(projectID)
-      setOpenProjects((current) => {
+      subscriptionIDs.current.delete(locationKeyValue)
+      setOpenLocations((current) => {
         const next = new Map(current)
-        next.delete(projectID)
-        projectsRef.current = next
-        setActiveProjectID((active) => {
-          const nextActive = active === projectID ? (next.keys().next().value ?? null) : active
-          persistProjectSelection(next, nextActive)
+        next.delete(locationKeyValue)
+        locationsRef.current = next
+        setActiveLocationKey((active) => {
+          const nextActive =
+            active === locationKeyValue ? (next.keys().next().value ?? null) : active
+          persistLocationSelection(next, nextActive)
           return nextActive
         })
         return next
       })
     },
-    [persistProjectSelection],
+    [persistLocationSelection],
   )
 
   const submitPrompt = useCallback(
-    (projectID: Project.ID, sessionID: SessionView["id"], text: string) =>
-      withProjectSubscription(projectID, sessionID, (subscriptionID) =>
+    (locationKeyValue: string, sessionID: SessionView["id"], text: string) =>
+      withProjectSubscription(locationKeyValue, sessionID, (subscriptionID) =>
         Effect.gen(function* () {
-          const session = projectsRef.current
-            .get(projectID)
+          const session = locationsRef.current
+            .get(locationKeyValue)
             ?.snapshot?.sessions.find((item) => item.id === sessionID)
           if (session === undefined)
             return yield* new DesktopBridgeError({
@@ -229,7 +294,7 @@ export function useProjectController() {
             })
           const prompt = pendingPrompt(session, text.trim())
           yield* Effect.sync(() =>
-            updateProject(projectID, (current) => ({
+            updateProject(locationKeyValue, (current) => ({
               ...current,
               snapshot:
                 current.snapshot === undefined
@@ -245,11 +310,15 @@ export function useProjectController() {
             })),
           )
           return yield* DesktopBridge.use((desktop) =>
-            desktop.submitPrompt({ subscriptionID, sessionID, text: prompt.text }),
+            desktop.submitPrompt({
+              subscriptionID,
+              sessionID,
+              text: prompt.text,
+            }),
           ).pipe(
             Effect.tapError(() =>
               Effect.sync(() =>
-                updateProject(projectID, (current) => ({
+                updateProject(locationKeyValue, (current) => ({
                   ...current,
                   snapshot:
                     current.snapshot === undefined
@@ -277,12 +346,15 @@ export function useProjectController() {
   )
 
   const selectSession = useCallback(
-    (projectID: Project.ID, sessionID: string) =>
-      withProjectSubscription(projectID, sessionID, (subscriptionID) =>
+    (locationKeyValue: string, sessionID: string) =>
+      withProjectSubscription(locationKeyValue, sessionID, (subscriptionID) =>
         DesktopBridge.use((desktop) => desktop.selectSession({ subscriptionID, sessionID })).pipe(
           Effect.tap(() =>
             Effect.sync(() =>
-              updateProject(projectID, (current) => ({ ...current, promptRetry: null })),
+              updateProject(locationKeyValue, (current) => ({
+                ...current,
+                promptRetry: null,
+              })),
             ),
           ),
         ),
@@ -292,13 +364,13 @@ export function useProjectController() {
 
   const createSession = useCallback(
     (
-      projectID: Project.ID,
+      locationKeyValue: string,
       text: string,
       selectCreated?: (sessionID: SessionView["id"] | undefined) => void,
     ) =>
-      withProjectSubscription(projectID, text, (subscriptionID) =>
+      withProjectSubscription(locationKeyValue, text, (subscriptionID) =>
         Effect.gen(function* () {
-          const currentSnapshot = projectsRef.current.get(projectID)?.snapshot
+          const currentSnapshot = locationsRef.current.get(locationKeyValue)?.snapshot
           if (currentSnapshot === undefined)
             return yield* new DesktopBridgeError({
               message: "HydraCode is not ready to create a session.",
@@ -309,6 +381,7 @@ export function useProjectController() {
           const authoritativeGraph = buildSessionGraph([])
           const provisionalBase: SessionView = {
             id: provisionalID,
+            location: currentSnapshot.location,
             created: Date.now(),
             title: "New session",
             active: false,
@@ -322,7 +395,7 @@ export function useProjectController() {
           }
           const prompt = pendingPrompt(provisionalBase, promptText)
           yield* Effect.sync(() => {
-            updateProject(projectID, (current) => ({
+            updateProject(locationKeyValue, (current) => ({
               ...current,
               landingError: null,
               promptRetry: null,
@@ -345,7 +418,7 @@ export function useProjectController() {
             Effect.tapError((error) =>
               Effect.sync(() => {
                 selectCreated?.(undefined)
-                updateProject(projectID, (current) => ({
+                updateProject(locationKeyValue, (current) => ({
                   ...current,
                   landingError: error.message,
                   snapshot:
@@ -361,10 +434,10 @@ export function useProjectController() {
               }),
             ),
           )
-          const session = createSessionView(result.session, [prompt])
+          const session = createSessionView(result.session, undefined, [prompt])
           yield* Effect.sync(() => {
             selectCreated?.(session.id)
-            updateProject(projectID, (current) => ({
+            updateProject(locationKeyValue, (current) => ({
               ...current,
               snapshot:
                 current.snapshot === undefined
@@ -390,12 +463,16 @@ export function useProjectController() {
             }))
           })
           return yield* DesktopBridge.use((desktop) =>
-            desktop.submitPrompt({ subscriptionID, sessionID: session.id, text: promptText }),
+            desktop.submitPrompt({
+              subscriptionID,
+              sessionID: session.id,
+              text: promptText,
+            }),
           ).pipe(
             Effect.matchEffect({
               onFailure: (error) =>
                 Effect.sync(() =>
-                  updateProject(projectID, (current) => ({
+                  updateProject(locationKeyValue, (current) => ({
                     ...current,
                     promptRetry: {
                       sessionID: session.id,
@@ -421,48 +498,54 @@ export function useProjectController() {
     [updateProject, withProjectSubscription],
   )
 
-  const openHome = useCallback(
+  const openGlobalProject = useCallback(
     (text: string) => {
       const projectID = Project.ID.global
-      const existing = projectsRef.current.get(projectID)
+      const location = Location.Ref.make({ directory: AbsolutePath.make("/") })
+      const key = locationKey(location)
+      const existing = locationsRef.current.get(key)
       if (existing !== undefined) {
-        setActiveProjectID(projectID)
-        return createSession(projectID, text)
+        setActiveLocationKey(key)
+        return createSession(key, text)
       }
-      const runtime: OpenProjectRuntime = {
+      const state: OpenLocationState = {
+        locationKey: key,
         projectID,
-        location: Location.Ref.make({ directory: AbsolutePath.make("/") }),
+        location,
         status: "opening",
         snapshot: undefined,
         error: undefined,
         promptRetry: null,
         landingError: null,
       }
-      projectsRef.current = new Map(projectsRef.current).set(projectID, runtime)
-      setOpenProjects(projectsRef.current)
-      setActiveProjectID(projectID)
+      locationsRef.current = new Map(locationsRef.current).set(key, state)
+      setOpenLocations(locationsRef.current)
+      setActiveLocationKey(key)
       setLandingError(null)
 
       const program = Effect.gen(function* () {
         const desktop = yield* DesktopBridge
         const subscriptionID = yield* desktop.openProject({})
-        subscriptionIDs.current.set(projectID, subscriptionID)
+        subscriptionIDs.current.set(key, subscriptionID)
         let started = false
         yield* desktop.watchProject(subscriptionID, (update) => {
-          AppRuntime.runFork(applyProjectUpdate(projectID, update))
+          AppRuntime.runFork(applyProjectUpdate(key, update))
           if (update._tag !== "Snapshot" || started) return
           started = true
           AppRuntime.runFork(
-            createSession(projectID, text, (sessionID) => {
+            createSession(key, text, (sessionID) => {
               if (sessionID === undefined) return
-              updateProject(projectID, (current) => ({ ...current, requestedSessionID: sessionID }))
+              updateProject(key, (current) => ({
+                ...current,
+                requestedSessionID: sessionID,
+              }))
             }).pipe(Effect.catch((error) => Effect.sync(() => setLandingError(error.message)))),
           )
         })
       }).pipe(
         Effect.catch((error) =>
           Effect.sync(() => {
-            updateProject(projectID, (current) => ({
+            updateProject(key, (current) => ({
               ...current,
               status: "error",
               error: error.message,
@@ -470,23 +553,35 @@ export function useProjectController() {
           }),
         ),
       )
-      projectFibers.current.set(projectID, AppRuntime.runFork(program))
+      locationFibers.current.set(key, AppRuntime.runFork(program))
       return Effect.void
     },
     [applyProjectUpdate, createSession, updateProject],
   )
 
   const interruptSession = useCallback(
-    (projectID: Project.ID, sessionID: SessionView["id"]) =>
-      withProjectSubscription(projectID, sessionID, (subscriptionID) =>
+    (locationKeyValue: string, sessionID: SessionView["id"]) =>
+      withProjectSubscription(locationKeyValue, sessionID, (subscriptionID) =>
         DesktopBridge.use((desktop) => desktop.interrupt({ subscriptionID, sessionID })),
       ),
     [withProjectSubscription],
   )
 
+  const backgroundSession = useCallback(
+    (locationKeyValue: string, sessionID: SessionView["id"]) =>
+      withProjectSubscription(locationKeyValue, sessionID, (subscriptionID) =>
+        DesktopBridge.use((desktop) => desktop.backgroundSession({ subscriptionID, sessionID })),
+      ),
+    [withProjectSubscription],
+  )
+
   const replyQuestion = useCallback(
-    (projectID: Project.ID, request: Question.Request, answers: ReadonlyArray<Question.Answer>) =>
-      withProjectSubscription(projectID, request.id, (subscriptionID) =>
+    (
+      locationKeyValue: string,
+      request: Question.Request,
+      answers: ReadonlyArray<Question.Answer>,
+    ) =>
+      withProjectSubscription(locationKeyValue, request.id, (subscriptionID) =>
         DesktopBridge.use((desktop) =>
           desktop.replyQuestion({
             subscriptionID,
@@ -500,8 +595,8 @@ export function useProjectController() {
   )
 
   const rejectQuestion = useCallback(
-    (projectID: Project.ID, request: Question.Request) =>
-      withProjectSubscription(projectID, request.id, (subscriptionID) =>
+    (locationKeyValue: string, request: Question.Request) =>
+      withProjectSubscription(locationKeyValue, request.id, (subscriptionID) =>
         DesktopBridge.use((desktop) =>
           desktop.rejectQuestion({
             subscriptionID,
@@ -525,13 +620,17 @@ export function useProjectController() {
         Effect.tap(([projects, state]) =>
           Effect.sync(() => {
             setAvailableProjects({ _tag: "Ready", projects })
+            markStartup("project-catalog-ready", { projects: projects.length })
             const restored = restoreApplicationState(state, projects)
+            setRestoredProjectUIStates(restored.projectUIStates)
+            startupLocationKey.current = restored.activeLocationKey ?? null
             for (const project of restored.projects) {
-              if (project.project.id === restored.activeProjectID) markStartup("project-open-start")
-              openProject(project, false)
+              if (locationKey(project.location) === restored.activeLocationKey)
+                markStartup("project-open-start")
+              openLocation(project, false, project.location)
             }
-            setActiveProjectID(restored.activeProjectID)
-            persistProjectSelection(projectsRef.current, restored.activeProjectID)
+            setActiveLocationKey(restored.activeLocationKey ?? null)
+            persistLocationSelection(locationsRef.current, restored.activeLocationKey ?? null)
             markStartup("project-selection-ready")
           }),
         ),
@@ -540,7 +639,7 @@ export function useProjectController() {
         ),
       ),
     )
-  }, [openProject, persistProjectSelection])
+  }, [openLocation, persistLocationSelection])
 
   const newProject = useCallback(() => {
     if (selectionFiber.current !== null) AppRuntime.runFork(Fiber.interrupt(selectionFiber.current))
@@ -551,20 +650,25 @@ export function useProjectController() {
             onNone: () => Effect.void,
             onSome: (project) =>
               Effect.sync(() => {
-                setAvailableProjects((state) =>
-                  state._tag === "Ready" &&
-                  !state.projects.some((item) => item.project.id === project.project.id)
-                    ? { _tag: "Ready", projects: [project, ...state.projects] }
-                    : state,
+                setAvailableProjects((state) => {
+                  if (state._tag !== "Ready") return state
+                  return {
+                    _tag: "Ready",
+                    projects: mergeProjectCatalogEntry(state.projects, project),
+                  }
+                })
+                openLocation(
+                  project,
+                  true,
+                  project.locations.find((location) => location.kind === "selected")?.ref,
                 )
-                openProject(project)
               }),
           }),
         ),
         Effect.catch((error) => Effect.sync(() => setLandingError(error.message))),
       ),
     )
-  }, [openProject])
+  }, [openLocation])
 
   useEffect(() => loadProjects(), [loadProjects])
 
@@ -574,7 +678,7 @@ export function useProjectController() {
         AppRuntime.runFork(DesktopBridge.use((desktop) => desktop.closeProject(subscriptionID)))
       AppRuntime.runFork(
         Fiber.interruptAll([
-          ...projectFibers.current.values(),
+          ...locationFibers.current.values(),
           ...[selectionFiber.current, availableProjectsFiber.current].filter(
             (fiber): fiber is Fiber.Fiber<unknown, unknown> => fiber !== null,
           ),
@@ -585,21 +689,24 @@ export function useProjectController() {
   )
 
   return {
-    activeProjectID,
-    openProjects,
+    activeLocationKey,
+    openLocations,
     availableProjects,
+    restoredProjectUIStates,
     landingError,
     loadProjects,
     newProject,
-    openProject,
-    openHome,
-    activateProject,
-    closeProject,
+    openLocation,
+    ensureLocation,
+    openGlobalProject,
+    activateLocation,
+    closeLocation,
     selectSession,
     createSession,
     submitPrompt,
     replyQuestion,
     rejectQuestion,
+    backgroundSession,
     interruptSession,
   } as const
 }

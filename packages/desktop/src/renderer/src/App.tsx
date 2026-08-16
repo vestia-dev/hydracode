@@ -1,18 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Effect, Fiber } from "effect"
-import { Project } from "@opencode-ai/client/effect"
-import { HomePage } from "./components/HomePage"
+import { AbsolutePath, Location, Project } from "@opencode-ai/client/effect"
+import { GlobalProjectPage } from "./components/GlobalProjectPage"
 import { SettingsModal } from "./components/SettingsModal"
 import { CommandMenu, type CommandMenuCommand } from "./components/CommandMenu"
 import { LaunchScreen } from "./components/LaunchScreen"
 import { ProjectContainer, type ProjectContainerHandle } from "./components/ProjectContainer"
 import { useUpdater } from "./hooks/useUpdater"
 import { useProjectController } from "./hooks/useProjectController"
+import type { OpenLocationState } from "./hooks/useProjectController"
 import { projectDisplayName, projectInitial } from "./domain/projectPresentation"
 import { AppRuntime } from "./runtime"
 import { DesktopBridge } from "./services/DesktopBridge"
 import { markStartup, markStartupAfterPaint, measureStartup } from "./startupTiming"
 import type { ProjectUIState } from "../../shared/applicationState"
+import type { ProjectCatalogEntry } from "../../shared/project"
+import { locationKey } from "../../shared/domain/projectCatalog"
 
 function updateLabel(state: ReturnType<typeof useUpdater>["state"]) {
   switch (state.status) {
@@ -34,37 +37,87 @@ export function App() {
   const projectSwitcherRef = useRef<HTMLDivElement>(null)
   const settingsReturnFocusRef = useRef<HTMLElement>(null)
   const commandMenuReturnFocusRef = useRef<HTMLElement>(null)
-  const projectHandles = useRef(new Map<Project.ID, ProjectContainerHandle>())
+  const projectHandles = useRef(new Map<string, ProjectContainerHandle>())
   const projectUIStateCache = useRef(new Map<string, ProjectUIState>())
   const [launchDelayElapsed, setLaunchDelayElapsed] = useState(false)
   const [initialLaunchComplete, setInitialLaunchComplete] = useState(false)
-  const [restoredProjectIDs, setRestoredProjectIDs] = useState<ReadonlySet<Project.ID>>(
+  const [restoredLocationKeys, setRestoredLocationKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
   )
   const [applicationStateReady, setApplicationStateReady] = useState(false)
+  const [projectLocationRecency, setProjectLocationRecency] = useState<
+    ReadonlyMap<Project.ID, string>
+  >(() => new Map())
   const {
-    activeProjectID,
-    openProjects,
+    activeLocationKey,
+    openLocations,
     availableProjects,
+    restoredProjectUIStates,
     landingError,
     newProject,
-    openProject,
-    openHome,
-    activateProject,
+    openLocation,
+    ensureLocation,
+    openGlobalProject,
+    activateLocation,
     selectSession,
     createSession,
     submitPrompt,
     replyQuestion,
     rejectQuestion,
+    backgroundSession,
     interruptSession,
   } = useProjectController()
-  const activeRuntime = activeProjectID === null ? undefined : openProjects.get(activeProjectID)
-  const orderedOpenProjects = Array.from(openProjects.values()).filter(
-    (runtime) => runtime.projectID !== Project.ID.global,
+  useEffect(() => {
+    if (restoredProjectUIStates.length === 0) return
+    for (const projectState of restoredProjectUIStates)
+      projectUIStateCache.current.set(projectState.locationKey, projectState)
+  }, [restoredProjectUIStates])
+  const activeLocationState =
+    activeLocationKey === null ? undefined : openLocations.get(activeLocationKey)
+  const openProjectOrder = new Map<Project.ID, number>()
+  for (const state of openLocations.values()) {
+    if (!openProjectOrder.has(state.projectID))
+      openProjectOrder.set(state.projectID, openProjectOrder.size)
+  }
+  const orderedOpenProjects = Array.from(openLocations.values())
+    .filter((state) => state.projectID !== Project.ID.global)
+    .filter(
+      (state, index, states) =>
+        states.findIndex((candidate) => candidate.projectID === state.projectID) === index,
+    )
+    .toSorted(
+      (left, right) =>
+        (openProjectOrder.get(left.projectID) ?? 0) - (openProjectOrder.get(right.projectID) ?? 0),
+    )
+  const globalLocationState = Array.from(openLocations.values()).find(
+    (state) => state.projectID === Project.ID.global,
   )
+  const globalProject = (availableProjects._tag === "Ready"
+    ? availableProjects.projects.find((project) => project.project.id === Project.ID.global)
+    : undefined) ?? {
+    project: { id: Project.ID.global, canonical: AbsolutePath.make("/") },
+    locations: [
+      {
+        ref: Location.Ref.make({ directory: AbsolutePath.make("/") }),
+        kind: "canonical",
+      },
+    ],
+    updated: 0,
+  }
   const shortcutModifier = document.documentElement.dataset.platform === "macos" ? "⌘" : "Ctrl+"
   const activeHandle = () =>
-    activeProjectID === null ? undefined : projectHandles.current.get(activeProjectID)
+    activeLocationState === undefined
+      ? undefined
+      : projectHandles.current.get(activeLocationState.projectID)
+
+  useEffect(() => {
+    if (activeLocationState === undefined) return
+    setProjectLocationRecency((current) => {
+      if (current.get(activeLocationState.projectID) === activeLocationState.locationKey)
+        return current
+      return new Map(current).set(activeLocationState.projectID, activeLocationState.locationKey)
+    })
+  }, [activeLocationState])
 
   useEffect(() => {
     markStartup("react-mounted")
@@ -85,7 +138,9 @@ export function App() {
         Effect.tap((state) =>
           Effect.sync(() => {
             projectUIStateCache.current = new Map(
-              state.projects.map((projectState) => [projectState.projectID, projectState]),
+              state.version === 2
+                ? state.projects.map((projectState) => [projectState.locationKey, projectState])
+                : [],
             )
             setApplicationStateReady(true)
             markStartup("application-state-ready")
@@ -103,12 +158,18 @@ export function App() {
 
   useEffect(() => {
     if (!initialLaunchComplete) return undefined
-    return markStartupAfterPaint("first-project-paint", true)
+    markStartup("launch-completion-committed")
+    measureStartup(
+      "launch-completion-commit",
+      "launch-completion-requested",
+      "launch-completion-committed",
+    )
+    return markStartupAfterPaint("first-project-paint", true, "launch-completion-committed")
   }, [initialLaunchComplete])
 
   useEffect(() => {
-    if (activeRuntime?.status === "ready") markStartup("project-snapshot-ready")
-  }, [activeRuntime?.status])
+    if (activeLocationState?.status === "ready") markStartup("project-snapshot-ready")
+  }, [activeLocationState?.status])
 
   useEffect(() => {
     if (
@@ -116,31 +177,42 @@ export function App() {
       !launchDelayElapsed ||
       !applicationStateReady ||
       availableProjects._tag === "Loading" ||
-      (activeProjectID !== null &&
-        activeRuntime?.status !== "error" &&
-        !restoredProjectIDs.has(activeProjectID))
+      (activeLocationKey !== null &&
+        activeLocationState?.status !== "error" &&
+        !restoredLocationKeys.has(activeLocationKey))
     )
       return
+    markStartup("launch-completion-requested")
     setInitialLaunchComplete(true)
   }, [
-    activeProjectID,
-    activeRuntime,
+    activeLocationKey,
+    activeLocationState,
     applicationStateReady,
     availableProjects._tag,
     initialLaunchComplete,
     launchDelayElapsed,
-    restoredProjectIDs,
+    restoredLocationKeys,
   ])
 
   const selectProject = useCallback(
-    (project: Parameters<typeof openProject>[0]) => {
+    (
+      project: Parameters<typeof openLocation>[0],
+      _persist = true,
+      selectedLocation?: Location.Ref,
+    ) => {
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
       setShowSettings(false)
       setShowProjectSwitcher(false)
-      if (openProjects.has(project.project.id)) activateProject(project.project.id)
-      else openProject(project)
+      const rememberedKey = projectLocationRecency.get(project.project.id)
+      const location =
+        selectedLocation ??
+        project.locations.find((candidate) => locationKey(candidate.ref) === rememberedKey)?.ref ??
+        project.locations.find((candidate) => candidate.kind === "canonical")?.ref
+      if (location !== undefined && openLocations.has(locationKey(location)))
+        activateLocation(locationKey(location))
+      else openLocation(project, _persist, location)
     },
-    [activateProject, openProject, openProjects],
+    [activateLocation, openLocation, openLocations, projectLocationRecency],
   )
 
   useEffect(() => {
@@ -183,7 +255,7 @@ export function App() {
   }, [showCommandMenu])
 
   useEffect(() => {
-    const openProjectSwitcher = (event: KeyboardEvent) => {
+    const openLocationSwitcher = (event: KeyboardEvent) => {
       const primaryModifier =
         document.documentElement.dataset.platform === "macos" ? event.metaKey : event.ctrlKey
       if (
@@ -198,8 +270,8 @@ export function App() {
       setShowSettings(false)
       setShowProjectSwitcher(true)
     }
-    window.addEventListener("keydown", openProjectSwitcher)
-    return () => window.removeEventListener("keydown", openProjectSwitcher)
+    window.addEventListener("keydown", openLocationSwitcher)
+    return () => window.removeEventListener("keydown", openLocationSwitcher)
   }, [])
 
   useEffect(() => {
@@ -218,34 +290,34 @@ export function App() {
 
   useEffect(() => {
     if (!showProjectSwitcher) return undefined
-    const closeProjectSwitcher = (event: MouseEvent | KeyboardEvent) => {
+    const closeLocationSwitcher = (event: MouseEvent | KeyboardEvent) => {
       if (event instanceof KeyboardEvent) {
         if (event.key !== "Escape") return
       } else if (event.target instanceof Node && projectSwitcherRef.current?.contains(event.target))
         return
       setShowProjectSwitcher(false)
     }
-    window.addEventListener("mousedown", closeProjectSwitcher)
-    window.addEventListener("keydown", closeProjectSwitcher)
+    window.addEventListener("mousedown", closeLocationSwitcher)
+    window.addEventListener("keydown", closeLocationSwitcher)
     return () => {
-      window.removeEventListener("mousedown", closeProjectSwitcher)
-      window.removeEventListener("keydown", closeProjectSwitcher)
+      window.removeEventListener("mousedown", closeLocationSwitcher)
+      window.removeEventListener("keydown", closeLocationSwitcher)
     }
   }, [showProjectSwitcher])
 
   useEffect(() => {
-    const openProjectByPosition = (event: KeyboardEvent) => {
+    const openLocationByPosition = (event: KeyboardEvent) => {
       const primaryModifier =
         document.documentElement.dataset.platform === "macos" ? event.metaKey : event.ctrlKey
       if (!primaryModifier || event.altKey || event.shiftKey || !/^[1-9]$/u.test(event.key)) return
       const project = orderedOpenProjects[Number(event.key) - 1]
       if (project === undefined) return
       event.preventDefault()
-      activateProject(project.projectID)
+      activateLocation(projectLocationRecency.get(project.projectID) ?? project.locationKey)
     }
-    window.addEventListener("keydown", openProjectByPosition)
-    return () => window.removeEventListener("keydown", openProjectByPosition)
-  }, [activateProject, orderedOpenProjects])
+    window.addEventListener("keydown", openLocationByPosition)
+    return () => window.removeEventListener("keydown", openLocationByPosition)
+  }, [activateLocation, orderedOpenProjects, projectLocationRecency])
 
   useEffect(() => {
     let remove: ReadonlyArray<() => void> | undefined
@@ -268,27 +340,55 @@ export function App() {
       disposed = true
       for (const unsubscribe of remove ?? []) unsubscribe()
     }
-  }, [activeProjectID])
+  }, [activeLocationKey])
 
   const updater = useUpdater()
   const projectName =
-    activeProjectID === Project.ID.global
-      ? "Home"
-      : activeRuntime?.snapshot === undefined
-        ? activeRuntime === undefined
+    activeLocationState?.projectID === Project.ID.global
+      ? "Global"
+      : activeLocationState?.snapshot === undefined
+        ? activeLocationState === undefined
           ? null
-          : projectDisplayName(undefined, activeRuntime.location.directory)
+          : projectDisplayName(
+              undefined,
+              availableProjects._tag === "Ready"
+                ? (availableProjects.projects.find(
+                    (project) => project.project.id === activeLocationState.projectID,
+                  )?.project.canonical ?? activeLocationState.location.directory)
+                : activeLocationState.location.directory,
+            )
         : projectDisplayName(
-            activeRuntime.snapshot.project.name,
-            activeRuntime.snapshot.location.directory,
+            activeLocationState.snapshot.project.name,
+            activeLocationState.snapshot.project.canonical,
           )
   const projectIcon =
-    activeRuntime?.snapshot?.project.icon?.override ?? activeRuntime?.snapshot?.project.icon?.url
-  const projectColor = activeRuntime?.snapshot?.project.icon?.color
+    activeLocationState?.snapshot?.project.icon?.override ??
+    activeLocationState?.snapshot?.project.icon?.url
+  const projectColor = activeLocationState?.snapshot?.project.icon?.color
+  const globalProjectActive = activeLocationState?.projectID === Project.ID.global
   const projectSwitcherLabel = projectName ?? "Projects"
-  const projectReady = activeRuntime?.status === "ready"
+  const projectReady = activeLocationState?.status === "ready"
+  const catalogForLocation = (state: OpenLocationState | undefined): ProjectCatalogEntry => {
+    if (state === undefined) {
+      return globalProject
+    }
+    const catalog =
+      availableProjects._tag === "Ready"
+        ? availableProjects.projects.find((project) => project.project.id === state.projectID)
+        : undefined
+    return (
+      catalog ?? {
+        project: state.snapshot?.project ?? {
+          id: state.projectID,
+          canonical: state.location.directory,
+        },
+        locations: [{ ref: state.location, kind: "selected" }],
+        updated: 0,
+      }
+    )
+  }
   const creatingSession =
-    activeRuntime?.snapshot?.sessions.some((session) => session.provisional) ?? false
+    activeLocationState?.snapshot?.sessions.some((session) => session.provisional) ?? false
   const showProject = (action: () => void) => () => {
     setShowSettings(false)
     action()
@@ -356,8 +456,15 @@ export function App() {
           <button
             type="button"
             className="project-identity"
-            disabled={orderedOpenProjects.length === 0}
-            title={activeRuntime?.location.directory ?? "Open projects"}
+            title={
+              activeLocationState?.snapshot?.project.canonical ??
+              (availableProjects._tag === "Ready"
+                ? availableProjects.projects.find(
+                    (project) => project.project.id === activeLocationState?.projectID,
+                  )?.project.canonical
+                : undefined) ??
+              "Open projects"
+            }
             aria-haspopup="menu"
             aria-expanded={showProjectSwitcher}
             onClick={() => setShowProjectSwitcher((current) => !current)}
@@ -367,7 +474,12 @@ export function App() {
               style={{ backgroundColor: projectColor }}
               aria-hidden="true"
             >
-              {projectIcon === undefined ? (
+              {globalProjectActive ? (
+                <svg className="project-icon__globe" viewBox="0 0 16 16">
+                  <circle cx="8" cy="8" r="5.5" />
+                  <path d="M2.5 8h11M8 2.5c1.7 1.5 2.5 3.3 2.5 5.5S9.7 12 8 13.5C6.3 12 5.5 10.2 5.5 8S6.3 4 8 2.5Z" />
+                </svg>
+              ) : projectIcon === undefined ? (
                 <span>{projectInitial(projectSwitcherLabel)}</span>
               ) : (
                 <img src={projectIcon} alt="" />
@@ -401,24 +513,28 @@ export function App() {
                 buttons[next]?.focus()
               }}
             >
-              {orderedOpenProjects.length === 0 ? (
-                <span className="project-switcher__status">No open projects</span>
-              ) : (
-                orderedOpenProjects.map((runtime, shortcutIndex) => {
-                  const project = runtime.snapshot?.project
-                  const location = runtime.snapshot?.location ?? runtime.location
-                  const name = projectDisplayName(project?.name, location.directory)
+              <>
+                {orderedOpenProjects.map((state, shortcutIndex) => {
+                  const project = state.snapshot?.project
+                  const catalog = catalogForLocation(state)
+                  const rememberedLocationKey = projectLocationRecency.get(state.projectID)
+                  const locationState = openLocations.get(rememberedLocationKey ?? "") ?? state
+                  const name = projectDisplayName(
+                    project?.name,
+                    catalog.project.canonical,
+                    state.projectID,
+                  )
                   const icon = project?.icon?.override ?? project?.icon?.url
-                  const current = runtime.projectID === activeProjectID
+                  const current = state.projectID === activeLocationState?.projectID
                   return (
                     <button
                       type="button"
                       role="menuitem"
-                      key={runtime.projectID}
+                      key={`switcher-${state.projectID}`}
                       aria-current={current ? "true" : undefined}
                       onClick={() => {
                         setShowProjectSwitcher(false)
-                        activateProject(runtime.projectID)
+                        activateLocation(locationState.locationKey)
                       }}
                     >
                       <span
@@ -434,17 +550,41 @@ export function App() {
                       </span>
                       <span className="project-switcher__copy">
                         <strong>{name}</strong>
-                        <small>{location.directory}</small>
+                        <small>Open project</small>
                       </span>
                       <span className="project-switcher__meta">
-                        {shortcutIndex !== undefined && shortcutIndex < 9 ? (
+                        {shortcutIndex < 9 ? (
                           <kbd>{`${shortcutModifier}${shortcutIndex + 1}`}</kbd>
                         ) : null}
                       </span>
                     </button>
                   )
-                })
-              )}
+                })}
+                <button
+                  type="button"
+                  role="menuitem"
+                  aria-current={
+                    globalLocationState?.locationKey === activeLocationKey ? "true" : undefined
+                  }
+                  onClick={() => {
+                    setShowProjectSwitcher(false)
+                    if (globalLocationState !== undefined)
+                      activateLocation(globalLocationState.locationKey)
+                    else openLocation(globalProject)
+                  }}
+                >
+                  <span className="project-icon project-switcher__icon" aria-hidden="true">
+                    <svg className="project-icon__globe" viewBox="0 0 16 16">
+                      <circle cx="8" cy="8" r="5.5" />
+                      <path d="M2.5 8h11M8 2.5c1.7 1.5 2.5 3.3 2.5 5.5S9.7 12 8 13.5C6.3 12 5.5 10.2 5.5 8S6.3 4 8 2.5Z" />
+                    </svg>
+                  </span>
+                  <span className="project-switcher__copy">
+                    <strong>Global</strong>
+                    <small>Global project</small>
+                  </span>
+                </button>
+              </>
             </div>
           ) : null}
         </div>
@@ -476,41 +616,64 @@ export function App() {
         ) : null}
         <div className="project-stack" inert={showSettings}>
           {applicationStateReady
-            ? Array.from(openProjects.values()).map((runtime) => (
-                <ProjectContainer
-                  key={runtime.projectID}
-                  ref={(handle) => {
-                    if (handle === null) projectHandles.current.delete(runtime.projectID)
-                    else projectHandles.current.set(runtime.projectID, handle)
-                  }}
-                  runtime={runtime}
-                  active={runtime.projectID === activeProjectID}
-                  initialUIState={projectUIStateCache.current.get(runtime.projectID)}
-                  initialRestorationComplete={() =>
-                    setRestoredProjectIDs((current) => {
-                      if (current.has(runtime.projectID)) return current
-                      if (runtime.projectID === activeProjectID) {
-                        markStartup("session-restoration-ready")
-                        measureStartup(
-                          "session-restoration",
-                          "session-restoration-start",
-                          "session-restoration-ready",
-                        )
-                      }
-                      return new Set(current).add(runtime.projectID)
-                    })
-                  }
-                  uiStateCache={projectUIStateCache}
-                  selectSession={selectSession}
-                  createSession={createSession}
-                  submitPrompt={submitPrompt}
-                  replyQuestion={replyQuestion}
-                  rejectQuestion={rejectQuestion}
-                  interruptSession={interruptSession}
-                />
-              ))
+            ? [
+                ...orderedOpenProjects,
+                ...(globalLocationState === undefined ? [] : [globalLocationState]),
+              ].map((projectState) => {
+                const rememberedLocationKey = projectLocationRecency.get(projectState.projectID)
+                const defaultLocationState =
+                  openLocations.get(rememberedLocationKey ?? "") ?? projectState
+                const projectLocations = new Map(
+                  Array.from(openLocations.entries()).filter(
+                    ([, state]) => state.projectID === projectState.projectID,
+                  ),
+                )
+                const project = catalogForLocation(defaultLocationState)
+                return (
+                  <ProjectContainer
+                    key={projectState.projectID}
+                    ref={(handle) => {
+                      if (handle === null) projectHandles.current.delete(projectState.projectID)
+                      else projectHandles.current.set(projectState.projectID, handle)
+                    }}
+                    defaultLocationState={defaultLocationState}
+                    locationStates={projectLocations}
+                    project={project}
+                    selectLocation={(location) => ensureLocation(project, location)}
+                    active={projectState.projectID === activeLocationState?.projectID}
+                    initialUIState={
+                      projectUIStateCache.current.get(defaultLocationState.locationKey) ??
+                      restoredProjectUIStates.find(
+                        (state) => state.projectID === projectState.projectID,
+                      )
+                    }
+                    initialRestorationComplete={() =>
+                      setRestoredLocationKeys((current) => {
+                        if (current.has(defaultLocationState.locationKey)) return current
+                        if (projectState.projectID === activeLocationState?.projectID) {
+                          markStartup("session-restoration-ready")
+                          measureStartup(
+                            "session-restoration",
+                            "session-restoration-start",
+                            "session-restoration-ready",
+                          )
+                        }
+                        return new Set(current).add(defaultLocationState.locationKey)
+                      })
+                    }
+                    uiStateCache={projectUIStateCache}
+                    selectSession={selectSession}
+                    createSession={createSession}
+                    submitPrompt={submitPrompt}
+                    replyQuestion={replyQuestion}
+                    rejectQuestion={rejectQuestion}
+                    backgroundSession={backgroundSession}
+                    interruptSession={interruptSession}
+                  />
+                )
+              })
             : null}
-          {activeRuntime?.status === "opening" || !applicationStateReady ? (
+          {activeLocationState?.status === "opening" || !applicationStateReady ? (
             <section
               className="session-pane project-layer project-loading"
               aria-label="Project status"
@@ -523,8 +686,11 @@ export function App() {
                 <p>Loading sessions and their agent history...</p>
               </div>
             </section>
-          ) : activeRuntime?.status === "error" || activeRuntime === undefined ? (
-            <HomePage error={activeRuntime?.error ?? landingError} createSession={openHome} />
+          ) : activeLocationState?.status === "error" || activeLocationState === undefined ? (
+            <GlobalProjectPage
+              error={activeLocationState?.error ?? landingError}
+              createSession={openGlobalProject}
+            />
           ) : null}
         </div>
       </div>

@@ -58,6 +58,7 @@ const desktopApi: HydraCodeDesktopApi = {
   submitPrompt: (command) => ipcRenderer.invoke(DesktopChannels.submitPrompt, command),
   replyQuestion: (command) => ipcRenderer.invoke(DesktopChannels.replyQuestion, command),
   rejectQuestion: (command) => ipcRenderer.invoke(DesktopChannels.rejectQuestion, command),
+  backgroundSession: (command) => ipcRenderer.invoke(DesktopChannels.backgroundSession, command),
   interrupt: (command) => ipcRenderer.invoke(DesktopChannels.interrupt, command),
   getOpenCodeDiagnostics: () => ipcRenderer.invoke(DesktopChannels.openCodeDiagnostics),
   installOpenCode: () => ipcRenderer.invoke(DesktopChannels.installOpenCode),

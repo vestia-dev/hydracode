@@ -95,6 +95,38 @@ function toolMetadata(
   return content.state.status === "streaming" ? undefined : content.state.metadata
 }
 
+interface ShellCompletion {
+  readonly status: GraphNodeStatus
+  readonly completed: number
+  readonly result: string
+}
+
+const BACKGROUND_REQUEST_PREFIX =
+  "User requested that active blocking work be moved to the background."
+
+function shellCompletionResult(text: string) {
+  const start = text.indexOf("\n")
+  const end = text.lastIndexOf("\n</shell>")
+  if (start === -1 || end <= start) return compactText(text)
+  return compactText(text.slice(start + 1, end).trimEnd())
+}
+
+function shellCompletions(messages: ReadonlyArray<SessionMessage.Info>) {
+  const completions = new Map<string, ShellCompletion>()
+  for (const message of messages) {
+    if (message.type !== "synthetic" || message.metadata?.["source"] !== "shell") continue
+    const jobID = message.metadata["jobID"]
+    const state = message.metadata["state"]
+    if (typeof jobID !== "string") continue
+    completions.set(jobID, {
+      status: state === "completed" ? "completed" : "error",
+      completed: timeValue(message.time.created),
+      result: shellCompletionResult(message.text),
+    })
+  }
+  return completions
+}
+
 function toolResult(content: SessionMessage.AssistantTool) {
   if (content.state.status === "streaming" || content.state.status === "running") return undefined
   if (content.state.status === "error") return compactText(content.state.error.message)
@@ -121,18 +153,44 @@ function toolArtifacts(content: SessionMessage.AssistantTool): ReadonlyArray<Gra
   )
 }
 
-function toolStatus(content: SessionMessage.AssistantTool): GraphNodeStatus {
+function toolStatus(
+  content: SessionMessage.AssistantTool,
+  shellCompletion: ShellCompletion | undefined,
+): GraphNodeStatus {
   if (content.state.status === "streaming" || content.state.status === "running") return "running"
+  const normalizedName = content.name.toLowerCase().replaceAll(/[-_]/g, "")
+  if (
+    (normalizedName === "shell" || normalizedName === "bash") &&
+    toolMetadata(content)?.["status"] === "running"
+  )
+    return shellCompletion?.status ?? "running"
   return content.state.status === "error" ? "error" : "completed"
 }
 
-function toolTime(content: SessionMessage.AssistantTool): GraphTime {
+function toolExecutionMode(content: SessionMessage.AssistantTool): GraphToolCall["executionMode"] {
+  const normalizedName = content.name.toLowerCase().replaceAll(/[-_]/g, "")
+  if (
+    normalizedName !== "shell" &&
+    normalizedName !== "bash" &&
+    normalizedName !== "subagent" &&
+    normalizedName !== "task"
+  )
+    return undefined
+  return toolMetadata(content)?.["status"] === "running" ? "background" : "foreground"
+}
+
+function toolTime(
+  content: SessionMessage.AssistantTool,
+  shellCompletion: ShellCompletion | undefined,
+): GraphTime {
   return {
     created: timeValue(content.time.created),
     ...(content.time.ran === undefined ? {} : { started: timeValue(content.time.ran) }),
-    ...(content.time.completed === undefined
-      ? {}
-      : { completed: timeValue(content.time.completed) }),
+    ...(shellCompletion !== undefined
+      ? { completed: shellCompletion.completed }
+      : content.time.completed === undefined
+        ? {}
+        : { completed: timeValue(content.time.completed) }),
   }
 }
 
@@ -172,12 +230,15 @@ function toolCall(
   message: SessionMessage.Assistant,
   content: SessionMessage.AssistantTool,
   contentIndex: number,
+  completions: ReadonlyMap<string, ShellCompletion>,
 ): GraphToolCall {
-  const result = toolResult(content)
   const input = toolInputValue(content)
   const metadata = toolMetadata(content)
   const diff = createToolDiff(content.name, metadata)
   const sessionID = metadata?.["sessionId"] ?? metadata?.["sessionID"]
+  const shellCompletion = completions.get(content.id)
+  const result = shellCompletion?.result ?? toolResult(content)
+  const executionMode = toolExecutionMode(content)
   return {
     id: `${message.id}:${contentIndex}`,
     name: content.name,
@@ -187,10 +248,11 @@ function toolCall(
     ...(result === undefined ? {} : { result }),
     ...(diff === undefined ? {} : { diff }),
     ...(typeof sessionID === "string" ? { subagentSessionID: sessionID } : {}),
-    status: toolStatus(content),
+    ...(executionMode === undefined ? {} : { executionMode }),
+    status: toolStatus(content, shellCompletion),
     artifacts: toolArtifacts(content),
     provenance: provenance(message.id, [contentIndex], [content.id]),
-    time: toolTime(content),
+    time: toolTime(content, shellCompletion),
   }
 }
 
@@ -276,6 +338,7 @@ function summarizeAgent(messageCount: number, narrativeCount: number, errorCount
 function roundNode(
   input: SessionMessage.User | undefined,
   messages: ReadonlyArray<SessionMessage.Assistant>,
+  completions: ReadonlyMap<string, ShellCompletion>,
 ) {
   const first = messages[0]
   if (input === undefined && first === undefined) throw new Error("A round cannot be empty")
@@ -302,7 +365,7 @@ function roundNode(
   messages.forEach((message) => {
     message.content.forEach((content, contentIndex) => {
       if (content.type === "tool") {
-        const call = toolCall(message, content, contentIndex)
+        const call = toolCall(message, content, contentIndex, completions)
         calls.push(call)
         allStatuses.push(call.status)
         history.push({
@@ -497,7 +560,7 @@ function messageNode(
       return {
         ...common,
         kind: "shell",
-        title: "Shell",
+        title: "Shell command",
         detail: compactText(message.command),
         status:
           message.status === "running"
@@ -555,7 +618,9 @@ function isHiddenRoundContext(message: SessionMessage.Info | undefined) {
     message?.type === "system" ||
     (message?.type === "synthetic" &&
       (message.description === "Continuing after restart" ||
-        message.metadata?.["source"] === "subagent"))
+        message.text.startsWith(BACKGROUND_REQUEST_PREFIX) ||
+        message.metadata?.["source"] === "subagent" ||
+        message.metadata?.["source"] === "shell"))
   )
 }
 
@@ -585,6 +650,7 @@ export function buildSessionGraph(
   sessionActive = false,
 ): SemanticGraph {
   const nodes: Array<SemanticGraphNode> = []
+  const completions = shellCompletions(messages)
   const completedSubagentSessionIDs = messages.flatMap((message) => {
     if (message.type !== "synthetic" || message.metadata?.["source"] !== "subagent") return []
     const childID = message.metadata["childID"] ?? message.metadata["sessionID"]
@@ -603,7 +669,7 @@ export function buildSessionGraph(
         else if (!isHiddenRoundContext(candidate)) break
         index += 1
       }
-      nodes.push(...roundNode(message, assistantMessages))
+      nodes.push(...roundNode(message, assistantMessages, completions))
       continue
     }
     if (isHiddenRoundContext(message)) {
@@ -623,7 +689,7 @@ export function buildSessionGraph(
       else if (!isHiddenRoundContext(candidate)) break
       index += 1
     }
-    nodes.push(...roundNode(undefined, assistantMessages))
+    nodes.push(...roundNode(undefined, assistantMessages, completions))
   }
 
   const timelineNodes = nodes.filter(

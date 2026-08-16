@@ -16,14 +16,15 @@ import {
   UpdateState,
   OpenCodeDiagnosticsResult,
 } from "../../../shared/ipc"
-import { recordStartupDuration } from "../startupTiming"
+import { recordStartupDuration, recordStartupMeasure } from "../startupTiming"
 import { ThemeResult, ProjectSelectionResult } from "../../../shared/ipc"
 import type { BundledThemeID, Theme } from "../../../shared/theme"
-import type { AvailableProject } from "../../../shared/project"
+import type { ProjectCatalogEntry } from "../../../shared/project"
 import {
   ApplicationStateResult,
   ProjectUIStateResult,
-  type ApplicationState,
+  ApplicationState,
+  type ApplicationStateLoad,
   type ProjectSelectionState,
   type ProjectUIState,
 } from "../../../shared/applicationState"
@@ -43,9 +44,9 @@ export class DesktopBridgeError extends Schema.TaggedErrorClass<DesktopBridgeErr
 interface DesktopBridgeShape {
   readonly loadTheme: Effect.Effect<Theme, DesktopBridgeError>
   readonly setBundledTheme: (id: BundledThemeID) => Effect.Effect<Theme, DesktopBridgeError>
-  readonly selectProject: Effect.Effect<Option.Option<AvailableProject>, DesktopBridgeError>
-  readonly listProjects: Effect.Effect<ReadonlyArray<AvailableProject>, DesktopBridgeError>
-  readonly loadApplicationState: Effect.Effect<ApplicationState, DesktopBridgeError>
+  readonly selectProject: Effect.Effect<Option.Option<ProjectCatalogEntry>, DesktopBridgeError>
+  readonly listProjects: Effect.Effect<ReadonlyArray<ProjectCatalogEntry>, DesktopBridgeError>
+  readonly loadApplicationState: Effect.Effect<ApplicationStateLoad, DesktopBridgeError>
   readonly saveProjectSelection: (
     state: ProjectSelectionState,
   ) => Effect.Effect<ApplicationState, DesktopBridgeError>
@@ -65,6 +66,9 @@ interface DesktopBridgeShape {
   readonly submitPrompt: (command: SubmitPromptCommand) => Effect.Effect<void, DesktopBridgeError>
   readonly replyQuestion: (command: ReplyQuestionCommand) => Effect.Effect<void, DesktopBridgeError>
   readonly rejectQuestion: (command: QuestionCommand) => Effect.Effect<void, DesktopBridgeError>
+  readonly backgroundSession: (
+    command: ProjectSessionCommand,
+  ) => Effect.Effect<void, DesktopBridgeError>
   readonly interrupt: (command: ProjectSessionCommand) => Effect.Effect<void, DesktopBridgeError>
   readonly checkForUpdates: Effect.Effect<UpdateState, DesktopBridgeError>
   readonly installUpdate: Effect.Effect<void, DesktopBridgeError>
@@ -175,7 +179,7 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
       invoke(() => window.hydracode.saveProjectSelection(state), ApplicationStateResult).pipe(
         Effect.flatMap((result) =>
           result._tag === "Success"
-            ? Effect.succeed(result.state)
+            ? Effect.succeed(Schema.decodeUnknownSync(ApplicationState)(result.state))
             : Effect.fail(new DesktopBridgeError({ message: result.message, cause: result })),
         ),
       ),
@@ -225,6 +229,7 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
               return Effect.fail(new DesktopBridgeError({ message: result.message, cause: result }))
             const timing = result.timing
             recordStartupDuration("main-session-selection", started, timing.duration, {
+              sessionID: request.sessionID,
               familySize: timing.familySize,
               sessionGetDuration: timing.sessionGetDuration,
               snapshotDuration: timing.snapshotDuration,
@@ -236,6 +241,7 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
                 fetchStarted +
                 Math.max(session.contextDuration, session.questionsDuration, session.formsDuration)
               const counts = {
+                sessionID: session.sessionID,
                 messages: session.messages,
                 questions: session.questions,
                 forms: session.forms,
@@ -274,6 +280,13 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
             }
             return Effect.void
           }),
+          Effect.ensuring(
+            Effect.sync(() =>
+              recordStartupMeasure("renderer-session-selection", started, {
+                sessionID: request.sessionID,
+              }),
+            ),
+          ),
         )
       }),
     createSession: (request) =>
@@ -287,6 +300,7 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
     submitPrompt: (request) => command(() => window.hydracode.submitPrompt(request)),
     replyQuestion: (request) => command(() => window.hydracode.replyQuestion(request)),
     rejectQuestion: (request) => command(() => window.hydracode.rejectQuestion(request)),
+    backgroundSession: (request) => command(() => window.hydracode.backgroundSession(request)),
     interrupt: (request) => command(() => window.hydracode.interrupt(request)),
     checkForUpdates: invoke(() => window.hydracode.checkForUpdates(), UpdateState),
     installUpdate: command(() => window.hydracode.installUpdate()),
@@ -358,7 +372,12 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
       Effect.acquireRelease(
         Effect.sync(() =>
           window.hydracode.onProjectUpdate((envelope) => {
+            const started = performance.now()
             const decoded = Schema.decodeUnknownSync(ProjectUpdateEnvelope)(envelope)
+            recordStartupMeasure("project-update-decode", started, {
+              matched: decoded.subscriptionID === subscriptionID ? 1 : 0,
+              update: decoded.update._tag,
+            })
             if (decoded.subscriptionID === subscriptionID) onUpdate(decoded.update)
           }),
         ),

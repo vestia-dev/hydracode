@@ -18,6 +18,7 @@ export type ProjectSessionExecution = typeof ProjectSessionExecution.Type
 export const ProjectSession = Schema.Struct({
   id: Schema.String,
   parentID: Schema.optional(Schema.String),
+  location: Schema.optional(Location.Ref),
   created: Schema.Number,
   title: Schema.String,
   active: Schema.Boolean,
@@ -44,15 +45,26 @@ export const ProjectDetails = Schema.Struct({
 })
 export type ProjectDetails = typeof ProjectDetails.Type
 
-export const AvailableProject = Schema.Struct({
+export const ProjectLocation = Schema.Struct({
+  ref: Location.Ref,
+  kind: Schema.Union([
+    Schema.Literal("canonical"),
+    Schema.Literal("worktree"),
+    Schema.Literal("sandbox"),
+    Schema.Literal("selected"),
+  ]),
+})
+export type ProjectLocation = typeof ProjectLocation.Type
+
+export const ProjectCatalogEntry = Schema.Struct({
   project: ProjectDetails,
-  location: Location.Ref,
+  locations: Schema.Array(ProjectLocation),
   updated: Schema.Number,
 })
-export type AvailableProject = typeof AvailableProject.Type
+export type ProjectCatalogEntry = typeof ProjectCatalogEntry.Type
 
 export const ListProjectsResult = Schema.Union([
-  Schema.Struct({ _tag: Schema.Literal("Success"), projects: Schema.Array(AvailableProject) }),
+  Schema.Struct({ _tag: Schema.Literal("Success"), projects: Schema.Array(ProjectCatalogEntry) }),
   Schema.Struct({ _tag: Schema.Literal("Failure"), message: Schema.String }),
 ])
 export type ListProjectsResult = typeof ListProjectsResult.Type
@@ -146,6 +158,7 @@ export const ProjectCommandResult = Schema.Union([
 export type ProjectCommandResult = typeof ProjectCommandResult.Type
 
 export const SessionLoadTiming = Schema.Struct({
+  sessionID: Schema.String,
   offset: Schema.Number,
   duration: Schema.Number,
   watermarkDuration: Schema.Number,

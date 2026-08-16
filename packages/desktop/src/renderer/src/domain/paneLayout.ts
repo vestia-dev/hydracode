@@ -4,7 +4,6 @@ import type { SavedPaneLayout, SavedPaneNode } from "../../../shared/layout"
 export interface PaneLeaf {
   readonly _tag: "Pane"
   readonly id: string
-  readonly sessionID?: string
 }
 
 export interface PaneSplit {
@@ -24,11 +23,7 @@ export function savePaneLayout(layout: PaneLayout): SavedPaneLayout {
   const nodes: SavedPaneNode[] = []
   const visit = (node: PaneLayout) => {
     if (node._tag === "Pane") {
-      nodes.push(
-        node.sessionID === undefined
-          ? { _tag: "Pane", id: node.id }
-          : { _tag: "Pane", id: node.id, sessionID: node.sessionID },
-      )
+      nodes.push({ _tag: "Pane", id: node.id })
       return
     }
     nodes.push({
@@ -59,9 +54,7 @@ export function restorePaneLayout(saved: SavedPaneLayout): PaneLayout | undefine
     if (node._tag === "Pane") {
       visiting.delete(id)
       visited.add(id)
-      return node.sessionID === undefined
-        ? { _tag: "Pane", id: node.id }
-        : { _tag: "Pane", id: node.id, sessionID: node.sessionID }
+      return { _tag: "Pane", id: node.id }
     }
     if (!Number.isFinite(node.ratio) || node.ratio < 0.15 || node.ratio > 0.85) return undefined
     const first = visit(node.first)
@@ -82,11 +75,6 @@ export function restorePaneLayout(saved: SavedPaneLayout): PaneLayout | undefine
   return layout !== undefined && visited.size === nodes.size ? layout : undefined
 }
 
-export function paneSessionIDs(layout: PaneLayout): ReadonlyArray<string> {
-  if (layout._tag === "Pane") return layout.sessionID === undefined ? [] : [layout.sessionID]
-  return Array.from(new Set([...paneSessionIDs(layout.first), ...paneSessionIDs(layout.second)]))
-}
-
 export function firstPaneID(layout: PaneLayout): string {
   return layout._tag === "Pane" ? layout.id : firstPaneID(layout.first)
 }
@@ -94,20 +82,6 @@ export function firstPaneID(layout: PaneLayout): string {
 export function hasPane(layout: PaneLayout, paneID: string): boolean {
   if (layout._tag === "Pane") return layout.id === paneID
   return hasPane(layout.first, paneID) || hasPane(layout.second, paneID)
-}
-
-export function clearMissingPaneSessions(
-  layout: PaneLayout,
-  missingSessionIDs: ReadonlySet<string>,
-): PaneLayout {
-  if (layout._tag === "Pane") {
-    return layout.sessionID !== undefined && missingSessionIDs.has(layout.sessionID)
-      ? { _tag: "Pane", id: layout.id }
-      : layout
-  }
-  const first = clearMissingPaneSessions(layout.first, missingSessionIDs)
-  const second = clearMissingPaneSessions(layout.second, missingSessionIDs)
-  return first === layout.first && second === layout.second ? layout : { ...layout, first, second }
 }
 
 interface PaneBounds {
@@ -224,20 +198,6 @@ export function splitPane(
   if (first !== layout.first) return { ...layout, first }
   const second = splitPane(layout.second, paneID, command, splitID, newPaneID)
   return second === layout.second ? layout : { ...layout, second }
-}
-
-export function setPaneSession(
-  layout: PaneLayout,
-  paneID: string,
-  sessionID: string | undefined,
-): PaneLayout {
-  if (layout._tag === "Pane") {
-    if (layout.id !== paneID) return layout
-    return sessionID === undefined ? { _tag: "Pane", id: layout.id } : { ...layout, sessionID }
-  }
-  const first = setPaneSession(layout.first, paneID, sessionID)
-  const second = setPaneSession(layout.second, paneID, sessionID)
-  return first === layout.first && second === layout.second ? layout : { ...layout, first, second }
 }
 
 export function setSplitRatio(layout: PaneLayout, splitID: string, ratio: number): PaneLayout {

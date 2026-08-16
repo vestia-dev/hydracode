@@ -1,16 +1,13 @@
 import { expect, it } from "@effect/vitest"
 import { Effect } from "effect"
 import {
-  clearMissingPaneSessions,
   adjacentPaneID,
   closePane,
   hasPane,
   initialPaneLayout,
   paneInDirection,
-  paneSessionIDs,
   restorePaneLayout,
   savePaneLayout,
-  setPaneSession,
   setSplitRatio,
   splitPane,
 } from "./paneLayout"
@@ -34,21 +31,34 @@ it.effect("splits after the active pane to the right and down", () =>
   }),
 )
 
-it.effect("serializes and restores split dimensions and pane sessions", () =>
+it.effect("serializes and restores split dimensions", () =>
   Effect.sync(() => {
-    const split = setPaneSession(
-      setSplitRatio(
-        splitPane(initialPaneLayout("one"), "one", "right", "split", "two"),
-        "split",
-        0.7,
-      ),
-      "two",
-      "session-2",
+    const split = setSplitRatio(
+      splitPane(initialPaneLayout("one"), "one", "right", "split", "two"),
+      "split",
+      0.7,
     )
-    const saved = savePaneLayout(setPaneSession(split, "one", "session-1"))
+    const saved = savePaneLayout(split)
 
-    expect(restorePaneLayout(saved)).toEqual(setPaneSession(split, "one", "session-1"))
-    expect(paneSessionIDs(split)).toEqual(["session-2"])
+    expect(restorePaneLayout(saved)).toEqual(split)
+  }),
+)
+
+it.effect("keeps pane layout independent from legacy persisted content", () =>
+  Effect.sync(() => {
+    expect(
+      restorePaneLayout({
+        rootID: "one",
+        nodes: [
+          {
+            _tag: "Pane",
+            id: "one",
+            sessionID: "legacy-session",
+            locationKey: "/code/worktree\u0000",
+          },
+        ],
+      }),
+    ).toEqual(initialPaneLayout("one"))
   }),
 )
 
@@ -101,12 +111,9 @@ it.effect("places left and up splits before the active pane", () =>
   }),
 )
 
-it.effect("updates pane selection and clamps divider ratios", () =>
+it.effect("clamps divider ratios", () =>
   Effect.sync(() => {
     const split = splitPane(initialPaneLayout("one"), "one", "right", "split", "two")
-    expect(setPaneSession(split, "two", "session-2")).toMatchObject({
-      second: { sessionID: "session-2" },
-    })
     expect(setSplitRatio(split, "split", 2)).toMatchObject({ ratio: 0.85 })
     expect(setSplitRatio(split, "split", -1)).toMatchObject({ ratio: 0.15 })
   }),
@@ -122,25 +129,10 @@ it.effect("closes a pane, collapses its split, and identifies the adjacent pane"
   }),
 )
 
-it.effect("clears only missing sessions and validates the active pane", () =>
+it.effect("validates the active pane", () =>
   Effect.sync(() => {
-    const split = splitPane(
-      setPaneSession(initialPaneLayout("one"), "one", "session-1"),
-      "one",
-      "right",
-      "split",
-      "two",
-    )
-    const assigned = setPaneSession(split, "two", "session-2")
-    expect(hasPane(assigned, "two")).toBe(true)
-    expect(hasPane(assigned, "missing")).toBe(false)
-    expect(clearMissingPaneSessions(assigned, new Set(["session-1"]))).toEqual({
-      _tag: "Split",
-      id: "split",
-      direction: "horizontal",
-      ratio: 0.5,
-      first: { _tag: "Pane", id: "one" },
-      second: { _tag: "Pane", id: "two", sessionID: "session-2" },
-    })
+    const split = splitPane(initialPaneLayout("one"), "one", "right", "split", "two")
+    expect(hasPane(split, "two")).toBe(true)
+    expect(hasPane(split, "missing")).toBe(false)
   }),
 )

@@ -1,6 +1,14 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react"
+import {
+  Profiler,
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react"
 import { Effect } from "effect"
-import { Project, type Question } from "@opencode-ai/client/effect"
+import { type Question } from "@opencode-ai/client/effect"
 import { ProjectView } from "./ProjectView"
 import {
   adjacentPaneID,
@@ -9,24 +17,23 @@ import {
   hasPane,
   initialPaneLayout,
   paneInDirection,
-  paneSessionIDs,
   restorePaneLayout,
   savePaneLayout,
-  setPaneSession,
   splitPane,
   type PaneLayout,
 } from "../domain/paneLayout"
 import type { PaneDirection, PaneSplitCommand } from "../../../shared/pane"
 import type { PaneUIState, ProjectUIState } from "../../../shared/applicationState"
-import type { OpenProjectRuntime } from "../hooks/useProjectController"
+import type { OpenLocationState } from "../hooks/useProjectController"
 import type { SessionView } from "../services/OpenCodeGateway"
 import type { DesktopBridge } from "../services/DesktopBridge"
+import type { ProjectCatalogEntry } from "../../../shared/project"
 import {
   DesktopBridge as DesktopBridgeService,
   DesktopBridgeError,
 } from "../services/DesktopBridge"
 import { AppRuntime } from "../runtime"
-import { markStartup, recordStartupMeasure } from "../startupTiming"
+import { markStartup, recordStartupDuration, recordStartupMeasure } from "../startupTiming"
 
 export interface ProjectContainerHandle {
   readonly split: (command: PaneSplitCommand) => void
@@ -38,36 +45,43 @@ export interface ProjectContainerHandle {
 }
 
 interface ProjectContainerProps {
-  readonly runtime: OpenProjectRuntime
+  readonly defaultLocationState: OpenLocationState
+  readonly locationStates: ReadonlyMap<string, OpenLocationState>
+  readonly project: ProjectCatalogEntry
+  readonly selectLocation: (location: ProjectCatalogEntry["locations"][number]["ref"]) => void
   readonly active: boolean
   readonly initialUIState: ProjectUIState | undefined
   readonly initialRestorationComplete: () => void
   readonly uiStateCache: React.MutableRefObject<Map<string, ProjectUIState>>
   readonly selectSession: (
-    projectID: Project.ID,
+    locationKey: string,
     sessionID: string,
   ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
   readonly createSession: (
-    projectID: Project.ID,
+    locationKey: string,
     text: string,
     selectCreated?: (sessionID: SessionView["id"] | undefined) => void,
   ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
   readonly submitPrompt: (
-    projectID: Project.ID,
+    locationKey: string,
     sessionID: SessionView["id"],
     text: string,
   ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
   readonly replyQuestion: (
-    projectID: Project.ID,
+    locationKey: string,
     request: Question.Request,
     answers: ReadonlyArray<Question.Answer>,
   ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
   readonly rejectQuestion: (
-    projectID: Project.ID,
+    locationKey: string,
     request: Question.Request,
   ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
+  readonly backgroundSession: (
+    locationKey: string,
+    sessionID: SessionView["id"],
+  ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
   readonly interruptSession: (
-    projectID: Project.ID,
+    locationKey: string,
     sessionID: SessionView["id"],
   ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
 }
@@ -103,18 +117,44 @@ export const ProjectContainer = forwardRef<ProjectContainerHandle, ProjectContai
     paneLayoutRef.current = paneLayout
     const activePaneIDRef = useRef(activePaneID)
     activePaneIDRef.current = activePaneID
-    const runtimeRef = useRef(props.runtime)
-    runtimeRef.current = props.runtime
-    const restorationStarted = useRef(false)
-    const [paneUIStates, setPaneUIStates] = useState<ReadonlyMap<string, PaneUIState>>(
-      () =>
-        new Map(
-          (restoredLayout === undefined ? [] : (props.initialUIState?.panes ?? [])).map((pane) => [
-            pane.paneID,
-            pane,
-          ]),
-        ),
-    )
+    const defaultLocationStateRef = useRef(props.defaultLocationState)
+    defaultLocationStateRef.current = props.defaultLocationState
+    const displayedLocationKeyRef = useRef(props.defaultLocationState.locationKey)
+    const restorationCompleted = useRef(false)
+    const restoredSessionIDs = useRef(new Set<string>())
+    const [paneUIStates, setPaneUIStates] = useState<ReadonlyMap<string, PaneUIState>>(() => {
+      if (restoredLayout === undefined) return new Map()
+      const savedNodes = new Map(
+        props.initialUIState?.layout.nodes.map((node) => [node.id, node]) ?? [],
+      )
+      const savedPanes = new Map(
+        (props.initialUIState?.panes ?? []).map((pane) => [pane.paneID, pane]),
+      )
+      return new Map(
+        Array.from(savedNodes.values()).flatMap((saved) => {
+          if (saved._tag !== "Pane") return []
+          const pane = savedPanes.get(saved.id) ?? {
+            paneID: saved.id,
+            followLatest: true,
+            expandedRoundIDs: [],
+            expandedSubagentIDs: [],
+            draft: "",
+          }
+          if (pane.content !== undefined) return [[pane.paneID, pane]]
+          const content =
+            saved.sessionID !== undefined
+              ? { _tag: "Session" as const, sessionID: saved.sessionID }
+              : {
+                  _tag: "NewSession" as const,
+                  locationKey:
+                    saved.locationKey !== undefined
+                      ? saved.locationKey
+                      : props.defaultLocationState.locationKey,
+                }
+          return [[pane.paneID, { ...pane, content }]]
+        }),
+      )
+    })
     const paneUIStatesRef = useRef(paneUIStates)
     paneUIStatesRef.current = paneUIStates
 
@@ -137,16 +177,17 @@ export const ProjectContainer = forwardRef<ProjectContainerHandle, ProjectContai
     )
 
     const persistProjectUIState = useCallback(() => {
-      const runtime = runtimeRef.current
-      if (runtime.snapshot === undefined || runtime.projectID === Project.ID.global) return
+      const locationState = defaultLocationStateRef.current
+      if (locationState.snapshot === undefined) return
       const state: ProjectUIState = {
-        projectID: runtime.projectID,
+        locationKey: locationState.locationKey,
+        projectID: locationState.projectID,
         activePaneID: activePaneIDRef.current,
         layout: savePaneLayout(paneLayoutRef.current),
         panes: Array.from(paneUIStatesRef.current.values()),
         updated: Date.now(),
       }
-      props.uiStateCache.current.set(runtime.projectID, state)
+      props.uiStateCache.current.set(locationState.locationKey, state)
       AppRuntime.runFork(
         DesktopBridgeService.use((desktop) => desktop.saveProjectUIState(state)).pipe(
           Effect.catch(() => Effect.void),
@@ -154,20 +195,29 @@ export const ProjectContainer = forwardRef<ProjectContainerHandle, ProjectContai
       )
     }, [props.uiStateCache])
 
-    const splitActivePane = useCallback((command: PaneSplitCommand) => {
-      const newPaneID = crypto.randomUUID()
-      const next = splitPane(
-        paneLayoutRef.current,
-        activePaneIDRef.current,
-        command,
-        crypto.randomUUID(),
-        newPaneID,
-      )
-      paneLayoutRef.current = next
-      activePaneIDRef.current = newPaneID
-      setPaneLayout(next)
-      setActivePaneID(newPaneID)
-    }, [])
+    const splitActivePane = useCallback(
+      (command: PaneSplitCommand) => {
+        const newPaneID = crypto.randomUUID()
+        const next = splitPane(
+          paneLayoutRef.current,
+          activePaneIDRef.current,
+          command,
+          crypto.randomUUID(),
+          newPaneID,
+        )
+        paneLayoutRef.current = next
+        activePaneIDRef.current = newPaneID
+        updatePaneUIState(newPaneID, {
+          content: {
+            _tag: "NewSession",
+            locationKey: defaultLocationStateRef.current.locationKey,
+          },
+        })
+        setPaneLayout(next)
+        setActivePaneID(newPaneID)
+      },
+      [updatePaneUIState],
+    )
 
     const closeActivePane = useCallback(() => {
       const current = paneLayoutRef.current
@@ -177,6 +227,11 @@ export const ProjectContainer = forwardRef<ProjectContainerHandle, ProjectContai
       const nextPaneID = adjacentPaneID(current, paneID) ?? firstPaneID(next)
       paneLayoutRef.current = next
       activePaneIDRef.current = nextPaneID
+      setPaneUIStates((states) => {
+        const updated = new Map(states)
+        updated.delete(paneID)
+        return updated
+      })
       setPaneLayout(next)
       setActivePaneID(nextPaneID)
     }, [])
@@ -205,8 +260,23 @@ export const ProjectContainer = forwardRef<ProjectContainerHandle, ProjectContai
     }, [])
 
     const newSession = useCallback(() => {
-      setPaneLayout((current) => setPaneSession(current, activePaneIDRef.current, undefined))
-    }, [])
+      updatePaneUIState(activePaneIDRef.current, {
+        content: {
+          _tag: "NewSession",
+          locationKey: defaultLocationStateRef.current.locationKey,
+        },
+      })
+    }, [updatePaneUIState])
+
+    useEffect(() => {
+      const locationKey = props.defaultLocationState.locationKey
+      if (displayedLocationKeyRef.current === locationKey) return
+      displayedLocationKeyRef.current = locationKey
+      if (!props.active) return
+      updatePaneUIState(activePaneIDRef.current, {
+        content: { _tag: "NewSession", locationKey },
+      })
+    }, [props.active, props.defaultLocationState.locationKey, updatePaneUIState])
 
     useImperativeHandle(
       ref,
@@ -229,40 +299,82 @@ export const ProjectContainer = forwardRef<ProjectContainerHandle, ProjectContai
     )
 
     useEffect(() => {
-      if (props.runtime.status !== "ready" || restorationStarted.current) return
-      restorationStarted.current = true
-      if (props.active) markStartup("session-restoration-start")
-      const projectID = props.runtime.projectID
+      if (props.defaultLocationState.status !== "ready") return
+      const restoredSessions: Array<{
+        readonly locationKey: string
+        readonly sessionID: string
+      }> = Array.from(paneUIStates.values()).flatMap((pane) => {
+        if (
+          pane.content?._tag !== "Session" ||
+          restoredSessionIDs.current.has(pane.content.sessionID)
+        )
+          return []
+        const sessionID = pane.content.sessionID
+        const location = Array.from(props.locationStates.entries()).find(([, state]) =>
+          state.snapshot === undefined
+            ? false
+            : state.snapshot.sessions.some((session) => session.id === sessionID) ||
+              state.snapshot.recentSessions.some((session) => session.id === sessionID),
+        )
+        if (location === undefined) return []
+        restoredSessionIDs.current.add(sessionID)
+        return [{ locationKey: location[0], sessionID }]
+      })
+      if (props.active && !restorationCompleted.current)
+        markStartup("session-restoration-start", {
+          sessions: restoredSessions.length,
+        })
       AppRuntime.runFork(
-        (restoredLayout === undefined
+        (restoredSessions.length === 0
           ? Effect.void
           : Effect.forEach(
-              paneSessionIDs(restoredLayout),
-              (sessionID) => {
+              restoredSessions,
+              ({ locationKey, sessionID }) => {
                 const started = performance.now()
-                return props.selectSession(projectID, sessionID).pipe(
+                return props.selectSession(locationKey, sessionID).pipe(
                   Effect.ensuring(
-                    Effect.sync(() => recordStartupMeasure("session-selection", started)),
+                    Effect.sync(() =>
+                      recordStartupMeasure("session-selection", started, {
+                        locationKey,
+                        sessionID,
+                      }),
+                    ),
                   ),
                   Effect.catch(() => Effect.void),
                 )
               },
               { concurrency: 4, discard: true },
             )
-        ).pipe(Effect.ensuring(Effect.sync(props.initialRestorationComplete))),
+        ).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (!restorationCompleted.current) {
+                restorationCompleted.current = true
+                if (props.active) markStartup("session-selections-ready")
+                props.initialRestorationComplete()
+              }
+            }),
+          ),
+        ),
       )
+      if (props.active && !restorationCompleted.current)
+        markStartup("session-restoration-dispatched")
     }, [
+      paneUIStates,
       props.initialRestorationComplete,
-      props.runtime.projectID,
-      props.runtime.status,
+      props.defaultLocationState.locationKey,
+      props.defaultLocationState.status,
+      props.locationStates,
       props.selectSession,
     ])
 
     useEffect(() => {
-      const sessionID = props.runtime.requestedSessionID
+      const sessionID = props.defaultLocationState.requestedSessionID
       if (sessionID === undefined) return
-      setPaneLayout((current) => setPaneSession(current, activePaneIDRef.current, sessionID))
-    }, [props.runtime.requestedSessionID])
+      updatePaneUIState(activePaneIDRef.current, {
+        content: { _tag: "Session", sessionID },
+      })
+    }, [props.defaultLocationState.requestedSessionID, updatePaneUIState])
 
     useEffect(() => {
       const timeout = window.setTimeout(persistProjectUIState, 300)
@@ -271,31 +383,44 @@ export const ProjectContainer = forwardRef<ProjectContainerHandle, ProjectContai
 
     useEffect(() => () => persistProjectUIState(), [persistProjectUIState])
 
-    if (props.runtime.snapshot === undefined) return null
-    const projectID = props.runtime.projectID
+    if (props.defaultLocationState.snapshot === undefined) return null
+    const locationKey = props.defaultLocationState.locationKey
     return (
       <section className="project-layer" inert={!props.active} data-active={props.active}>
-        <ProjectView
-          snapshot={props.runtime.snapshot}
-          layout={paneLayout}
-          activePaneID={activePaneID}
-          promptFocusRequest={promptFocusRequest}
-          followLatestRequest={followLatestRequest}
-          promptRetry={props.runtime.promptRetry}
-          landingError={props.runtime.landingError}
-          setActivePane={setActivePaneID}
-          setLayout={setPaneLayout}
-          selectSession={(sessionID) => props.selectSession(projectID, sessionID)}
-          createSession={(text, selectCreated) =>
-            props.createSession(projectID, text, selectCreated)
+        <Profiler
+          id={`location:${locationKey}`}
+          onRender={(_id, phase, actualDuration, baseDuration, startTime) =>
+            recordStartupDuration("react-project-render", startTime, actualDuration, {
+              locationKey,
+              active: props.active ? 1 : 0,
+              phase,
+              baseDuration,
+            })
           }
-          submitPrompt={(sessionID, text) => props.submitPrompt(projectID, sessionID, text)}
-          replyQuestion={(request, answers) => props.replyQuestion(projectID, request, answers)}
-          rejectQuestion={(request) => props.rejectQuestion(projectID, request)}
-          interruptSession={(sessionID) => props.interruptSession(projectID, sessionID)}
-          paneUIStates={paneUIStates}
-          updatePaneUIState={updatePaneUIState}
-        />
+        >
+          <ProjectView
+            locationStates={props.locationStates}
+            defaultLocationKey={locationKey}
+            project={props.project}
+            selectLocation={props.selectLocation}
+            layout={paneLayout}
+            activePaneID={activePaneID}
+            promptFocusRequest={promptFocusRequest}
+            followLatestRequest={followLatestRequest}
+            landingError={props.defaultLocationState.landingError}
+            setActivePane={setActivePaneID}
+            setLayout={setPaneLayout}
+            selectSession={props.selectSession}
+            createSession={props.createSession}
+            submitPrompt={props.submitPrompt}
+            replyQuestion={props.replyQuestion}
+            rejectQuestion={props.rejectQuestion}
+            backgroundSession={props.backgroundSession}
+            interruptSession={props.interruptSession}
+            paneUIStates={paneUIStates}
+            updatePaneUIState={updatePaneUIState}
+          />
+        </Profiler>
       </section>
     )
   },

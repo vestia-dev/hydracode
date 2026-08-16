@@ -65,7 +65,11 @@ export function horizontalRoundSideNodePosition(
 }
 
 export function splitRoundToolsWidth(roundWidth: number, horizontalGap: number) {
-  return (roundWidth - horizontalGap) / 2
+  return roundBranchWidth(roundWidth, horizontalGap, 2)
+}
+
+export function roundBranchWidth(roundWidth: number, horizontalGap: number, count: number) {
+  return count <= 1 ? roundWidth : (roundWidth - horizontalGap * (count - 1)) / count
 }
 
 export function splitRoundToolsX(
@@ -74,6 +78,15 @@ export function splitRoundToolsX(
   toolsWidth: number,
 ) {
   return roundPosition.x + roundWidth * 0.25 - toolsWidth / 2
+}
+
+export function splitRoundSideNodeX(
+  roundPosition: GraphPosition,
+  roundWidth: number,
+  nodeWidth: number,
+  side: "left" | "right",
+) {
+  return roundPosition.x + roundWidth * (side === "left" ? 0.25 : 0.75) - nodeWidth / 2
 }
 
 export function collapsedSubagentPosition(

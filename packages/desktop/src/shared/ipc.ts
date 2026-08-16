@@ -15,7 +15,7 @@ import type {
   ProjectUIStateResult,
 } from "./applicationState"
 import {
-  AvailableProject,
+  ProjectCatalogEntry,
   CreateSessionCommand,
   CreateSessionResult,
   ListProjectsResult,
@@ -41,7 +41,7 @@ export type DesktopFailure = typeof DesktopFailure.Type
 export const ProjectSelectionResult = Schema.Union([
   Schema.Struct({
     _tag: Schema.Literal("Success"),
-    project: Schema.Union([AvailableProject, Schema.Null]),
+    project: Schema.Union([ProjectCatalogEntry, Schema.Null]),
   }),
   DesktopFailure,
 ])
@@ -109,6 +109,7 @@ export interface HydraCodeDesktopApi {
   readonly submitPrompt: (command: SubmitPromptCommand) => Promise<ProjectCommandResult>
   readonly replyQuestion: (command: ReplyQuestionCommand) => Promise<ProjectCommandResult>
   readonly rejectQuestion: (command: QuestionCommand) => Promise<ProjectCommandResult>
+  readonly backgroundSession: (command: ProjectSessionCommand) => Promise<ProjectCommandResult>
   readonly interrupt: (command: ProjectSessionCommand) => Promise<ProjectCommandResult>
   readonly getOpenCodeDiagnostics: () => Promise<OpenCodeDiagnosticsResult>
   readonly installOpenCode: () => Promise<ProjectCommandResult>

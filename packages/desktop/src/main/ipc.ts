@@ -225,6 +225,14 @@ export function registerDesktopIpc() {
       ),
     )
   })
+  ipcMain.handle(DesktopChannels.backgroundSession, (_event, input: unknown) => {
+    const command = Schema.decodeUnknownSync(ProjectSessionCommand)(input)
+    return result(
+      ProjectRegistry.use((registry) =>
+        registry.backgroundSession(command.subscriptionID, command.sessionID),
+      ),
+    )
+  })
   ipcMain.handle(DesktopChannels.interrupt, (_event, input: unknown) => {
     const command = Schema.decodeUnknownSync(ProjectSessionCommand)(input)
     return result(

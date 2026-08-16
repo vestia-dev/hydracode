@@ -94,6 +94,26 @@ function subagentResult(id: string, childID: string, created: number) {
   } satisfies SessionMessage.Synthetic
 }
 
+function shellResult(jobID: string, state: "completed" | "error", created: number) {
+  return {
+    id: messageID(`shell-result-${jobID}`),
+    type: "synthetic",
+    text: `<shell id="${jobID}" state="${state}">\nResult\n</shell>`,
+    description: "bun run test",
+    metadata: { source: "shell", jobID, state },
+    time: { created: timestamp(created) },
+  } satisfies SessionMessage.Synthetic
+}
+
+function backgroundRequest(created: number) {
+  return {
+    id: messageID("message-background-request"),
+    type: "synthetic",
+    text: "User requested that active blocking work be moved to the background.\n\nBackgrounded work:\n- shell: bun run test",
+    time: { created: timestamp(created) },
+  } satisfies SessionMessage.Synthetic
+}
+
 function effectSessionMessages() {
   return [
     userMessage(),
@@ -161,6 +181,7 @@ it.effect("projects a user prompt and consecutive assistant run as one round", (
       input: { pattern: "Layer" },
       detail: "Layer",
     })
+    expect(tools?.calls.find((call) => call.name === "shell")?.executionMode).toBe("foreground")
   }),
 )
 
@@ -191,6 +212,66 @@ it.effect("hides system messages without splitting their surrounding round", () 
       3,
     )
     expect(graph.nodes.some((node) => node.kind === "system")).toBe(false)
+  }),
+)
+
+it.effect("keeps a background shell tool running until its completion notification", () =>
+  Effect.sync(() => {
+    const messages = [
+      userMessage(),
+      assistantMessage(
+        "message-background-shell",
+        [
+          tool(
+            "call-shell-background",
+            "shell",
+            { command: "bun run test", background: true },
+            2_010,
+            { status: "running", shellID: "shell-1" },
+          ),
+        ],
+        2_000,
+      ),
+    ]
+
+    const running = buildSessionGraph(messages)
+    const runningTool = running.nodes
+      .find((node) => node.kind === "round-tools")
+      ?.roundTools?.calls.at(0)
+    expect(runningTool?.status).toBe("running")
+    expect(runningTool?.executionMode).toBe("background")
+
+    const completed = buildSessionGraph([
+      ...messages,
+      backgroundRequest(3_000),
+      assistantMessage(
+        "message-background-acknowledged",
+        [{ type: "text", text: "The command is running in the background." }],
+        3_100,
+      ),
+      shellResult("call-shell-background", "completed", 4_000),
+      assistantMessage(
+        "message-shell-finished",
+        [{ type: "text", text: "1", state: { phase: "final_answer" } }],
+        4_100,
+        "stop",
+      ),
+    ])
+    const completedTool = completed.nodes
+      .find((node) => node.kind === "round-tools")
+      ?.roundTools?.calls.at(0)
+    expect(completedTool?.status).toBe("completed")
+    expect(completedTool?.executionMode).toBe("background")
+    expect(completedTool?.time.completed).toBe(4_000)
+    expect(completedTool?.result).toBe("Result")
+    expect(completed.nodes.filter((node) => node.kind === "round")).toHaveLength(1)
+    expect(
+      completed.nodes.find((node) => node.kind === "round")?.round?.agent?.narratives.at(-1)
+        ?.detail,
+    ).toBe("1")
+    expect(completed.nodes.some((node) => node.id === "shell-result-call-shell-background")).toBe(
+      false,
+    )
   }),
 )
 

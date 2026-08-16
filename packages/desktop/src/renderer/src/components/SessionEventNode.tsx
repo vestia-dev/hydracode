@@ -26,9 +26,10 @@ export function SessionEventNode({ data }: NodeProps<SessionEventFlowNode>) {
       ) : null}
       <div className="event-node__heading">
         <span>{data.title}</span>
+        {data.kind === "shell" ? <small>User</small> : null}
       </div>
       {data.kind === "shell" ? (
-        <p>{detail}</p>
+        <p className="event-node__text nodrag nopan">{detail}</p>
       ) : (
         <MarkdownContent className="event-node__text" source={detail} />
       )}

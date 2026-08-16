@@ -1,4 +1,5 @@
 import { expect, it } from "@effect/vitest"
+import { Project } from "@opencode-ai/client/effect"
 import { Effect } from "effect"
 import { projectDisplayName, projectInitial } from "./projectPresentation"
 
@@ -7,6 +8,7 @@ it.effect("falls back to the directory for missing and blank project names", () 
     expect(projectDisplayName(undefined, "/code/vestia")).toBe("vestia")
     expect(projectDisplayName("  ", "/code/vestia")).toBe("vestia")
     expect(projectDisplayName(" Vestia ", "/code/vestia")).toBe("Vestia")
+    expect(projectDisplayName(undefined, "/", Project.ID.global)).toBe("Global")
   }),
 )
 

@@ -114,8 +114,8 @@ export const HydraCodeLightTheme: Theme = {
     text: "#20201e",
     textMuted: "#777771",
     border: "#deded8",
-    accent: "#507dbb",
-    accentText: "#ffffff",
+    accent: "#809B75",
+    accentText: "#20201e",
     success: "#4d9f70",
     danger: "#a34e48",
     read: "#688ca4",
@@ -132,7 +132,7 @@ export const HydraCodeLightTheme: Theme = {
   shadows: {
     subtle: "0 1px 2px rgb(32 32 30 / 6%)",
     raised: "0 2px 8px rgb(32 32 30 / 6%)",
-    focus: "0 0 0 2px rgb(80 125 187 / 10%)",
+    focus: "0 0 0 2px rgb(128 155 117 / 10%)",
   },
   typography: {
     uiFontFamily:
@@ -157,7 +157,7 @@ export const HydraCodeDarkTheme: Theme = {
     text: "#e8e8e3",
     textMuted: "#9a9a93",
     border: "#383835",
-    accent: "#78a6e3",
+    accent: "#809B75",
     accentText: "#101722",
     success: "#68b989",
     danger: "#d27670",
@@ -175,7 +175,7 @@ export const HydraCodeDarkTheme: Theme = {
   shadows: {
     subtle: "0 1px 2px rgb(0 0 0 / 24%)",
     raised: "0 2px 10px rgb(0 0 0 / 30%)",
-    focus: "0 0 0 2px rgb(120 166 227 / 20%)",
+    focus: "0 0 0 2px rgb(128 155 117 / 20%)",
   },
   typography: {
     uiFontFamily:

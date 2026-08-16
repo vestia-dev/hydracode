@@ -56,7 +56,15 @@ export function SessionRoundToolsNode({ data }: NodeProps<SessionRoundToolsFlowN
         {groups.map((group) => (
           <li key={group.id} className="round-tools-list__item">
             <strong>{group.name}</strong>
-            <span title={group.detail}>{group.detail || "No input"}</span>
+            <span
+              title={group.result === undefined ? group.detail : `${group.detail}\n${group.result}`}
+            >
+              {group.detail || "No input"}
+              {group.result === undefined ? null : <em>{group.result}</em>}
+            </span>
+            <small className={`round-tools-list__status round-tools-list__status--${group.status}`}>
+              {group.status === "running" ? "Running" : group.status === "error" ? "Failed" : ""}
+            </small>
           </li>
         ))}
       </ol>

@@ -2,11 +2,13 @@ import { Context, Effect, FileSystem, Layer, Ref, Schema, Semaphore } from "effe
 import { app } from "electron"
 import { dirname, join } from "node:path"
 import {
-  ApplicationState,
+  ApplicationStateLoad,
   type ApplicationState as ApplicationStateType,
+  type ApplicationStateLoad as ApplicationStateLoadType,
   type ProjectSelectionState,
   type ProjectUIState,
 } from "../../../shared/applicationState"
+import { locationKey } from "../../../shared/domain/projectCatalog"
 
 export class ApplicationStateServiceError extends Schema.TaggedErrorClass<ApplicationStateServiceError>()(
   "ApplicationStateServiceError",
@@ -14,7 +16,7 @@ export class ApplicationStateServiceError extends Schema.TaggedErrorClass<Applic
 ) {}
 
 interface ApplicationStateServiceShape {
-  readonly load: Effect.Effect<ApplicationStateType, ApplicationStateServiceError>
+  readonly load: Effect.Effect<ApplicationStateLoadType, ApplicationStateServiceError>
   readonly saveSelection: (
     selection: ProjectSelectionState,
   ) => Effect.Effect<ApplicationStateType, ApplicationStateServiceError>
@@ -33,9 +35,9 @@ interface ApplicationStateServiceOptions {
 }
 
 const emptyState: ApplicationStateType = {
-  version: 1,
-  openProjectIDs: [],
-  activeProjectID: null,
+  version: 2,
+  openLocations: [],
+  activeLocationKey: null,
   projects: [],
 }
 
@@ -58,9 +60,11 @@ export function makeApplicationStateServiceLive(options: ApplicationStateService
             ),
           )
       const stateFileExists = yield* fileSystem.exists(path)
-      const read = Effect.suspend(() =>
+      const read: Effect.Effect<ApplicationStateLoadType, unknown> = Effect.suspend(() =>
         stateFileExists
-          ? readJSON(path).pipe(Effect.flatMap(Schema.decodeUnknownEffect(ApplicationState)))
+          ? readJSON(path).pipe(
+              Effect.flatMap((raw) => Schema.decodeUnknownEffect(ApplicationStateLoad)(raw)),
+            )
           : Effect.succeed(emptyState),
       ).pipe(
         Effect.mapError(
@@ -71,7 +75,22 @@ export function makeApplicationStateServiceLive(options: ApplicationStateService
             }),
         ),
       )
-      const initial = yield* read
+      const loaded = yield* read
+      const initial: ApplicationStateLoadType =
+        loaded.version === 2
+          ? {
+              ...loaded,
+              activeLocationKey:
+                loaded.activeLocationKey !== null &&
+                loaded.openLocations.some(
+                  (item) => locationKey(item.location) === loaded.activeLocationKey,
+                )
+                  ? loaded.activeLocationKey
+                  : loaded.openLocations[0] === undefined
+                    ? null
+                    : locationKey(loaded.openLocations[0].location),
+            }
+          : loaded
       const state = yield* Ref.make(initial)
       const lock = yield* Semaphore.make(1)
       const write = (next: ApplicationStateType) =>
@@ -91,20 +110,28 @@ export function makeApplicationStateServiceLive(options: ApplicationStateService
               }),
           ),
         )
-      if (!stateFileExists) yield* write(initial)
+      if (!stateFileExists) yield* write(emptyState)
       const saveSelection = (selection: ProjectSelectionState) =>
         lock.withPermits(1)(
           Ref.get(state).pipe(
             Effect.flatMap((current) => {
-              const openProjectIDs = Array.from(new Set(selection.openProjectIDs))
+              const openLocations = Array.from(
+                new Map(
+                  selection.openLocations.map((item) => [locationKey(item.location), item]),
+                ).values(),
+              )
+              const selectedKeys = new Set(openLocations.map((item) => locationKey(item.location)))
               return write({
-                ...current,
-                openProjectIDs,
-                activeProjectID:
-                  selection.activeProjectID !== null &&
-                  openProjectIDs.includes(selection.activeProjectID)
-                    ? selection.activeProjectID
-                    : (openProjectIDs[0] ?? null),
+                version: 2,
+                openLocations,
+                projects: current.version === 2 ? current.projects : [],
+                activeLocationKey:
+                  selection.activeLocationKey !== null &&
+                  selectedKeys.has(selection.activeLocationKey)
+                    ? selection.activeLocationKey
+                    : openLocations[0] === undefined
+                      ? null
+                      : locationKey(openLocations[0].location),
               })
             }),
           ),
@@ -114,10 +141,14 @@ export function makeApplicationStateServiceLive(options: ApplicationStateService
           Ref.get(state).pipe(
             Effect.flatMap((current) =>
               write({
-                ...current,
+                version: 2,
+                openLocations: current.version === 2 ? current.openLocations : [],
+                activeLocationKey: current.version === 2 ? current.activeLocationKey : null,
                 projects: [
                   projectState,
-                  ...current.projects.filter((item) => item.projectID !== projectState.projectID),
+                  ...(current.version === 2 ? current.projects : []).filter(
+                    (item) => item.locationKey !== projectState.locationKey,
+                  ),
                 ],
               }),
             ),

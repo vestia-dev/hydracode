@@ -40,6 +40,7 @@ export interface GraphToolCall {
   readonly result?: string
   readonly diff?: GraphToolDiff
   readonly subagentSessionID?: string
+  readonly executionMode?: "foreground" | "background"
   readonly status: GraphNodeStatus
   readonly artifacts: ReadonlyArray<GraphArtifact>
   readonly provenance: GraphProvenance

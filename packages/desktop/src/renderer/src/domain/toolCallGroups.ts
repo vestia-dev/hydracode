@@ -4,6 +4,7 @@ export interface ToolCallGroup {
   readonly id: string
   readonly name: string
   readonly detail: string
+  readonly result?: string
   readonly status: GraphNodeStatus
 }
 
@@ -23,13 +24,20 @@ export function groupToolCalls(calls: ReadonlyArray<GraphToolCall>): ReadonlyArr
     if (group === undefined) groups.set(key, { name: call.name, calls: [call] })
     else group.calls.push(call)
   }
-  return Array.from(groups, ([key, group]) => ({
-    id: key,
-    name: group.name,
-    detail: group.calls
-      .map((call) => call.detail)
-      .filter((detail) => detail !== "")
-      .join(" "),
-    status: groupStatus(group.calls),
-  }))
+  return Array.from(groups, ([key, group]) => {
+    const result = group.calls
+      .map((call) => call.result)
+      .filter((value): value is string => value !== undefined && value !== "")
+      .join(" ")
+    return {
+      id: key,
+      name: group.name,
+      detail: group.calls
+        .map((call) => call.detail)
+        .filter((detail) => detail !== "")
+        .join(" "),
+      ...(result === "" ? {} : { result }),
+      status: groupStatus(group.calls),
+    }
+  })
 }

@@ -10,6 +10,7 @@ import {
 import { Effect, Fiber } from "effect"
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react"
 import { AppRuntime } from "../runtime"
+import { recordStartupMeasure } from "../startupTiming"
 import type { DesktopBridge, DesktopBridgeError } from "../services/DesktopBridge"
 import { IconButton } from "./IconButton"
 
@@ -117,8 +118,11 @@ export function SessionPromptNode({ data }: NodeProps<SessionPromptFlowNode>) {
   useLayoutEffect(() => {
     const input = promptInput.current
     if (input === null) return
+    const started = performance.now()
     input.style.height = "auto"
-    input.style.height = `${String(input.scrollHeight)}px`
+    const scrollHeight = input.scrollHeight
+    input.style.height = `${String(scrollHeight)}px`
+    recordStartupMeasure("prompt-autosize-layout", started, { scrollHeight })
   }, [text])
 
   const placeholder =

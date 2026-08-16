@@ -190,8 +190,8 @@ export function SessionQuestionNode({ data }: NodeProps<SessionQuestionFlowNode>
         ) : null}
       </header>
 
-      <p className="question-node__text">{question.question}</p>
-      <p className="question-node__hint">
+      <p className="question-node__text nodrag nopan">{question.question}</p>
+      <p className="question-node__hint nodrag nopan">
         {multi ? "Select one or more options" : "Select one option"}
       </p>
 

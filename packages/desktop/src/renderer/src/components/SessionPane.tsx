@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react"
 import { Effect } from "effect"
 import type { Question } from "@opencode-ai/client/effect"
 import {
@@ -19,10 +19,12 @@ import type { SemanticGraphNode } from "../domain/graph"
 import {
   collapsedSubagentPosition,
   horizontalRoundSideNodePosition,
+  roundBranchWidth,
   roundSideNodePosition,
   roundTimelineDistance,
   splitRoundToolsX,
   splitRoundToolsWidth,
+  splitRoundSideNodeX,
   subagentTimelinePosition,
   timelinePositions,
 } from "../domain/sessionLayout"
@@ -67,11 +69,15 @@ const edgeTypes: EdgeTypes = {
 interface SessionPaneProps {
   readonly session: SessionView
   readonly descendants: ReadonlyArray<SessionView>
+  readonly directory: string
   readonly submitPrompt: (
     sessionID: SessionView["id"],
     text: string,
   ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
   readonly interruptSession: (
+    sessionID: SessionView["id"],
+  ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
+  readonly backgroundSession: (
     sessionID: SessionView["id"],
   ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
   readonly replyQuestion: (
@@ -103,6 +109,48 @@ type FlowNode =
   | SessionPromptFlowNode
   | SessionQuestionFlowNode
 
+interface CompletedFlowNodeCacheEntry {
+  readonly source: SemanticGraphNode
+  readonly layoutKey: string
+  readonly node: FlowNode
+}
+
+function completedFlowNodeLayoutKey(node: FlowNode) {
+  if (node.type === "sessionRound") {
+    const data = node.data
+    return [
+      data.status,
+      data.expanded,
+      data.subagentRoot,
+      data.hasTools,
+      data.hasSubagents,
+      data.hasShellResources,
+      data.hasArtifacts,
+      data.horizontalSides,
+      data.collapseSubagent !== undefined,
+    ].join(":")
+  }
+  if (node.type === "sessionRoundTools") {
+    const data = node.data
+    return [data.status, data.width, data.maxHeight, data.targetSide].join(":")
+  }
+  if (node.type === "sessionRoundArtifacts") {
+    const data = node.data
+    return [data.width, data.maxHeight, data.targetSide].join(":")
+  }
+  return undefined
+}
+
+function reuseCompletedFlowNodeData(node: FlowNode, cached: FlowNode) {
+  if (node.type === "sessionRound" && cached.type === "sessionRound")
+    Object.assign(node, { data: cached.data })
+  else if (node.type === "sessionRoundTools" && cached.type === "sessionRoundTools")
+    Object.assign(node, { data: cached.data })
+  else if (node.type === "sessionRoundArtifacts" && cached.type === "sessionRoundArtifacts")
+    Object.assign(node, { data: cached.data })
+  return node
+}
+
 const ROUND_WIDTH = 420
 const EVENT_WIDTH = 220
 const PROMPT_WIDTH = 270
@@ -112,6 +160,58 @@ const ROUND_COLLAPSED_HEIGHT = 92
 interface NodeSize {
   readonly width: number
   readonly height: number
+}
+
+interface ActivityShell {
+  readonly command: string
+  readonly executionMode: "foreground" | "background"
+  readonly id: string
+  readonly result?: string
+  readonly running: boolean
+  readonly status: string
+}
+
+interface ActivitySubagent {
+  readonly agent: string
+  readonly expanded: boolean
+  readonly id: string
+  readonly running: boolean
+  readonly status: string
+  readonly title: string
+  readonly executionMode: "foreground" | "background"
+}
+
+interface ActivitySummary {
+  readonly id: string
+  readonly position: { readonly x: number; readonly y: number }
+  readonly width: number
+  readonly subagents: Array<ActivitySubagent>
+  readonly shells: ReadonlyArray<ActivityShell>
+  readonly targetSide: "bottom" | "left" | "top"
+}
+
+function activityShells(node: SemanticGraphNode | undefined): ReadonlyArray<ActivityShell> {
+  return (node?.roundTools?.calls ?? []).flatMap((call) => {
+    const name = call.name.toLowerCase().replaceAll(/[-_]/g, "")
+    if (name !== "shell" && name !== "bash") return []
+    return [
+      {
+        command: call.detail,
+        executionMode: call.executionMode ?? "foreground",
+        id: call.id,
+        ...(call.result === undefined ? {} : { result: call.result }),
+        running: call.status === "running",
+        status:
+          call.status === "running"
+            ? "Running"
+            : call.status === "error"
+              ? "Failed"
+              : call.status === "completed"
+                ? "Completed"
+                : "Pending",
+      },
+    ]
+  })
 }
 
 function isRoundSideNode(node: SemanticGraphNode) {
@@ -149,10 +249,12 @@ function roundFlowNode(
   subagentRoot: boolean,
   hasTools: boolean,
   hasSubagents: boolean,
+  hasShellResources: boolean,
   hasArtifacts: boolean,
   horizontalSides: boolean,
   expanded: boolean,
   collapseSubagent: (() => void) | undefined,
+  background: (() => void) | undefined,
   stop: (() => void) | undefined,
   reportSize: (id: string, width: number, height: number) => void,
   toggleExpanded: (id: string) => void,
@@ -169,11 +271,13 @@ function roundFlowNode(
       subagentRoot,
       hasTools,
       hasSubagents,
+      hasShellResources,
       hasArtifacts,
       horizontalSides,
       reportSize,
       toggleExpanded,
       ...(collapseSubagent === undefined ? {} : { collapseSubagent }),
+      ...(background === undefined ? {} : { background }),
       ...(stop === undefined ? {} : { stop }),
     },
   }
@@ -236,6 +340,7 @@ function SessionCanvas({
   stopFamily,
   stopFollowing,
   submitPrompt,
+  backgroundSession,
   interruptSession,
   replyQuestion,
   rejectQuestion,
@@ -246,6 +351,9 @@ function SessionCanvas({
   updateUIState,
 }: SessionCanvasProps) {
   const measuredNodeSizes = useRef(new Map<string, NonNullable<FlowNode["measured"]>>())
+  const completedFlowNodeCache = useRef(new Map<string, CompletedFlowNodeCacheEntry>())
+  const initialFlowRenderStarted = useRef(performance.now())
+  const recordedNodeMeasurement = useRef(false)
   const appliedFocusPromptRequest = useRef<number | undefined>(undefined)
   const appliedFollowLatestRequest = useRef<number | undefined>(undefined)
   const [expandedRounds, setExpandedRounds] = useState<ReadonlySet<string>>(
@@ -257,53 +365,46 @@ function SessionCanvas({
   const [roundSizes, setRoundSizes] = useState<ReadonlyMap<string, NodeSize>>(() => new Map())
   const [sideNodeSizes, setSideNodeSizes] = useState<ReadonlyMap<string, NodeSize>>(() => new Map())
   const nodeDistance = useTheme().layout.nodeDistance
+  const updateUIStateEvent = useEffectEvent(updateUIState)
 
-  const toggleRound = useCallback(
-    (id: string) => {
-      setExpandedRounds((current) => {
-        const next = new Set(current)
-        if (next.has(id)) next.delete(id)
-        else next.add(id)
-        updateUIState({ expandedRoundIDs: Array.from(next) })
-        return next
-      })
-    },
-    [updateUIState],
-  )
-  const toggleSubagent = useCallback(
-    (id: string) => {
-      setExpandedSubagents((current) => {
-        const next = new Set(current)
-        if (next.has(id)) next.delete(id)
-        else next.add(id)
-        updateUIState({ expandedSubagentIDs: Array.from(next) })
-        return next
-      })
-    },
-    [updateUIState],
-  )
-  const openSubagents = useCallback(
-    (ids: ReadonlyArray<string>) => {
-      setExpandedSubagents((current) => {
-        const next = new Set(current)
-        for (const id of ids) next.add(id)
-        updateUIState({ expandedSubagentIDs: Array.from(next) })
-        return next
-      })
-    },
-    [updateUIState],
-  )
-  const closeSubagents = useCallback(
-    (ids: ReadonlyArray<string>) => {
-      setExpandedSubagents((current) => {
-        const next = new Set(current)
-        for (const id of ids) next.delete(id)
-        updateUIState({ expandedSubagentIDs: Array.from(next) })
-        return next
-      })
-    },
-    [updateUIState],
-  )
+  useEffect(() => {
+    updateUIStateEvent({ expandedRoundIDs: Array.from(expandedRounds) })
+  }, [expandedRounds])
+
+  useEffect(() => {
+    updateUIStateEvent({ expandedSubagentIDs: Array.from(expandedSubagents) })
+  }, [expandedSubagents])
+
+  const toggleRound = useCallback((id: string) => {
+    setExpandedRounds((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+  const toggleSubagent = useCallback((id: string) => {
+    setExpandedSubagents((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+  const openSubagents = useCallback((ids: ReadonlyArray<string>) => {
+    setExpandedSubagents((current) => {
+      const next = new Set(current)
+      for (const id of ids) next.add(id)
+      return next
+    })
+  }, [])
+  const closeSubagents = useCallback((ids: ReadonlyArray<string>) => {
+    setExpandedSubagents((current) => {
+      const next = new Set(current)
+      for (const id of ids) next.delete(id)
+      return next
+    })
+  }, [])
   const reportRoundSize = useCallback((id: string, width: number, height: number) => {
     setRoundSizes((current) => {
       const currentSize = current.get(id)
@@ -322,13 +423,29 @@ function SessionCanvas({
       return next
     })
   }, [])
-  const retainMeasuredNodeSizes = useCallback((changes: Array<NodeChange<FlowNode>>) => {
-    for (const change of changes) {
-      if (change.type === "dimensions" && change.dimensions !== undefined) {
-        measuredNodeSizes.current.set(change.id, change.dimensions)
+  const retainMeasuredNodeSizes = useCallback(
+    (changes: Array<NodeChange<FlowNode>>) => {
+      let measured = 0
+      for (const change of changes) {
+        if (change.type === "dimensions" && change.dimensions !== undefined) {
+          measuredNodeSizes.current.set(change.id, change.dimensions)
+          measured += 1
+        }
       }
-    }
-  }, [])
+      if (measured > 0 && !recordedNodeMeasurement.current) {
+        recordedNodeMeasurement.current = true
+        recordStartupMeasure(
+          "session-flow-time-to-node-measurement",
+          initialFlowRenderStarted.current,
+          {
+            sessionID: session.id,
+            nodes: measured,
+          },
+        )
+      }
+    },
+    [session.id],
+  )
 
   const flow = useMemo(() => {
     const started = performance.now()
@@ -354,22 +471,11 @@ function SessionCanvas({
     let composerPosition = { x: 0, y: 480 }
     const positions = new Map<string, { readonly x: number; readonly y: number }>()
     const childConnections: Array<{ readonly source: string; readonly target: string }> = []
-    const collapsedSubagents = new Map<
-      string,
-      {
-        readonly id: string
-        readonly position: { readonly x: number; readonly y: number }
-        readonly width: number
-        readonly subagents: Array<{
-          readonly agent: string
-          readonly expanded: boolean
-          readonly id: string
-          readonly running: boolean
-        }>
-      }
-    >()
+    const shellConnections: Array<{ readonly source: string; readonly target: string }> = []
+    const collapsedSubagents = new Map<string, ActivitySummary>()
+    const shellResources = new Map<string, ActivitySummary>()
     const splitToolNodeIDs = new Set<string>()
-    const subagentRoundIDs = new Set<string>()
+    const splitArtifactNodeIDs = new Set<string>()
     const runningSubagentIDs = new Set<string>()
     const positionedSessions = new Set<string>()
 
@@ -410,6 +516,7 @@ function SessionCanvas({
                       nodeID: node.id,
                       roundID,
                       status: call.status,
+                      executionMode: call.executionMode ?? "foreground",
                       created: call.time.created,
                       sessionIDs:
                         call.subagentSessionID === undefined ? [] : [call.subagentSessionID],
@@ -422,7 +529,14 @@ function SessionCanvas({
       for (const launcher of launchers) {
         if (!matchedLauncherIDs.has(launcher.id)) continue
         splitToolNodeIDs.add(launcher.nodeID)
-        subagentRoundIDs.add(launcher.roundID)
+      }
+      for (const node of current.graph.nodes) {
+        if (node.kind !== "round-tools" || activityShells(node).length === 0) continue
+        const artifacts = current.graph.nodes.find(
+          (candidate) =>
+            candidate.kind === "round-artifacts" && candidate.agentRunID === node.agentRunID,
+        )
+        if (artifacts !== undefined && !horizontalSides) splitArtifactNodeIDs.add(artifacts.id)
       }
 
       for (const round of timelineNodes.filter((node) => node.kind === "round")) {
@@ -464,29 +578,84 @@ function SessionCanvas({
               : toolsPosition,
           )
         }
+        const shells = activityShells(tools)
+        const lowerBranchCount = (artifacts === undefined ? 0 : 1) + (shells.length > 0 ? 1 : 0)
         if (artifacts !== undefined) {
+          const split = splitArtifactNodeIDs.has(artifacts.id)
+          const artifactsWidth = horizontalSides
+            ? roundSize.width
+            : roundBranchWidth(roundSize.width, nodeDistance.horizontal, lowerBranchCount)
           const artifactsSize = sideNodeSizes.get(artifacts.id) ?? {
-            width: roundSize.width,
+            width: artifactsWidth,
             height: 180,
           }
+          const artifactsPosition = horizontalSides
+            ? horizontalRoundSideNodePosition(
+                anchor,
+                roundSize,
+                { width: artifactsWidth, height: artifactsSize.height },
+                nodeDistance.horizontal,
+                "right",
+              )
+            : roundSideNodePosition(
+                anchor,
+                roundSize,
+                artifactsSize.height,
+                nodeDistance.vertical,
+                "bottom",
+              )
           positions.set(
             artifacts.id,
-            horizontalSides
-              ? horizontalRoundSideNodePosition(
-                  anchor,
-                  roundSize,
-                  { width: roundSize.width, height: artifactsSize.height },
-                  nodeDistance.horizontal,
-                  "right",
-                )
-              : roundSideNodePosition(
-                  anchor,
-                  roundSize,
-                  artifactsSize.height,
-                  nodeDistance.vertical,
-                  "bottom",
-                ),
+            split
+              ? {
+                  ...artifactsPosition,
+                  x: splitRoundSideNodeX(anchor, roundSize.width, artifactsWidth, "left"),
+                }
+              : artifactsPosition,
           )
+        }
+        if (shells.length > 0) {
+          const shellWidth = horizontalSides
+            ? roundSize.width
+            : roundBranchWidth(roundSize.width, nodeDistance.horizontal, lowerBranchCount)
+          const shellID = `shell-resources:${round.id}`
+          const shellSize = sideNodeSizes.get(shellID) ?? {
+            width: shellWidth,
+            height: Math.min(66 + shells.length * 31, 280),
+          }
+          const shellPosition = horizontalSides
+            ? {
+                x: anchor.x + roundSize.width + nodeDistance.horizontal,
+                y:
+                  anchor.y +
+                  (artifacts === undefined
+                    ? 0
+                    : (sideNodeSizes.get(artifacts.id)?.height ?? 180) + nodeDistance.vertical),
+              }
+            : roundSideNodePosition(
+                anchor,
+                roundSize,
+                shellSize.height,
+                nodeDistance.vertical,
+                "bottom",
+              )
+          shellResources.set(round.id, {
+            id: shellID,
+            position: horizontalSides
+              ? shellPosition
+              : {
+                  ...shellPosition,
+                  x:
+                    artifacts === undefined
+                      ? anchor.x
+                      : splitRoundSideNodeX(anchor, roundSize.width, shellWidth, "right"),
+                },
+            width: shellWidth,
+            subagents: [],
+            shells,
+            targetSide: horizontalSides ? "left" : "top",
+          })
+          shellConnections.push({ source: round.id, target: shellID })
         }
       }
 
@@ -527,18 +696,35 @@ function SessionCanvas({
           const agent =
             firstChildNode.round?.agent?.agents.join(", ") || firstChildNode.title || "Subagent"
           const expanded = expandedSubagents.has(child.id)
-          const running = !current.graph.completedSubagentSessionIDs.includes(child.id)
+          const running = child.active
+          const status =
+            child.execution._tag === "Retrying"
+              ? `Retrying ${child.execution.attempt}`
+              : child.execution._tag === "Failed"
+                ? "Failed"
+                : running
+                  ? "Running"
+                  : "Inactive"
+          const subagent = {
+            agent,
+            expanded,
+            id: child.id,
+            running,
+            status,
+            title: child.title,
+            executionMode: launcher.executionMode,
+          }
           if (running) runningSubagentIDs.add(child.id)
           const existing = collapsedSubagents.get(parentRound.id)
           if (existing !== undefined) {
-            existing.subagents.push({ agent, expanded, id: child.id, running })
+            existing.subagents.push(subagent)
           } else {
             const tools = current.graph.nodes.find((node) => node.id === launcher.nodeID)
             const toolsHeight =
               sideNodeSizes.get(launcher.nodeID)?.height ??
               42 + (tools?.roundTools?.calls.length ?? 0) * 31
             const toolsWidth = splitRoundToolsWidth(parentSize.width, nodeDistance.horizontal)
-            const collapsedID = `collapsed-subagents:${parentRound.id}`
+            const collapsedID = `subagents:${parentRound.id}`
             const collapsedSize = sideNodeSizes.get(collapsedID) ?? {
               width: toolsWidth,
               height: 66,
@@ -553,7 +739,9 @@ function SessionCanvas({
                 collapsedSize,
               ),
               width: toolsWidth,
-              subagents: [{ agent, expanded, id: child.id, running }],
+              subagents: [subagent],
+              shells: [],
+              targetSide: "bottom",
             })
             childConnections.push({ source: parentRound.id, target: collapsedID })
           }
@@ -594,11 +782,28 @@ function SessionCanvas({
               : node.status
           const hasTools = current.graph.nodes.some(
             (candidate) =>
-              candidate.kind === "round-tools" && candidate.agentRunID === node.agentRunID,
+              candidate.kind === "round-tools" &&
+              candidate.agentRunID === node.agentRunID &&
+              positions.has(candidate.id),
           )
+          const backgroundableToolActive = current.graph.nodes
+            .find(
+              (candidate) =>
+                candidate.kind === "round-tools" && candidate.agentRunID === node.agentRunID,
+            )
+            ?.roundTools?.calls.some((call) => {
+              const name = call.name.toLowerCase().replaceAll(/[-_]/g, "")
+              return (
+                call.status === "running" &&
+                (name === "shell" || name === "bash" || name === "subagent" || name === "task")
+              )
+            })
           const hasArtifacts = current.graph.nodes.some(
             (candidate) =>
-              candidate.kind === "round-artifacts" && candidate.agentRunID === node.agentRunID,
+              candidate.kind === "round-artifacts" &&
+              candidate.agentRunID === node.agentRunID &&
+              (candidate.roundArtifacts?.diff.files.length ?? 0) > 0 &&
+              positions.has(candidate.id),
           )
           nodes.push(
             roundFlowNode(
@@ -606,12 +811,16 @@ function SessionCanvas({
               position,
               subagentRootNodeIDs.has(node.id),
               hasTools,
-              subagentRoundIDs.has(node.id),
+              collapsedSubagents.has(node.id),
+              shellResources.has(node.id),
               hasArtifacts,
               current.parentID !== undefined,
               expandedRounds.has(node.id),
               subagentRootNodeIDs.has(node.id) && expandedSubagents.has(current.id)
                 ? () => toggleSubagent(current.id)
+                : undefined,
+              status === "running" && backgroundableToolActive === true
+                ? () => AppRuntime.runFork(backgroundSession(current.id).pipe(Effect.ignore))
                 : undefined,
               status === "running"
                 ? () => {
@@ -657,7 +866,12 @@ function SessionCanvas({
             position,
             data: {
               id: node.id,
-              width: roundSizes.get(node.agentRunID ?? "")?.width ?? ROUND_WIDTH,
+              width: splitArtifactNodeIDs.has(node.id)
+                ? splitRoundToolsWidth(
+                    roundSizes.get(node.agentRunID ?? "")?.width ?? ROUND_WIDTH,
+                    nodeDistance.horizontal,
+                  )
+                : (roundSizes.get(node.agentRunID ?? "")?.width ?? ROUND_WIDTH),
               artifacts: node.roundArtifacts,
               targetSide: current.parentID === undefined ? "top" : "left",
               ...(current.parentID === undefined
@@ -688,16 +902,36 @@ function SessionCanvas({
         position: collapsed.position,
         data: {
           id: collapsed.id,
+          kind: "subagents",
+          targetSide: collapsed.targetSide,
           subagents: collapsed.subagents.map((subagent) => ({
             ...subagent,
             toggle: () => toggleSubagent(subagent.id),
           })),
+          shells: collapsed.shells,
           width: collapsed.width,
           toggleAll: () => {
             const ids = collapsed.subagents.map((subagent) => subagent.id)
             if (collapsed.subagents.every((subagent) => subagent.expanded)) closeSubagents(ids)
             else openSubagents(ids)
           },
+          reportSize: reportSideNodeSize,
+        },
+      })),
+    )
+    nodes.push(
+      ...Array.from(shellResources.values(), (summary): SessionCollapsedSubagentFlowNode => ({
+        id: summary.id,
+        type: "sessionCollapsedSubagent",
+        position: summary.position,
+        data: {
+          id: summary.id,
+          kind: "shell-resources",
+          targetSide: summary.targetSide,
+          subagents: [],
+          shells: summary.shells,
+          width: summary.width,
+          toggleAll: () => undefined,
           reportSize: reportSideNodeSize,
         },
       })),
@@ -772,6 +1006,17 @@ function SessionCanvas({
         className: "subagent-edge",
       })),
     )
+    edges.push(
+      ...shellConnections.map(({ source, target }) => ({
+        id: `${source}->${target}`,
+        source,
+        target,
+        sourceHandle: "shell-resources-source",
+        targetHandle: "shell-resources-target",
+        type: "sessionSpoke",
+        className: "artifacts-edge",
+      })),
+    )
     if (composer.precedingNodeID !== undefined) {
       edges.push({
         id: `${composer.precedingNodeID}->${composer.id}`,
@@ -783,8 +1028,30 @@ function SessionCanvas({
         markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
       })
     }
+    const semanticNodes = new Map(
+      sessions.flatMap((current) => current.graph.nodes.map((node) => [node.id, node] as const)),
+    )
+    const nextCompletedFlowNodeCache = new Map<string, CompletedFlowNodeCacheEntry>()
+    const stableNodes = nodes.map((node) => {
+      const source = semanticNodes.get(node.id)
+      const layoutKey = completedFlowNodeLayoutKey(node)
+      if (
+        source === undefined ||
+        (source.status !== "completed" && source.status !== "error") ||
+        layoutKey === undefined
+      )
+        return node
+      const cached = completedFlowNodeCache.current.get(node.id)
+      const stableNode =
+        cached?.source === source && cached.layoutKey === layoutKey
+          ? reuseCompletedFlowNodeData(node, cached.node)
+          : node
+      nextCompletedFlowNodeCache.set(node.id, { source, layoutKey, node: stableNode })
+      return stableNode
+    })
+    completedFlowNodeCache.current = nextCompletedFlowNodeCache
     const result = {
-      nodes: nodes.map((node) => {
+      nodes: stableNodes.map((node) => {
         const measured = measuredNodeSizes.current.get(node.id)
         return measured === undefined ? node : Object.assign(node, { measured })
       }),
@@ -812,6 +1079,7 @@ function SessionCanvas({
     replyQuestion,
     rejectQuestion,
     focusPromptRequest,
+    backgroundSession,
     interruptSession,
     session,
     sideNodeSizes,
@@ -878,12 +1146,21 @@ function SessionCanvas({
       onNodesChange={retainMeasuredNodeSizes}
       nodesDraggable={false}
       nodesConnectable={false}
-      onMoveStart={(event) => {
+      onMove={(event) => {
         if (event !== null && followLatest) stopFollowing()
       }}
       onMoveEnd={(_event, viewport: Viewport) => updateUIState({ viewport })}
       {...(uiState?.viewport === undefined ? {} : { defaultViewport: uiState.viewport })}
       onInit={(instance) => {
+        recordStartupMeasure(
+          "session-flow-time-to-initialization",
+          initialFlowRenderStarted.current,
+          {
+            sessionID: session.id,
+            nodes: flow.nodes.length,
+            edges: flow.edges.length,
+          },
+        )
         const focusNodeID = flow.focusNodeID
         if (!followLatest || focusNodeID === undefined) return
         window.requestAnimationFrame(() => {
@@ -908,9 +1185,11 @@ function SessionCanvas({
 export function SessionPane({
   session,
   descendants,
+  directory,
   submitPrompt,
   replyQuestion,
   rejectQuestion,
+  backgroundSession,
   interruptSession,
   retryPrompt,
   focusPromptRequest,
@@ -968,7 +1247,12 @@ export function SessionPane({
         className={`session-heading${followLatest ? " session-heading--following" : ""}`}
         aria-label={followLatest ? "Following latest node" : undefined}
       >
-        <strong>{session.title}</strong>
+        <span className="session-heading__identity">
+          <strong>{session.title}</strong>
+          <span className="session-heading__location" title={directory}>
+            {directory}
+          </span>
+        </span>
         {executionLabel === undefined ? null : (
           <span className="session-heading__status">{executionLabel}</span>
         )}
@@ -977,10 +1261,12 @@ export function SessionPane({
         <SessionCanvas
           session={session}
           descendants={descendants}
+          directory={directory}
           followLatest={followLatest}
           stopFamily={stopFamily}
           stopFollowing={stopFollowing}
           submitPrompt={submitPromptAndFollow}
+          backgroundSession={backgroundSession}
           interruptSession={interruptSession}
           replyQuestion={replyQuestion}
           rejectQuestion={rejectQuestion}

@@ -4,9 +4,11 @@ import {
   collapsedSubagentPosition,
   horizontalRoundSideNodePosition,
   roundSideNodePosition,
+  roundBranchWidth,
   roundTimelineDistance,
   splitRoundToolsX,
   splitRoundToolsWidth,
+  splitRoundSideNodeX,
   subagentTimelinePosition,
   timelinePositions,
 } from "./sessionLayout"
@@ -76,6 +78,22 @@ it.effect("uses the left half of a round for tools when a subagent occupies the 
     const toolsWidth = splitRoundToolsWidth(420, 32)
     expect(toolsWidth).toBe(194)
     expect(splitRoundToolsX({ x: 300, y: 480 }, 420, toolsWidth)).toBe(308)
+  }),
+)
+
+it.effect("divides branch width equally among only the nodes that exist", () =>
+  Effect.sync(() => {
+    expect(roundBranchWidth(420, 32, 1)).toBe(420)
+    expect(roundBranchWidth(420, 32, 2)).toBe(194)
+    expect(roundBranchWidth(420, 32, 3)).toBeCloseTo(118.67, 2)
+  }),
+)
+
+it.effect("places paired lower nodes in left and right lanes", () =>
+  Effect.sync(() => {
+    const width = splitRoundToolsWidth(420, 32)
+    expect(splitRoundSideNodeX({ x: 300, y: 480 }, 420, width, "left")).toBe(308)
+    expect(splitRoundSideNodeX({ x: 300, y: 480 }, 420, width, "right")).toBe(518)
   }),
 )
 

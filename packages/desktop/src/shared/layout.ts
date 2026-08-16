@@ -5,6 +5,7 @@ export const SavedPaneNode = Schema.Union([
     _tag: Schema.Literal("Pane"),
     id: Schema.String,
     sessionID: Schema.optional(Schema.String),
+    locationKey: Schema.optional(Schema.String),
   }),
   Schema.Struct({
     _tag: Schema.Literal("Split"),

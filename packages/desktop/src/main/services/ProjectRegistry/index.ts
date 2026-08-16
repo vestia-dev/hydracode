@@ -3,6 +3,7 @@ import {
   Question,
   Session,
   SessionMessage,
+  Project,
   type OpenCodeClient,
   type OpenCodeEvent,
 } from "@opencode-ai/client/effect"
@@ -20,7 +21,7 @@ import {
 } from "../../../shared/domain/sessionLog"
 import type {
   ProjectDetails,
-  AvailableProject,
+  ProjectCatalogEntry,
   ProjectSession,
   ProjectSnapshot,
   ProjectUpdate,
@@ -32,6 +33,8 @@ import {
   availableProjects,
   projectName,
   createSessionSummaries,
+  locationsEqual,
+  locationKey,
   sessionRootID,
 } from "../../../shared/domain/projectCatalog"
 import { OpenCodeService } from "../OpenCodeService"
@@ -48,6 +51,7 @@ interface Subscriber {
 }
 interface Entry {
   project: ProjectDetails
+  readonly location: Location.Ref
   readonly directories: Set<string>
   readonly client: OpenCodeClient
   readonly info: Map<string, Session.Info>
@@ -62,8 +66,8 @@ interface Entry {
 }
 
 interface ProjectRegistryShape {
-  readonly list: Effect.Effect<ReadonlyArray<AvailableProject>, unknown>
-  readonly resolve: (location: Location.Ref) => Effect.Effect<AvailableProject, unknown>
+  readonly list: Effect.Effect<ReadonlyArray<ProjectCatalogEntry>, unknown>
+  readonly resolve: (location: Location.Ref) => Effect.Effect<ProjectCatalogEntry, unknown>
   readonly open: (
     location: Location.Ref | undefined,
     notify: (subscriptionID: string, update: ProjectUpdate) => void,
@@ -90,6 +94,10 @@ interface ProjectRegistryShape {
     sessionID: string,
     requestID: string,
   ) => Effect.Effect<void, unknown>
+  readonly backgroundSession: (
+    subscriptionID: string,
+    sessionID: string,
+  ) => Effect.Effect<void, unknown>
   readonly interrupt: (subscriptionID: string, sessionID: string) => Effect.Effect<void, unknown>
 }
 
@@ -102,16 +110,23 @@ const emit = (entry: Entry, update: ProjectUpdate) => {
   for (const subscriber of entry.subscribers.values()) subscriber.notify(subscriber.id, update)
 }
 const snapshot = (entry: Entry, location: Location.Ref): ProjectSnapshot => {
-  const sessionMetadata = Array.from(entry.info.values(), (session) => ({
-    id: String(session.id),
-    ...(session.parentID == null ? {} : { parentID: String(session.parentID) }),
-    created: DateTime.toEpochMillis(session.time.created),
-    title: session.title ?? "Untitled session",
-  }))
+  const sessionMetadata = Array.from(entry.info.values())
+    .filter((session) => locationsEqual(session.location, location))
+    .map((session) => ({
+      id: String(session.id),
+      parentID: session.parentID == null ? undefined : String(session.parentID),
+      created: DateTime.toEpochMillis(session.time.created),
+      title: session.title ?? "Untitled session",
+    }))
   return {
     project: entry.project,
     location,
-    sessions: Array.from(entry.logs, ([sessionID, state]) => sessionView(entry, sessionID, state)),
+    sessions: Array.from(entry.logs).flatMap(([sessionID, state]) => {
+      const info = entry.info.get(sessionID)
+      return info !== undefined && locationsEqual(info.location, location)
+        ? [sessionView(entry, sessionID, state)]
+        : []
+    }),
     recentSessions: createSessionSummaries(sessionMetadata, entry.active),
   }
 }
@@ -123,6 +138,7 @@ const sessionView = (entry: Entry, sessionID: string, state: SessionLogState): P
   return {
     id: info.id,
     ...(info.parentID == null ? {} : { parentID: info.parentID }),
+    location: info.location,
     created: DateTime.toEpochMillis(info.time.created),
     title: info.title ?? "Untitled session",
     active:
@@ -152,6 +168,15 @@ const captureWatermark = (client: OpenCodeClient, sessionID: Session.ID) => {
   )
 }
 
+const listSessions = (entry: Entry, location: Location.Ref) =>
+  entry.client.session.list({
+    project: entry.project.id,
+    directory: location.directory,
+    ...(location.workspaceID === undefined ? {} : { workspace: location.workspaceID }),
+    limit: 50,
+    order: "desc",
+  })
+
 export const ProjectRegistryLive = Layer.effect(
   ProjectRegistry,
   Effect.gen(function* () {
@@ -168,9 +193,32 @@ export const ProjectRegistryLive = Layer.effect(
       }
     }
 
-    const list: Effect.Effect<ReadonlyArray<AvailableProject>, unknown> = openCode.client.pipe(
-      Effect.flatMap((client) => client.project.list()),
-      Effect.map(availableProjects),
+    const list: Effect.Effect<ReadonlyArray<ProjectCatalogEntry>, unknown> = Effect.gen(
+      function* () {
+        const client = yield* openCode.client
+        const projects = yield* client.project.list()
+        const locations = new Map<
+          Project.ID,
+          ReadonlyArray<import("../../../shared/project").ProjectLocation>
+        >()
+        yield* Effect.forEach(
+          projects,
+          (project) =>
+            client.worktree.list({ projectID: project.id }).pipe(
+              Effect.map((worktrees) =>
+                locations.set(
+                  project.id,
+                  worktrees.map((worktree) => ({
+                    ref: Location.Ref.make({ directory: worktree.directory }),
+                    kind: "worktree" as const,
+                  })),
+                ),
+              ),
+            ),
+          { concurrency: "unbounded" },
+        )
+        return availableProjects(projects, locations)
+      },
     )
 
     const resolve = (location: Location.Ref) =>
@@ -191,10 +239,7 @@ export const ProjectRegistryLive = Layer.effect(
             ...projectName(info?.name),
             ...(info?.icon === undefined ? {} : { icon: info.icon }),
           },
-          location: Location.Ref.make({
-            directory: current.directory,
-            ...(location.workspaceID === undefined ? {} : { workspaceID: location.workspaceID }),
-          }),
+          locations: [{ ref: location, kind: "selected" as const }],
           updated: info?.time.updated ?? Date.now(),
         }
       })
@@ -273,6 +318,7 @@ export const ProjectRegistryLive = Layer.effect(
         const stateBuildDuration = performance.now() - stateBuildStarted
         if (selectionStarted !== undefined && timings !== undefined) {
           timings.push({
+            sessionID: info.id,
             offset: started - selectionStarted,
             duration: performance.now() - started,
             watermarkDuration,
@@ -368,14 +414,7 @@ export const ProjectRegistryLive = Layer.effect(
     const reconcileSessions = (entry: Entry) =>
       Effect.gen(function* () {
         const [page, active] = yield* Effect.all(
-          [
-            entry.client.session.list({
-              project: entry.project.id,
-              limit: 50,
-              order: "desc",
-            }),
-            entry.client.session.active(),
-          ],
+          [listSessions(entry, entry.location), entry.client.session.active()],
           { concurrency: "unbounded" },
         )
         entry.active.clear()
@@ -484,14 +523,7 @@ export const ProjectRegistryLive = Layer.effect(
     const start = (entry: Entry) =>
       Effect.gen(function* () {
         const [page, active] = yield* Effect.all(
-          [
-            entry.client.session.list({
-              project: entry.project.id,
-              limit: 50,
-              order: "desc",
-            }),
-            entry.client.session.active(),
-          ],
+          [listSessions(entry, entry.location), entry.client.session.active()],
           { concurrency: "unbounded" },
         )
         for (const id of Object.keys(active)) entry.active.add(id)
@@ -536,16 +568,17 @@ export const ProjectRegistryLive = Layer.effect(
           ...(info?.icon === undefined ? {} : { icon: info.icon }),
         }
         const resolvedLocation = Location.Ref.make({
-          directory: current.directory,
+          directory: location?.directory ?? current.directory,
           ...(location?.workspaceID === undefined ? {} : { workspaceID: location.workspaceID }),
         })
         const knownDirectories = new Set(directories.map((item) => item.directory))
-        knownDirectories.add(current.directory)
-        const key = current.id
+        knownDirectories.add(resolvedLocation.directory)
+        const key = `${current.id}:${locationKey(resolvedLocation)}`
         let entry = entries.get(key)
         if (entry === undefined) {
           entry = {
             project,
+            location: resolvedLocation,
             directories: knownDirectories,
             client,
             info: new Map(),
@@ -584,7 +617,7 @@ export const ProjectRegistryLive = Layer.effect(
         entry.subscribers.delete(subscriptionID)
         subscriptions.delete(subscriptionID)
         if (entry.subscribers.size === 0) {
-          entries.delete(entry.project.id)
+          entries.delete(`${entry.project.id}:${locationKey(entry.location)}`)
           if (entry.fiber !== undefined) yield* Fiber.interrupt(entry.fiber)
         }
       })
@@ -687,6 +720,21 @@ export const ProjectRegistryLive = Layer.effect(
           sessionID: Schema.decodeUnknownSync(Session.ID)(sessionID),
         })
       })
+    const backgroundSession = (
+      subscriptionID: string,
+      sessionID: string,
+    ): Effect.Effect<void, unknown> =>
+      Effect.gen(function* () {
+        const subscription = subscriptions.get(subscriptionID)
+        if (subscription === undefined)
+          return yield* Effect.fail(
+            new ProjectRegistryError({ message: "Project subscription is closed" }),
+          )
+        const { entry } = subscription
+        return yield* entry.client.session.background({
+          sessionID: Schema.decodeUnknownSync(Session.ID)(sessionID),
+        })
+      })
     const replyQuestion = (
       subscriptionID: string,
       sessionID: string,
@@ -768,6 +816,7 @@ export const ProjectRegistryLive = Layer.effect(
       submitPrompt,
       replyQuestion,
       rejectQuestion,
+      backgroundSession,
       interrupt,
     })
   }),

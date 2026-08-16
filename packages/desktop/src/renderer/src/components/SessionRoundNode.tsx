@@ -22,10 +22,12 @@ export interface SessionRoundNodeData extends Record<string, unknown> {
   readonly subagentRoot: boolean
   readonly hasTools: boolean
   readonly hasSubagents: boolean
+  readonly hasShellResources: boolean
   readonly hasArtifacts: boolean
   readonly horizontalSides: boolean
   readonly expanded: boolean
   readonly collapseSubagent?: () => void
+  readonly background?: () => void
   readonly stop?: () => void
   readonly reportSize: (id: string, width: number, height: number) => void
   readonly toggleExpanded: (id: string) => void
@@ -59,6 +61,7 @@ function useRoundNodeRef(data: SessionRoundNodeData) {
     updateNodeInternals(data.id)
   }, [
     data.hasSubagents,
+    data.hasShellResources,
     data.hasTools,
     data.horizontalSides,
     data.id,
@@ -127,6 +130,20 @@ function RoundNodeSurface({
       onKeyDown={handleKeyDown}
     >
       <RoundNodeHandles data={data} />
+      {data.background === undefined ? null : (
+        <IconButton
+          type="button"
+          className="round-node__background-button nodrag nopan"
+          label="Background blocking tools"
+          title="Background blocking tools"
+          variant="ghost"
+          onClick={data.background}
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M8 2v8m0 0 3-3m-3 3L5 7M3 13h10" />
+          </svg>
+        </IconButton>
+      )}
       {data.stop === undefined ? null : (
         <IconButton
           type="button"
@@ -153,12 +170,12 @@ function RoundNodeSurface({
         </div>
       )}
       {data.round.agent?.errors.map((error, index) => (
-        <p key={`${index}:${error}`} className="agent-node__error">
+        <p key={`${index}:${error}`} className="agent-node__error nodrag nopan">
           {error}
         </p>
       ))}
       {latestNarrative === undefined ? (
-        <p className="agent-node__text agent-node__text--empty">
+        <p className="agent-node__text agent-node__text--empty nodrag nopan">
           {completed && data.round.agent !== undefined ? "Completed" : "Waiting for the agent…"}
         </p>
       ) : (
@@ -202,7 +219,23 @@ function RoundNodeHandles({ data }: { readonly data: SessionRoundNodeData }) {
           id="artifacts-source"
           type="source"
           position={data.horizontalSides ? Position.Right : Position.Bottom}
-          style={data.horizontalSides ? { top: "50%" } : undefined}
+          style={
+            data.horizontalSides
+              ? { top: data.hasShellResources ? "25%" : "50%" }
+              : { left: data.hasShellResources ? "25%" : "50%" }
+          }
+        />
+      ) : null}
+      {data.hasShellResources ? (
+        <Handle
+          id="shell-resources-source"
+          type="source"
+          position={data.horizontalSides ? Position.Right : Position.Bottom}
+          style={
+            data.horizontalSides
+              ? { top: data.hasArtifacts ? "75%" : "50%" }
+              : { left: data.hasArtifacts ? "75%" : "50%" }
+          }
         />
       ) : null}
       <Handle id="timeline-source" type="source" position={Position.Right} />
@@ -307,7 +340,7 @@ function HistoryRoundNode({ data }: { readonly data: SessionRoundNodeData }) {
         <IconButton
           ref={historyButtonRef}
           type="button"
-          className={`round-node__history-button nodrag nopan${data.stop === undefined ? "" : " round-node__history-button--with-stop"}`}
+          className={`round-node__history-button nodrag nopan${data.stop === undefined ? "" : " round-node__history-button--with-stop"}${data.background === undefined ? "" : " round-node__history-button--with-background"}`}
           label="View message history"
           variant="ghost"
           aria-haspopup="dialog"

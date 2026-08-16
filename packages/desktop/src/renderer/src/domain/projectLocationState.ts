@@ -1,12 +1,13 @@
 import { Schema } from "effect"
 import { Project, Session } from "@opencode-ai/client/effect"
 import type { ProjectSession, ProjectSnapshot, ProjectUpdate } from "../../../shared/project"
-import type { OpenProjectRuntime } from "../hooks/useProjectController"
+import type { OpenLocationState } from "../hooks/useProjectController"
 import type {
   ProjectSnapshot as ProjectViewSnapshot,
   SessionView,
 } from "../services/OpenCodeGateway"
 import { buildSessionGraph } from "./sessionGraph"
+import type { SemanticGraph } from "./graph"
 import { recordStartupMeasure } from "../startupTiming"
 import {
   applyOptimisticPrompts,
@@ -16,16 +17,21 @@ import {
 
 export function createSessionView(
   value: ProjectSession,
-  optimisticPrompts: ReadonlyArray<OptimisticPrompt> = [],
+  previous?: SessionView,
+  optimisticPrompts: ReadonlyArray<OptimisticPrompt> = previous?.optimisticPrompts ?? [],
 ): SessionView {
   const started = performance.now()
-  const authoritativeGraph = buildSessionGraph(value.messages, value.active)
+  const authoritativeGraph = preserveCompletedGraph(
+    buildSessionGraph(value.messages, value.active),
+    previous?.authoritativeGraph,
+  )
   const reconciled = reconcileOptimisticPrompts(optimisticPrompts, value.messages)
   const view = {
     id: Schema.decodeUnknownSync(Session.ID)(value.id),
     ...(value.parentID === undefined
       ? {}
       : { parentID: Schema.decodeUnknownSync(Session.ID)(value.parentID) }),
+    ...(value.location === undefined ? {} : { location: value.location }),
     created: value.created,
     title: value.title,
     active: value.active,
@@ -45,13 +51,27 @@ export function createSessionView(
   return view
 }
 
+export function preserveCompletedGraph(current: SemanticGraph, previous?: SemanticGraph) {
+  if (previous === undefined) return current
+  const previousNodes = new Map(previous.nodes.map((node) => [node.id, node]))
+  const previousEdges = new Map(previous.edges.map((edge) => [edge.id, edge]))
+  return {
+    ...current,
+    nodes: current.nodes.map((node) => {
+      const existing = previousNodes.get(node.id)
+      return existing?.status === "completed" || existing?.status === "error" ? existing : node
+    }),
+    edges: current.edges.map((edge) => previousEdges.get(edge.id) ?? edge),
+  }
+}
+
 function createProjectViewState(
   value: ProjectSnapshot,
   previous?: ProjectViewSnapshot,
 ): ProjectViewSnapshot {
   const sessions = value.sessions.map((session) => {
     const current = previous?.sessions.find((item) => item.id === session.id)
-    return createSessionView(session, current?.optimisticPrompts)
+    return createSessionView(session, current)
   })
   const provisional = previous?.sessions.filter(
     (session) => session.provisional && !sessions.some((item) => item.id === session.id),
@@ -69,9 +89,9 @@ function createProjectViewState(
 
 export function applyProjectUpdate(
   projectID: Project.ID,
-  current: OpenProjectRuntime,
+  current: OpenLocationState,
   update: ProjectUpdate,
-): OpenProjectRuntime {
+): OpenLocationState {
   if (update._tag === "Snapshot") {
     if (update.snapshot.project.id !== projectID) return current
     return {
@@ -104,7 +124,7 @@ export function applyProjectUpdate(
       ...current.snapshot,
       sessions: [
         ...current.snapshot.sessions.filter((item) => item.id !== update.session.id),
-        createSessionView(update.session, existing?.optimisticPrompts),
+        createSessionView(update.session, existing),
       ],
     },
   }
