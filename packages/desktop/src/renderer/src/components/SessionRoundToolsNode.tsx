@@ -53,20 +53,25 @@ export function SessionRoundToolsNode({ data }: NodeProps<SessionRoundToolsFlowN
         <span>{groups.length}</span>
       </header>
       <ol className="round-tools-list nowheel nodrag nopan">
-        {groups.map((group) => (
-          <li key={group.id} className="round-tools-list__item">
-            <strong>{group.name}</strong>
-            <span
-              title={group.result === undefined ? group.detail : `${group.detail}\n${group.result}`}
-            >
-              {group.detail || "No input"}
-              {group.result === undefined ? null : <em>{group.result}</em>}
-            </span>
-            <small className={`round-tools-list__status round-tools-list__status--${group.status}`}>
-              {group.status === "running" ? "Running" : group.status === "error" ? "Failed" : ""}
-            </small>
-          </li>
-        ))}
+        {groups.map((group) => {
+          const normalizedName = group.name.toLowerCase().replaceAll(/[-_]/g, "")
+          const result =
+            normalizedName === "shell" || normalizedName === "bash" ? undefined : group.result
+          return (
+            <li key={group.id} className="round-tools-list__item">
+              <strong>{group.name}</strong>
+              <span title={result === undefined ? group.detail : `${group.detail}\n${result}`}>
+                {group.detail || "No input"}
+                {result === undefined ? null : <em>{result}</em>}
+              </span>
+              <small
+                className={`round-tools-list__status round-tools-list__status--${group.status}`}
+              >
+                {group.status === "running" ? "Running" : group.status === "error" ? "Failed" : ""}
+              </small>
+            </li>
+          )
+        })}
       </ol>
     </article>
   )

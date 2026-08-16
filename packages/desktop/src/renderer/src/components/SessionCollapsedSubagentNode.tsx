@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Handle, Position, useUpdateNodeInternals, type Node, type NodeProps } from "@xyflow/react"
+import { ShellResourceModal } from "./ShellResourceModal"
 
 export interface SessionCollapsedSubagentNodeData extends Record<string, unknown> {
   readonly id: string
@@ -47,6 +48,10 @@ export function SessionCollapsedSubagentNode({
   data,
 }: NodeProps<SessionCollapsedSubagentFlowNode>) {
   const nodeRef = useRef<HTMLElement>(null)
+  const [openShell, setOpenShell] = useState<{
+    readonly id: string
+    readonly returnFocus: HTMLButtonElement
+  }>()
   const updateNodeInternals = useUpdateNodeInternals()
   const subagents = data.kind === "subagents" ? data.subagents : []
   const shells = data.kind === "shell-resources" ? data.shells : []
@@ -58,6 +63,7 @@ export function SessionCollapsedSubagentNode({
     subagents.filter((subagent) => subagent.running).length +
     shells.filter((shell) => shell.running).length
   const allAction = allExpanded ? "Close all" : "Open all"
+  const selectedShell = shells.find((shell) => shell.id === openShell?.id)
 
   useEffect(() => {
     const element = nodeRef.current
@@ -105,7 +111,7 @@ export function SessionCollapsedSubagentNode({
           <span>{activeCount > 0 ? `${activeCount} active` : `${count} items`}</span>
         </button>
       </header>
-      <ol className="collapsed-subagent-list">
+      <ol className="collapsed-subagent-list nowheel nodrag nopan">
         {subagents.map((subagent) => (
           <li key={subagent.id}>
             <button
@@ -130,15 +136,15 @@ export function SessionCollapsedSubagentNode({
         ))}
         {shells.map((shell) => (
           <li key={shell.id}>
-            <div className="collapsed-subagent-list__shell nodrag nopan">
+            <button
+              className="collapsed-subagent-list__shell nodrag nopan"
+              type="button"
+              aria-label={`Open shell command: ${shell.command}`}
+              onClick={(event) => setOpenShell({ id: shell.id, returnFocus: event.currentTarget })}
+            >
               <span className="collapsed-subagent-list__identity">
                 <strong>Shell</strong>
                 <small title={shell.command}>{shell.command}</small>
-                {shell.result === undefined ? null : (
-                  <small className="collapsed-subagent-list__result" title={shell.result}>
-                    <b>Output</b> {shell.result}
-                  </small>
-                )}
               </span>
               <span
                 className={`collapsed-subagent-list__status${shell.running ? " collapsed-subagent-list__status--running" : ""}`}
@@ -146,10 +152,21 @@ export function SessionCollapsedSubagentNode({
               >
                 {activityLabel(shell.status, shell.executionMode)}
               </span>
-            </div>
+            </button>
           </li>
         ))}
       </ol>
+      {selectedShell === undefined || openShell === undefined ? null : (
+        <ShellResourceModal
+          close={() => setOpenShell(undefined)}
+          command={selectedShell.command}
+          executionMode={selectedShell.executionMode}
+          {...(selectedShell.result === undefined ? {} : { output: selectedShell.result })}
+          returnFocus={openShell.returnFocus}
+          running={selectedShell.running}
+          status={selectedShell.status}
+        />
+      )}
     </article>
   )
 }

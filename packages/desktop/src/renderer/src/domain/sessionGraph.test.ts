@@ -28,6 +28,7 @@ function tool(
   input: Readonly<Record<string, unknown>>,
   created: number,
   metadata?: SessionMessage.ToolStateCompleted["metadata"],
+  output = "ok",
 ): SessionMessage.AssistantTool {
   return {
     id,
@@ -36,7 +37,7 @@ function tool(
     state: {
       status: "completed",
       input,
-      content: [{ type: "text", text: "ok" }],
+      content: [{ type: "text", text: output }],
       ...(metadata === undefined ? {} : { metadata }),
     },
     time: {
@@ -94,11 +95,16 @@ function subagentResult(id: string, childID: string, created: number) {
   } satisfies SessionMessage.Synthetic
 }
 
-function shellResult(jobID: string, state: "completed" | "error", created: number) {
+function shellResult(
+  jobID: string,
+  state: "completed" | "error",
+  created: number,
+  output = "Result",
+) {
   return {
     id: messageID(`shell-result-${jobID}`),
     type: "synthetic",
-    text: `<shell id="${jobID}" state="${state}">\nResult\n</shell>`,
+    text: `<shell id="${jobID}" state="${state}">\n${output}\n</shell>`,
     description: "bun run test",
     metadata: { source: "shell", jobID, state },
     time: { created: timestamp(created) },
@@ -272,6 +278,41 @@ it.effect("keeps a background shell tool running until its completion notificati
     expect(completed.nodes.some((node) => node.id === "shell-result-call-shell-background")).toBe(
       false,
     )
+  }),
+)
+
+it.effect("preserves complete multiline shell output", () =>
+  Effect.sync(() => {
+    const output = `first line\n${"x".repeat(400)}\nlast line`
+    const foreground = buildSessionGraph([
+      userMessage(),
+      assistantMessage(
+        "message-foreground-shell",
+        [tool("call-shell", "shell", { command: "long-output" }, 2_010, undefined, output)],
+        2_000,
+      ),
+    ])
+    expect(
+      foreground.nodes.find((node) => node.kind === "round-tools")?.roundTools?.calls.at(0)?.result,
+    ).toBe(output)
+
+    const background = buildSessionGraph([
+      userMessage(),
+      assistantMessage(
+        "message-background-shell",
+        [
+          tool("call-background-shell", "shell", { command: "long-output" }, 2_010, {
+            status: "running",
+            shellID: "shell-1",
+          }),
+        ],
+        2_000,
+      ),
+      shellResult("call-background-shell", "completed", 3_000, output),
+    ])
+    expect(
+      background.nodes.find((node) => node.kind === "round-tools")?.roundTools?.calls.at(0)?.result,
+    ).toBe(output)
   }),
 )
 

@@ -19,6 +19,7 @@ import type { SemanticGraphNode } from "../domain/graph"
 import {
   collapsedSubagentPosition,
   horizontalRoundSideNodePosition,
+  roundBranchOverhang,
   roundBranchWidth,
   roundSideNodePosition,
   roundTimelineDistance,
@@ -216,6 +217,24 @@ function activityShells(node: SemanticGraphNode | undefined): ReadonlyArray<Acti
 
 function isRoundSideNode(node: SemanticGraphNode) {
   return node.kind === "round-tools" || node.kind === "round-artifacts"
+}
+
+function roundNeedsBranchClearance(
+  node: SemanticGraphNode,
+  nodes: ReadonlyArray<SemanticGraphNode>,
+) {
+  if (node.kind !== "round") return false
+  const tools = nodes.find(
+    (candidate) => candidate.kind === "round-tools" && candidate.agentRunID === node.agentRunID,
+  )
+  const hasSubagents = (tools?.roundTools?.calls ?? []).some(
+    (call) => classifyToolCall(call.name, call.input) === "subagent",
+  )
+  const hasShells = activityShells(tools).length > 0
+  const hasArtifacts = nodes.some(
+    (candidate) => candidate.kind === "round-artifacts" && candidate.agentRunID === node.agentRunID,
+  )
+  return hasSubagents || (hasShells && hasArtifacts)
 }
 
 function timelineNodeWidth(node: SemanticGraphNode, roundSizes: ReadonlyMap<string, NodeSize>) {
@@ -487,9 +506,18 @@ function SessionCanvas({
       positionedSessions.add(current.id)
       const timelineNodes = current.graph.nodes.filter((node) => !isRoundSideNode(node))
       const includeComposer = current.id === session.id
+      const horizontalSides = current.parentID !== undefined
+      const timelineOverhangs = timelineNodes.map((node) =>
+        !horizontalSides && roundNeedsBranchClearance(node, current.graph.nodes)
+          ? roundBranchOverhang(timelineNodeWidth(node, roundSizes), nodeDistance.horizontal)
+          : 0,
+      )
       const timeline = timelinePositions(
         [
-          ...timelineNodes.map((node) => timelineNodeWidth(node, roundSizes)),
+          ...timelineNodes.map(
+            (node, index) =>
+              timelineNodeWidth(node, roundSizes) + (timelineOverhangs[index] ?? 0) * 2,
+          ),
           ...(includeComposer ? [composerWidth] : []),
         ],
         timelineDistance,
@@ -497,10 +525,10 @@ function SessionCanvas({
       )
       timelineNodes.forEach((node, index) => {
         const position = timeline[index]
-        if (position !== undefined) positions.set(node.id, position)
+        if (position !== undefined)
+          positions.set(node.id, { ...position, x: position.x + (timelineOverhangs[index] ?? 0) })
       })
       if (includeComposer) composerPosition = timeline.at(-1) ?? origin
-      const horizontalSides = current.parentID !== undefined
 
       const children = descendantsByParent.get(current.id) ?? []
       const launchers = current.graph.nodes.flatMap((node) => {
@@ -573,7 +601,7 @@ function SessionCanvas({
             split && !horizontalSides
               ? {
                   ...toolsPosition,
-                  x: splitRoundToolsX(anchor, roundSize.width, toolsWidth),
+                  x: splitRoundToolsX(anchor, roundSize.width, toolsWidth, nodeDistance.horizontal),
                 }
               : toolsPosition,
           )
@@ -609,7 +637,13 @@ function SessionCanvas({
             split
               ? {
                   ...artifactsPosition,
-                  x: splitRoundSideNodeX(anchor, roundSize.width, artifactsWidth, "left"),
+                  x: splitRoundSideNodeX(
+                    anchor,
+                    roundSize.width,
+                    artifactsWidth,
+                    "left",
+                    nodeDistance.horizontal,
+                  ),
                 }
               : artifactsPosition,
           )
@@ -648,7 +682,13 @@ function SessionCanvas({
                   x:
                     artifacts === undefined
                       ? anchor.x
-                      : splitRoundSideNodeX(anchor, roundSize.width, shellWidth, "right"),
+                      : splitRoundSideNodeX(
+                          anchor,
+                          roundSize.width,
+                          shellWidth,
+                          "right",
+                          nodeDistance.horizontal,
+                        ),
                 },
             width: shellWidth,
             subagents: [],
@@ -737,6 +777,7 @@ function SessionCanvas({
                 toolsPosition,
                 { width: toolsWidth, height: toolsHeight },
                 collapsedSize,
+                nodeDistance.horizontal,
               ),
               width: toolsWidth,
               subagents: [subagent],

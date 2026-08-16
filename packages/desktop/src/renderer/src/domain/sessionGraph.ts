@@ -107,8 +107,8 @@ const BACKGROUND_REQUEST_PREFIX =
 function shellCompletionResult(text: string) {
   const start = text.indexOf("\n")
   const end = text.lastIndexOf("\n</shell>")
-  if (start === -1 || end <= start) return compactText(text)
-  return compactText(text.slice(start + 1, end).trimEnd())
+  if (start === -1 || end <= start) return text.trim()
+  return text.slice(start + 1, end).trimEnd()
 }
 
 function shellCompletions(messages: ReadonlyArray<SessionMessage.Info>) {
@@ -127,14 +127,17 @@ function shellCompletions(messages: ReadonlyArray<SessionMessage.Info>) {
   return completions
 }
 
-function toolResult(content: SessionMessage.AssistantTool) {
+function toolResult(content: SessionMessage.AssistantTool, preserveFormatting = false) {
   if (content.state.status === "streaming" || content.state.status === "running") return undefined
-  if (content.state.status === "error") return compactText(content.state.error.message)
+  if (content.state.status === "error")
+    return preserveFormatting
+      ? content.state.error.message
+      : compactText(content.state.error.message)
 
   const output = content.state.content
     .map((part) => (part.type === "text" ? part.text : (part.name ?? part.uri)))
-    .join(" ")
-  return output === "" ? undefined : compactText(output)
+    .join(preserveFormatting ? "\n" : " ")
+  return output === "" ? undefined : preserveFormatting ? output : compactText(output)
 }
 
 function toolArtifacts(content: SessionMessage.AssistantTool): ReadonlyArray<GraphArtifact> {
@@ -237,7 +240,10 @@ function toolCall(
   const diff = createToolDiff(content.name, metadata)
   const sessionID = metadata?.["sessionId"] ?? metadata?.["sessionID"]
   const shellCompletion = completions.get(content.id)
-  const result = shellCompletion?.result ?? toolResult(content)
+  const normalizedName = content.name.toLowerCase().replaceAll(/[-_]/g, "")
+  const result =
+    shellCompletion?.result ??
+    toolResult(content, normalizedName === "shell" || normalizedName === "bash")
   const executionMode = toolExecutionMode(content)
   return {
     id: `${message.id}:${contentIndex}`,

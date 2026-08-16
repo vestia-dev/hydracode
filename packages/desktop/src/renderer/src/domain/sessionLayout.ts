@@ -9,6 +9,7 @@ export interface GraphSize {
 }
 
 const TIMELINE_Y = 480
+const MIN_BRANCH_WIDTH = 290
 
 export interface NodeDistance {
   readonly horizontal: number
@@ -69,15 +70,23 @@ export function splitRoundToolsWidth(roundWidth: number, horizontalGap: number) 
 }
 
 export function roundBranchWidth(roundWidth: number, horizontalGap: number, count: number) {
-  return count <= 1 ? roundWidth : (roundWidth - horizontalGap * (count - 1)) / count
+  return count <= 1
+    ? roundWidth
+    : Math.max(MIN_BRANCH_WIDTH, (roundWidth - horizontalGap * (count - 1)) / count)
+}
+
+export function roundBranchOverhang(roundWidth: number, horizontalGap: number) {
+  const branchWidth = roundBranchWidth(roundWidth, horizontalGap, 2)
+  return Math.max(0, (branchWidth * 2 + horizontalGap - roundWidth) / 2)
 }
 
 export function splitRoundToolsX(
   roundPosition: GraphPosition,
   roundWidth: number,
   toolsWidth: number,
+  horizontalGap: number,
 ) {
-  return roundPosition.x + roundWidth * 0.25 - toolsWidth / 2
+  return roundPosition.x + roundWidth / 2 - horizontalGap / 2 - toolsWidth
 }
 
 export function splitRoundSideNodeX(
@@ -85,8 +94,10 @@ export function splitRoundSideNodeX(
   roundWidth: number,
   nodeWidth: number,
   side: "left" | "right",
+  horizontalGap: number,
 ) {
-  return roundPosition.x + roundWidth * (side === "left" ? 0.25 : 0.75) - nodeWidth / 2
+  const center = roundPosition.x + roundWidth / 2
+  return side === "left" ? center - horizontalGap / 2 - nodeWidth : center + horizontalGap / 2
 }
 
 export function collapsedSubagentPosition(
@@ -95,9 +106,10 @@ export function collapsedSubagentPosition(
   toolsPosition: GraphPosition,
   toolsSize: GraphSize,
   nodeSize: GraphSize,
+  horizontalGap: number,
 ): GraphPosition {
   return {
-    x: roundPosition.x + roundWidth * 0.75 - nodeSize.width / 2,
+    x: roundPosition.x + roundWidth / 2 + horizontalGap / 2,
     y: toolsPosition.y + toolsSize.height - nodeSize.height,
   }
 }

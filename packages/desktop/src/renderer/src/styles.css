@@ -1852,17 +1852,70 @@ html[data-platform="macos"] .project-header {
   white-space: nowrap;
 }
 
-.collapsed-subagent-list__result {
-  color: var(--color-text) !important;
-}
-
-.collapsed-subagent-list__result > b {
-  color: var(--color-textMuted);
-  font-weight: 600;
-}
-
 .collapsed-subagent-list__status--running {
   color: var(--color-accent);
+}
+
+.shell-resource-modal {
+  width: min(960px, calc(100vw - 48px));
+  height: min(760px, calc(100vh - 48px));
+}
+
+.shell-resource-modal__content {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: minmax(100px, auto) minmax(180px, 1fr);
+  gap: 12px;
+  padding: 12px;
+  overflow: auto;
+}
+
+.shell-resource-modal__content > section {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surfaceMuted);
+}
+
+.shell-resource-modal__content h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-textMuted);
+  font: 650 9px/1.2 var(--typography-uiFontFamily);
+  text-transform: uppercase;
+}
+
+.shell-resource-modal__content h2 > span {
+  padding: 2px 5px;
+  border-radius: 999px;
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  font-size: 7px;
+}
+
+.shell-resource-modal__content pre {
+  min-height: 0;
+  margin: 0;
+  overflow: auto;
+  padding: 12px;
+  color: var(--color-text);
+  font: 10px/1.55 var(--typography-monoFontFamily);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 640px) {
+  .shell-resource-modal {
+    width: 100%;
+    height: calc(100vh - 24px);
+  }
 }
 
 .round-tools-node--running {

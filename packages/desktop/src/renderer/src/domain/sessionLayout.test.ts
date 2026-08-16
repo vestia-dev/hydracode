@@ -3,6 +3,7 @@ import { Effect } from "effect"
 import {
   collapsedSubagentPosition,
   horizontalRoundSideNodePosition,
+  roundBranchOverhang,
   roundSideNodePosition,
   roundBranchWidth,
   roundTimelineDistance,
@@ -76,24 +77,31 @@ it.effect("places subagent tools left and outputs right of their round", () =>
 it.effect("uses the left half of a round for tools when a subagent occupies the right lane", () =>
   Effect.sync(() => {
     const toolsWidth = splitRoundToolsWidth(420, 32)
-    expect(toolsWidth).toBe(194)
-    expect(splitRoundToolsX({ x: 300, y: 480 }, 420, toolsWidth)).toBe(308)
+    expect(toolsWidth).toBe(290)
+    expect(splitRoundToolsX({ x: 300, y: 480 }, 420, toolsWidth, 32)).toBe(204)
   }),
 )
 
 it.effect("divides branch width equally among only the nodes that exist", () =>
   Effect.sync(() => {
     expect(roundBranchWidth(420, 32, 1)).toBe(420)
-    expect(roundBranchWidth(420, 32, 2)).toBe(194)
-    expect(roundBranchWidth(420, 32, 3)).toBeCloseTo(118.67, 2)
+    expect(roundBranchWidth(420, 32, 2)).toBe(290)
+    expect(roundBranchWidth(420, 32, 3)).toBe(290)
+  }),
+)
+
+it.effect("reserves the overhang created by minimum-width paired branches", () =>
+  Effect.sync(() => {
+    expect(roundBranchOverhang(420, 32)).toBe(96)
+    expect(roundBranchOverhang(720, 32)).toBe(0)
   }),
 )
 
 it.effect("places paired lower nodes in left and right lanes", () =>
   Effect.sync(() => {
     const width = splitRoundToolsWidth(420, 32)
-    expect(splitRoundSideNodeX({ x: 300, y: 480 }, 420, width, "left")).toBe(308)
-    expect(splitRoundSideNodeX({ x: 300, y: 480 }, 420, width, "right")).toBe(518)
+    expect(splitRoundSideNodeX({ x: 300, y: 480 }, 420, width, "left", 32)).toBe(204)
+    expect(splitRoundSideNodeX({ x: 300, y: 480 }, 420, width, "right", 32)).toBe(526)
   }),
 )
 
@@ -107,8 +115,9 @@ it.effect("places a content-sized collapsed subagent beside tools", () =>
         { x: 308, y: 240 },
         { width: toolsWidth, height: 96 },
         { width: toolsWidth, height: 66 },
+        32,
       ),
-    ).toEqual({ x: 518, y: 270 })
+    ).toEqual({ x: 526, y: 270 })
   }),
 )
 
