@@ -77,6 +77,48 @@ it("deduplicates concurrent checks", async () => {
   expect(checkForUpdates).toHaveBeenCalledOnce()
 })
 
+it("deduplicates concurrent installs", async () => {
+  let resolveDownload: (() => void) | undefined
+  const downloadUpdate = vi.fn(() => new Promise<void>((resolve) => (resolveDownload = resolve)))
+  const controller = createUpdateController({
+    enabled: true,
+    backend: backend({ downloadUpdate }),
+  })
+
+  await controller.check()
+  const first = controller.install()
+  const second = controller.install()
+  expect(second).toBe(first)
+  resolveDownload?.()
+
+  await Promise.all([first, second])
+  expect(downloadUpdate).toHaveBeenCalledOnce()
+})
+
+it("does not start a check while an install is running", async () => {
+  let resolveDownload: (() => void) | undefined
+  const checkForUpdates = vi.fn().mockResolvedValue({
+    isUpdateAvailable: true,
+    updateInfo: { version: "0.2.0" },
+  })
+  const controller = createUpdateController({
+    enabled: true,
+    backend: backend({
+      checkForUpdates,
+      downloadUpdate: vi.fn(() => new Promise<void>((resolve) => (resolveDownload = resolve))),
+    }),
+  })
+
+  await controller.check()
+  const install = controller.install()
+  const check = controller.check()
+  expect(check).toBe(install)
+  resolveDownload?.()
+
+  await Promise.all([install, check])
+  expect(checkForUpdates).toHaveBeenCalledOnce()
+})
+
 it("stays disabled outside packaged releases", async () => {
   const updateBackend = backend()
   const controller = createUpdateController({ enabled: false, backend: updateBackend })
