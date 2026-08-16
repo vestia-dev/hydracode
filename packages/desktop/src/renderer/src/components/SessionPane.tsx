@@ -15,12 +15,7 @@ import {
   type NodeTypes,
   type Viewport,
 } from "@xyflow/react"
-import type {
-  SemanticGraphNode,
-  SemanticRoundArtifactsNode,
-  SemanticRoundNode,
-  SemanticRoundToolsNode,
-} from "../domain/graph"
+import type { SemanticGraphNode, SemanticRoundNode, SemanticRoundToolsNode } from "../domain/graph"
 import {
   collapsedSubagentPosition,
   horizontalRoundSideNodePosition,
@@ -35,7 +30,7 @@ import {
   timelinePositions,
 } from "../domain/sessionLayout"
 import { createPromptComposerState } from "../domain/sessionComposer"
-import { classifyToolCall } from "../domain/sessionGraph"
+import { createSessionGraphIndex, type SessionGraphIndex } from "../domain/sessionGraphIndex"
 import { matchSubagentLaunchers } from "../domain/projectSessions"
 import type { SessionView } from "../services/OpenCodeGateway"
 import type { DesktopBridge, DesktopBridgeError } from "../services/DesktopBridge"
@@ -220,31 +215,14 @@ function activityShells(node: SemanticRoundToolsNode | undefined): ReadonlyArray
   })
 }
 
-function isRoundSideNode(
-  node: SemanticGraphNode,
-): node is SemanticRoundToolsNode | SemanticRoundArtifactsNode {
-  return node.kind === "round-tools" || node.kind === "round-artifacts"
-}
-
-function isRoundToolsNode(node: SemanticGraphNode): node is SemanticRoundToolsNode {
-  return node.kind === "round-tools"
-}
-
-function roundNeedsBranchClearance(
-  node: SemanticGraphNode,
-  nodes: ReadonlyArray<SemanticGraphNode>,
-) {
+function roundNeedsBranchClearance(node: SemanticGraphNode, index: SessionGraphIndex) {
   if (node.kind !== "round") return false
-  const tools = nodes
-    .filter(isRoundToolsNode)
-    .find((candidate) => candidate.agentRunID === node.agentRunID)
-  const hasSubagents = (tools?.roundTools.calls ?? []).some(
-    (call) => classifyToolCall(call.name, call.input) === "subagent",
+  const tools = index.toolsByRoundID.get(node.agentRunID)
+  const hasSubagents = index.subagentLaunchers.some(
+    (launcher) => launcher.roundID === node.agentRunID,
   )
   const hasShells = activityShells(tools).length > 0
-  const hasArtifacts = nodes.some(
-    (candidate) => candidate.kind === "round-artifacts" && candidate.agentRunID === node.agentRunID,
-  )
+  const hasArtifacts = index.artifactsByRoundID.has(node.agentRunID)
   return hasSubagents || (hasShells && hasArtifacts)
 }
 
@@ -480,12 +458,15 @@ function SessionCanvas({
   const flow = useMemo(() => {
     const started = performance.now()
     const sessions = [session, ...descendants]
+    const graphIndexes = new Map(
+      sessions.map((current) => [current.id, createSessionGraphIndex(current.graph)] as const),
+    )
     const questionRequest = sessions.flatMap((current) => current.questions)[0]
     const composerWidth = questionRequest === undefined ? PROMPT_WIDTH : QUESTION_WIDTH
     const timelineDistance = roundTimelineDistance(nodeDistance)
     const subagentRootNodeIDs = new Set(
       descendants.flatMap((current) => {
-        const first = current.graph.nodes.find((node) => !isRoundSideNode(node))
+        const first = graphIndexes.get(current.id)?.firstTimelineNode
         return first === undefined ? [] : [first.id]
       }),
     )
@@ -497,7 +478,10 @@ function SessionCanvas({
       descendantsByParent.set(child.parentID, siblings)
     }
 
-    const composer = createPromptComposerState(session.id, session.graph.nodes)
+    const composer = createPromptComposerState(
+      session.id,
+      graphIndexes.get(session.id)?.timelineNodes ?? [],
+    )
     let composerPosition = { x: 0, y: 480 }
     const positions = new Map<string, { readonly x: number; readonly y: number }>()
     const childConnections: Array<{ readonly source: string; readonly target: string }> = []
@@ -515,11 +499,13 @@ function SessionCanvas({
     ) => {
       if (positionedSessions.has(current.id)) return
       positionedSessions.add(current.id)
-      const timelineNodes = current.graph.nodes.filter((node) => !isRoundSideNode(node))
+      const graphIndex = graphIndexes.get(current.id)
+      if (graphIndex === undefined) return
+      const timelineNodes = graphIndex.timelineNodes
       const includeComposer = current.id === session.id
       const horizontalSides = current.parentID !== undefined
       const timelineOverhangs = timelineNodes.map((node) =>
-        !horizontalSides && roundNeedsBranchClearance(node, current.graph.nodes)
+        !horizontalSides && roundNeedsBranchClearance(node, graphIndex)
           ? roundBranchOverhang(timelineNodeWidth(node, roundSizes), nodeDistance.horizontal)
           : 0,
       )
@@ -542,53 +528,28 @@ function SessionCanvas({
       if (includeComposer) composerPosition = timeline.at(-1) ?? origin
 
       const children = descendantsByParent.get(current.id) ?? []
-      const launchers = current.graph.nodes.flatMap((node) => {
-        if (node.kind !== "round-tools") return []
-        const roundID = node.agentRunID
-        return node.roundTools.calls.flatMap((call) =>
-          classifyToolCall(call.name, call.input) !== "subagent"
-            ? []
-            : [
-                {
-                  id: call.id,
-                  nodeID: node.id,
-                  roundID,
-                  status: call.status,
-                  executionMode: call.executionMode ?? "foreground",
-                  created: call.time.created,
-                  sessionIDs: call.subagentSessionID === undefined ? [] : [call.subagentSessionID],
-                },
-              ],
-        )
-      })
+      const launchers = graphIndex.subagentLaunchers
       const launchersByChild = matchSubagentLaunchers(children, launchers)
       const matchedLauncherIDs = new Set(launchersByChild.values())
       for (const launcher of launchers) {
         if (!matchedLauncherIDs.has(launcher.id)) continue
         splitToolNodeIDs.add(launcher.nodeID)
       }
-      for (const node of current.graph.nodes) {
-        if (node.kind !== "round-tools" || activityShells(node).length === 0) continue
-        const artifacts = current.graph.nodes.find(
-          (candidate) =>
-            candidate.kind === "round-artifacts" && candidate.agentRunID === node.agentRunID,
-        )
+      for (const node of graphIndex.toolsByRoundID.values()) {
+        if (activityShells(node).length === 0) continue
+        const artifacts = graphIndex.artifactsByRoundID.get(node.agentRunID)
         if (artifacts !== undefined && !horizontalSides) splitArtifactNodeIDs.add(artifacts.id)
       }
 
-      for (const round of timelineNodes.filter((node) => node.kind === "round")) {
+      for (const round of graphIndex.roundNodes) {
         const anchor = positions.get(round.id)
         if (anchor === undefined) continue
         const roundSize = roundSizes.get(round.id) ?? {
           width: ROUND_WIDTH,
           height: ROUND_COLLAPSED_HEIGHT,
         }
-        const tools = current.graph.nodes
-          .filter(isRoundToolsNode)
-          .find((node) => node.agentRunID === round.agentRunID)
-        const artifacts = current.graph.nodes.find(
-          (node) => node.kind === "round-artifacts" && node.agentRunID === round.agentRunID,
-        )
+        const tools = graphIndex.toolsByRoundID.get(round.agentRunID)
+        const artifacts = graphIndex.artifactsByRoundID.get(round.agentRunID)
         if (tools !== undefined) {
           const toolsHeight =
             sideNodeSizes.get(tools.id)?.height ?? 42 + tools.roundTools.calls.length * 31
@@ -714,11 +675,10 @@ function SessionCanvas({
         .forEach((child) => {
           const launcherID = launchersByChild.get(child.id)
           const launcher = launchers.find((candidate) => candidate.id === launcherID)
-          const firstChildNode = child.graph.nodes.find((node) => !isRoundSideNode(node))
+          const childGraphIndex = graphIndexes.get(child.id)
+          const firstChildNode = childGraphIndex?.firstTimelineNode
           const parentRound =
-            launcher === undefined
-              ? undefined
-              : current.graph.nodes.find((node) => node.id === launcher.roundID)
+            launcher === undefined ? undefined : graphIndex.nodeByID.get(launcher.roundID)
           const parentPosition =
             parentRound === undefined ? undefined : positions.get(parentRound.id)
           const toolsPosition = launcher === undefined ? undefined : positions.get(launcher.nodeID)
@@ -737,9 +697,9 @@ function SessionCanvas({
           const childWidth = timelineNodeWidth(firstChildNode, roundSizes)
           const childHeight = Math.max(
             ROUND_COLLAPSED_HEIGHT,
-            ...child.graph.nodes
-              .filter((node) => node.kind === "round")
-              .map((node) => roundSizes.get(node.id)?.height ?? ROUND_COLLAPSED_HEIGHT),
+            ...(childGraphIndex?.roundNodes ?? []).map(
+              (node) => roundSizes.get(node.id)?.height ?? ROUND_COLLAPSED_HEIGHT,
+            ),
           )
           const precedingChildHeights = precedingChildHeightsByRound.get(parentRound.id) ?? []
           const agent =
@@ -772,9 +732,8 @@ function SessionCanvas({
           if (existing !== undefined) {
             existing.subagents.push(subagent)
           } else {
-            const tools = current.graph.nodes
-              .filter(isRoundToolsNode)
-              .find((node) => node.id === launcher.nodeID)
+            const launcherNode = graphIndex.nodeByID.get(launcher.nodeID)
+            const tools = launcherNode?.kind === "round-tools" ? launcherNode : undefined
             const toolsHeight =
               sideNodeSizes.get(launcher.nodeID)?.height ??
               42 + (tools?.roundTools.calls.length ?? 0) * 31
@@ -825,40 +784,31 @@ function SessionCanvas({
 
     const nodes: Array<FlowNode> = []
     for (const current of sessions) {
+      const graphIndex = graphIndexes.get(current.id)
+      if (graphIndex === undefined) continue
       for (const node of current.graph.nodes) {
         const position = positions.get(node.id)
         if (position === undefined) continue
         if (node.kind === "round") {
-          const latestRound = current.graph.nodes.findLast(
-            (candidate) => candidate.kind === "round",
-          )
+          const latestRound = graphIndex.latestRound
           const status =
             runningSubagentIDs.has(current.id) && latestRound?.id === node.id
               ? "running"
               : node.status
-          const hasTools = current.graph.nodes.some(
-            (candidate) =>
-              candidate.kind === "round-tools" &&
-              candidate.agentRunID === node.agentRunID &&
-              positions.has(candidate.id),
-          )
-          const backgroundableToolActive = current.graph.nodes
-            .filter(isRoundToolsNode)
-            .find((candidate) => candidate.agentRunID === node.agentRunID)
-            ?.roundTools.calls.some((call) => {
-              const name = call.name.toLowerCase().replaceAll(/[-_]/g, "")
-              return (
-                call.status === "running" &&
-                (name === "shell" || name === "bash" || name === "subagent" || name === "task")
-              )
-            })
-          const hasArtifacts = current.graph.nodes.some(
-            (candidate) =>
-              candidate.kind === "round-artifacts" &&
-              candidate.agentRunID === node.agentRunID &&
-              candidate.roundArtifacts.diff.files.length > 0 &&
-              positions.has(candidate.id),
-          )
+          const tools = graphIndex.toolsByRoundID.get(node.agentRunID)
+          const hasTools = tools !== undefined && positions.has(tools.id)
+          const backgroundableToolActive = tools?.roundTools.calls.some((call) => {
+            const name = call.name.toLowerCase().replaceAll(/[-_]/g, "")
+            return (
+              call.status === "running" &&
+              (name === "shell" || name === "bash" || name === "subagent" || name === "task")
+            )
+          })
+          const artifacts = graphIndex.artifactsByRoundID.get(node.agentRunID)
+          const hasArtifacts =
+            artifacts !== undefined &&
+            artifacts.roundArtifacts.diff.files.length > 0 &&
+            positions.has(artifacts.id)
           nodes.push(
             roundFlowNode(
               { ...node, status },
@@ -1081,7 +1031,7 @@ function SessionCanvas({
       })
     }
     const semanticNodes = new Map(
-      sessions.flatMap((current) => current.graph.nodes.map((node) => [node.id, node] as const)),
+      Array.from(graphIndexes.values()).flatMap((index) => Array.from(index.nodeByID.entries())),
     )
     const nextCompletedFlowNodeCache = new Map<string, CompletedFlowNodeCacheEntry>()
     const stableNodes = nodes.map((node) => {
