@@ -92,3 +92,55 @@ it.effect("keeps a prompt pending until a new matching authoritative input arriv
     ).toEqual([])
   }),
 )
+
+it.effect("settles identical prompts one authoritative message at a time across replays", () =>
+  Effect.sync(() => {
+    const first = { ...prompt, id: "optimistic:1" }
+    const second = { ...prompt, id: "optimistic:2" }
+    const authoritativeFirst = {
+      id: messageID("authoritative:first"),
+      type: "user" as const,
+      text: prompt.text,
+      time: { created: DateTime.makeUnsafe(2_100) },
+    }
+
+    const afterFirstUpdate = reconcileOptimisticPrompts([first, second], [authoritativeFirst])
+    expect(afterFirstUpdate).toEqual([
+      {
+        ...second,
+        baselineMessageIDs: ["existing", "authoritative:first"],
+      },
+    ])
+
+    expect(reconcileOptimisticPrompts(afterFirstUpdate, [authoritativeFirst])).toEqual(
+      afterFirstUpdate,
+    )
+
+    const authoritativeSecond = {
+      ...authoritativeFirst,
+      id: messageID("authoritative:second"),
+      time: { created: DateTime.makeUnsafe(2_200) },
+    }
+    expect(
+      reconcileOptimisticPrompts(afterFirstUpdate, [authoritativeFirst, authoritativeSecond]),
+    ).toEqual([])
+  }),
+)
+
+it.effect("records non-matching messages without settling a pending prompt", () =>
+  Effect.sync(() => {
+    const unrelated = {
+      id: messageID("authoritative:unrelated"),
+      type: "user" as const,
+      text: "A different prompt",
+      time: { created: DateTime.makeUnsafe(2_100) },
+    }
+
+    expect(reconcileOptimisticPrompts([prompt], [unrelated])).toEqual([
+      {
+        ...prompt,
+        baselineMessageIDs: ["existing", "authoritative:unrelated"],
+      },
+    ])
+  }),
+)

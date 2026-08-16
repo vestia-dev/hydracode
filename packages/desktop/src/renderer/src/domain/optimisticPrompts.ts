@@ -15,7 +15,8 @@ export function reconcileOptimisticPrompts(
   messages: ReadonlyArray<SessionMessage.Info>,
 ) {
   const claimed = new Set<string>()
-  return prompts.filter((prompt) => {
+  const messageIDs = messages.map((message) => message.id)
+  return prompts.flatMap((prompt) => {
     const baseline = new Set(prompt.baselineMessageIDs)
     const authoritative = messages.find(
       (message) =>
@@ -24,9 +25,16 @@ export function reconcileOptimisticPrompts(
         !claimed.has(message.id) &&
         message.text === prompt.text,
     )
-    if (authoritative === undefined) return true
-    claimed.add(authoritative.id)
-    return false
+    if (authoritative !== undefined) {
+      claimed.add(authoritative.id)
+      return []
+    }
+    return [
+      {
+        ...prompt,
+        baselineMessageIDs: [...new Set([...prompt.baselineMessageIDs, ...messageIDs])],
+      },
+    ]
   })
 }
 
