@@ -4,24 +4,15 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useReducer,
   useRef,
   useState,
 } from "react"
 import { Effect } from "effect"
 import { type Question } from "@opencode-ai/client/effect"
 import { ProjectView } from "./ProjectView"
-import {
-  adjacentPaneID,
-  closePane,
-  firstPaneID,
-  hasPane,
-  initialPaneLayout,
-  paneInDirection,
-  restorePaneLayout,
-  savePaneLayout,
-  splitPane,
-  type PaneLayout,
-} from "../domain/paneLayout"
+import { savePaneLayout } from "../domain/paneLayout"
+import { createPaneState, reducePaneState, type PaneStateAction } from "../domain/paneState"
 import type { PaneDirection, PaneSplitCommand } from "../../../shared/pane"
 import type { PaneUIState, ProjectUIState } from "../../../shared/applicationState"
 import type { OpenLocationState } from "../domain/projectLocationState"
@@ -88,21 +79,19 @@ interface ProjectContainerProps {
 
 export const ProjectContainer = forwardRef<ProjectContainerHandle, ProjectContainerProps>(
   function ProjectContainer(props, ref) {
-    const restoredLayout =
-      props.initialUIState === undefined
-        ? undefined
-        : restorePaneLayout(props.initialUIState.layout)
-    const initialPaneID = crypto.randomUUID()
-    const [paneLayout, setPaneLayout] = useState<PaneLayout>(
-      () => restoredLayout ?? initialPaneLayout(initialPaneID),
+    const [paneState, dispatch] = useReducer(reducePaneState, undefined, () =>
+      createPaneState(
+        crypto.randomUUID(),
+        props.defaultLocationState.locationKey,
+        props.initialUIState,
+      ),
     )
-    const [activePaneID, setActivePaneID] = useState(() =>
-      restoredLayout === undefined
-        ? initialPaneID
-        : hasPane(restoredLayout, props.initialUIState?.activePaneID ?? "")
-          ? (props.initialUIState?.activePaneID ?? firstPaneID(restoredLayout))
-          : firstPaneID(restoredLayout),
-    )
+    const paneStateRef = useRef(paneState)
+    paneStateRef.current = paneState
+    const dispatchPaneAction = useCallback((action: PaneStateAction) => {
+      paneStateRef.current = reducePaneState(paneStateRef.current, action)
+      dispatch(action)
+    }, [])
     const [promptFocusRequest, setPromptFocusRequest] = useState<{
       readonly paneID: string
       readonly sequence: number
@@ -113,67 +102,16 @@ export const ProjectContainer = forwardRef<ProjectContainerHandle, ProjectContai
     } | null>(null)
     const promptFocusSequence = useRef(0)
     const followLatestSequence = useRef(0)
-    const paneLayoutRef = useRef(paneLayout)
-    paneLayoutRef.current = paneLayout
-    const activePaneIDRef = useRef(activePaneID)
-    activePaneIDRef.current = activePaneID
     const defaultLocationStateRef = useRef(props.defaultLocationState)
     defaultLocationStateRef.current = props.defaultLocationState
     const displayedLocationKeyRef = useRef(props.defaultLocationState.locationKey)
     const restorationCompleted = useRef(false)
     const restoredSessionIDs = useRef(new Set<string>())
-    const [paneUIStates, setPaneUIStates] = useState<ReadonlyMap<string, PaneUIState>>(() => {
-      if (restoredLayout === undefined) return new Map()
-      const savedNodes = new Map(
-        props.initialUIState?.layout.nodes.map((node) => [node.id, node]) ?? [],
-      )
-      const savedPanes = new Map(
-        (props.initialUIState?.panes ?? []).map((pane) => [pane.paneID, pane]),
-      )
-      return new Map(
-        Array.from(savedNodes.values()).flatMap((saved) => {
-          if (saved._tag !== "Pane") return []
-          const pane = savedPanes.get(saved.id) ?? {
-            paneID: saved.id,
-            followLatest: true,
-            expandedRoundIDs: [],
-            expandedSubagentIDs: [],
-            draft: "",
-          }
-          if (pane.content !== undefined) return [[pane.paneID, pane]]
-          const content =
-            saved.sessionID !== undefined
-              ? { _tag: "Session" as const, sessionID: saved.sessionID }
-              : {
-                  _tag: "NewSession" as const,
-                  locationKey:
-                    saved.locationKey !== undefined
-                      ? saved.locationKey
-                      : props.defaultLocationState.locationKey,
-                }
-          return [[pane.paneID, { ...pane, content }]]
-        }),
-      )
-    })
-    const paneUIStatesRef = useRef(paneUIStates)
-    paneUIStatesRef.current = paneUIStates
-
     const updatePaneUIState = useCallback(
       (paneID: string, update: Partial<Omit<PaneUIState, "paneID">>) => {
-        setPaneUIStates((current) => {
-          const previous = current.get(paneID) ?? {
-            paneID,
-            followLatest: true,
-            expandedRoundIDs: [],
-            expandedSubagentIDs: [],
-            draft: "",
-          }
-          const next = new Map(current)
-          next.set(paneID, { ...previous, ...update })
-          return next
-        })
+        dispatchPaneAction({ _tag: "UpdatePane", paneID, update })
       },
-      [],
+      [dispatchPaneAction],
     )
 
     const persistProjectUIState = useCallback(() => {
@@ -182,9 +120,9 @@ export const ProjectContainer = forwardRef<ProjectContainerHandle, ProjectContai
       const state: ProjectUIState = {
         locationKey: locationState.locationKey,
         projectID: locationState.projectID,
-        activePaneID: activePaneIDRef.current,
-        layout: savePaneLayout(paneLayoutRef.current),
-        panes: Array.from(paneUIStatesRef.current.values()),
+        activePaneID: paneStateRef.current.activePaneID,
+        layout: savePaneLayout(paneStateRef.current.layout),
+        panes: Array.from(paneStateRef.current.panes.values()),
         updated: Date.now(),
       }
       props.uiStateCache.current.set(locationState.locationKey, state)
@@ -197,56 +135,30 @@ export const ProjectContainer = forwardRef<ProjectContainerHandle, ProjectContai
 
     const splitActivePane = useCallback(
       (command: PaneSplitCommand) => {
-        const newPaneID = crypto.randomUUID()
-        const next = splitPane(
-          paneLayoutRef.current,
-          activePaneIDRef.current,
+        dispatchPaneAction({
+          _tag: "Split",
           command,
-          crypto.randomUUID(),
-          newPaneID,
-        )
-        paneLayoutRef.current = next
-        activePaneIDRef.current = newPaneID
-        updatePaneUIState(newPaneID, {
-          content: {
-            _tag: "NewSession",
-            locationKey: defaultLocationStateRef.current.locationKey,
-          },
+          splitID: crypto.randomUUID(),
+          newPaneID: crypto.randomUUID(),
+          locationKey: defaultLocationStateRef.current.locationKey,
         })
-        setPaneLayout(next)
-        setActivePaneID(newPaneID)
       },
-      [updatePaneUIState],
+      [dispatchPaneAction],
     )
 
     const closeActivePane = useCallback(() => {
-      const current = paneLayoutRef.current
-      const paneID = activePaneIDRef.current
-      const next = closePane(current, paneID)
-      if (next === current) return
-      const nextPaneID = adjacentPaneID(current, paneID) ?? firstPaneID(next)
-      paneLayoutRef.current = next
-      activePaneIDRef.current = nextPaneID
-      setPaneUIStates((states) => {
-        const updated = new Map(states)
-        updated.delete(paneID)
-        return updated
-      })
-      setPaneLayout(next)
-      setActivePaneID(nextPaneID)
-    }, [])
+      dispatchPaneAction({ _tag: "Close" })
+    }, [dispatchPaneAction])
 
-    const focusPaneInDirection = useCallback((direction: PaneDirection) => {
-      const paneID = paneInDirection(paneLayoutRef.current, activePaneIDRef.current, direction)
-      if (paneID === undefined) return
-      activePaneIDRef.current = paneID
-      setActivePaneID(paneID)
-    }, [])
+    const focusPaneInDirection = useCallback(
+      (direction: PaneDirection) => dispatchPaneAction({ _tag: "FocusDirection", direction }),
+      [dispatchPaneAction],
+    )
 
     const focusActivePrompt = useCallback(() => {
       promptFocusSequence.current += 1
       setPromptFocusRequest({
-        paneID: activePaneIDRef.current,
+        paneID: paneStateRef.current.activePaneID,
         sequence: promptFocusSequence.current,
       })
     }, [])
@@ -254,13 +166,13 @@ export const ProjectContainer = forwardRef<ProjectContainerHandle, ProjectContai
     const followActiveLatest = useCallback(() => {
       followLatestSequence.current += 1
       setFollowLatestRequest({
-        paneID: activePaneIDRef.current,
+        paneID: paneStateRef.current.activePaneID,
         sequence: followLatestSequence.current,
       })
     }, [])
 
     const newSession = useCallback(() => {
-      updatePaneUIState(activePaneIDRef.current, {
+      updatePaneUIState(paneStateRef.current.activePaneID, {
         content: {
           _tag: "NewSession",
           locationKey: defaultLocationStateRef.current.locationKey,
@@ -273,7 +185,7 @@ export const ProjectContainer = forwardRef<ProjectContainerHandle, ProjectContai
       if (displayedLocationKeyRef.current === locationKey) return
       displayedLocationKeyRef.current = locationKey
       if (!props.active) return
-      updatePaneUIState(activePaneIDRef.current, {
+      updatePaneUIState(paneStateRef.current.activePaneID, {
         content: { _tag: "NewSession", locationKey },
       })
     }, [props.active, props.defaultLocationState.locationKey, updatePaneUIState])
@@ -303,7 +215,7 @@ export const ProjectContainer = forwardRef<ProjectContainerHandle, ProjectContai
       const restoredSessions: Array<{
         readonly locationKey: string
         readonly sessionID: string
-      }> = Array.from(paneUIStates.values()).flatMap((pane) => {
+      }> = Array.from(paneState.panes.values()).flatMap((pane) => {
         if (
           pane.content?._tag !== "Session" ||
           restoredSessionIDs.current.has(pane.content.sessionID)
@@ -360,7 +272,7 @@ export const ProjectContainer = forwardRef<ProjectContainerHandle, ProjectContai
       if (props.active && !restorationCompleted.current)
         markStartup("session-restoration-dispatched")
     }, [
-      paneUIStates,
+      paneState.panes,
       props.initialRestorationComplete,
       props.defaultLocationState.locationKey,
       props.defaultLocationState.status,
@@ -371,7 +283,7 @@ export const ProjectContainer = forwardRef<ProjectContainerHandle, ProjectContai
     useEffect(() => {
       const sessionID = props.defaultLocationState.requestedSessionID
       if (sessionID === undefined) return
-      updatePaneUIState(activePaneIDRef.current, {
+      updatePaneUIState(paneStateRef.current.activePaneID, {
         content: { _tag: "Session", sessionID },
       })
     }, [props.defaultLocationState.requestedSessionID, updatePaneUIState])
@@ -379,7 +291,7 @@ export const ProjectContainer = forwardRef<ProjectContainerHandle, ProjectContai
     useEffect(() => {
       const timeout = window.setTimeout(persistProjectUIState, 300)
       return () => window.clearTimeout(timeout)
-    }, [activePaneID, paneLayout, paneUIStates, persistProjectUIState])
+    }, [paneState, persistProjectUIState])
 
     useEffect(() => () => persistProjectUIState(), [persistProjectUIState])
 
@@ -403,13 +315,13 @@ export const ProjectContainer = forwardRef<ProjectContainerHandle, ProjectContai
             defaultLocationKey={locationKey}
             project={props.project}
             selectLocation={props.selectLocation}
-            layout={paneLayout}
-            activePaneID={activePaneID}
+            layout={paneState.layout}
+            activePaneID={paneState.activePaneID}
             promptFocusRequest={promptFocusRequest}
             followLatestRequest={followLatestRequest}
             landingError={props.defaultLocationState.landingError}
-            setActivePane={setActivePaneID}
-            setLayout={setPaneLayout}
+            focusPane={(paneID) => dispatchPaneAction({ _tag: "Focus", paneID })}
+            resizeSplit={(splitID, ratio) => dispatchPaneAction({ _tag: "Resize", splitID, ratio })}
             selectSession={props.selectSession}
             createSession={props.createSession}
             submitPrompt={props.submitPrompt}
@@ -417,7 +329,7 @@ export const ProjectContainer = forwardRef<ProjectContainerHandle, ProjectContai
             rejectQuestion={props.rejectQuestion}
             backgroundSession={props.backgroundSession}
             interruptSession={props.interruptSession}
-            paneUIStates={paneUIStates}
+            paneUIStates={paneState.panes}
             updatePaneUIState={updatePaneUIState}
           />
         </Profiler>

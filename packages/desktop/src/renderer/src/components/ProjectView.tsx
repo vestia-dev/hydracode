@@ -1,10 +1,10 @@
-import type { CSSProperties, Dispatch, PointerEvent, ReactNode, SetStateAction } from "react"
+import type { CSSProperties, PointerEvent, ReactNode } from "react"
 import { Effect } from "effect"
 import type { SessionView } from "../services/OpenCodeGateway"
 import type { DesktopBridge, DesktopBridgeError } from "../services/DesktopBridge"
 import type { Question } from "@opencode-ai/client/effect"
 import { groupSessionFamilies } from "../domain/projectSessions"
-import { setSplitRatio, type PaneLayout } from "../domain/paneLayout"
+import type { PaneLayout } from "../domain/paneLayout"
 import { SessionLanding } from "./SessionLanding"
 import { SessionPane } from "./SessionPane"
 import type { PaneContent, PaneUIState } from "../../../shared/applicationState"
@@ -28,8 +28,8 @@ interface ProjectViewProps {
     readonly sequence: number
   } | null
   readonly landingError: string | null
-  readonly setActivePane: (paneID: string) => void
-  readonly setLayout: Dispatch<SetStateAction<PaneLayout>>
+  readonly focusPane: (paneID: string) => void
+  readonly resizeSplit: (splitID: string, ratio: number) => void
   readonly selectSession: (
     locationKey: string,
     sessionID: SessionView["id"],
@@ -100,10 +100,10 @@ const boundsStyle = (bounds: LayoutBounds): CSSProperties => ({
 
 function SplitDivider({
   split,
-  setLayout,
+  resizeSplit,
 }: {
   readonly split: Extract<PaneLayout, { readonly _tag: "Split" }>
-  readonly setLayout: Dispatch<SetStateAction<PaneLayout>>
+  readonly resizeSplit: (splitID: string, ratio: number) => void
 }) {
   const resize = (event: PointerEvent<HTMLDivElement>) => {
     event.preventDefault()
@@ -115,7 +115,7 @@ function SplitDivider({
         split.direction === "horizontal"
           ? (moveEvent.clientX - bounds.left) / bounds.width
           : (moveEvent.clientY - bounds.top) / bounds.height
-      setLayout((current) => setSplitRatio(current, split.id, ratio))
+      resizeSplit(split.id, ratio)
     }
     const stop = () => {
       window.removeEventListener("pointermove", move)
@@ -237,7 +237,7 @@ export function ProjectView(props: ProjectViewProps) {
         key={layout.id}
         className={`project-pane${props.activePaneID === layout.id ? " project-pane--active" : ""}`}
         style={boundsStyle(bounds)}
-        onPointerDownCapture={() => props.setActivePane(layout.id)}
+        onPointerDownCapture={() => props.focusPane(layout.id)}
       >
         {content._tag === "Session" && family === undefined ? (
           <section className="session-pane">
@@ -321,7 +321,7 @@ export function ProjectView(props: ProjectViewProps) {
           className={`pane-split pane-split--${split.direction}`}
           style={boundsStyle(bounds)}
         >
-          <SplitDivider split={split} setLayout={props.setLayout} />
+          <SplitDivider split={split} resizeSplit={props.resizeSplit} />
         </div>
       ))}
     </div>
