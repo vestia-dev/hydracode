@@ -49,13 +49,21 @@ interface Subscriber {
   readonly location: Location.Ref
   readonly notify: (subscriptionID: string, update: ProjectUpdate) => void
 }
+
+type SessionRecord =
+  | { readonly _tag: "Metadata"; readonly info: Session.Info }
+  | {
+      readonly _tag: "Loaded"
+      readonly info: Session.Info
+      readonly state: SessionLogState
+    }
+
 interface Entry {
   project: ProjectDetails
   readonly location: Location.Ref
   readonly directories: Set<string>
   readonly client: OpenCodeClient
-  readonly info: Map<string, Session.Info>
-  readonly logs: Map<string, SessionLogState>
+  readonly sessions: Map<string, SessionRecord>
   readonly active: Set<string>
   readonly subscribers: Map<string, Subscriber>
   readonly queued: Array<OpenCodeEvent>
@@ -109,32 +117,42 @@ const nextID = () => `project-${crypto.randomUUID()}`
 const emit = (entry: Entry, update: ProjectUpdate) => {
   for (const subscriber of entry.subscribers.values()) subscriber.notify(subscriber.id, update)
 }
+const sessionInfo = (entry: Entry) =>
+  new Map(Array.from(entry.sessions, ([id, record]) => [id, record.info] as const))
+const setSessionInfo = (entry: Entry, info: Session.Info) => {
+  const current = entry.sessions.get(info.id)
+  entry.sessions.set(
+    info.id,
+    current?._tag === "Loaded"
+      ? { _tag: "Loaded", info, state: current.state }
+      : { _tag: "Metadata", info },
+  )
+}
 const snapshot = (entry: Entry, location: Location.Ref): ProjectSnapshot => {
-  const sessionMetadata = Array.from(entry.info.values())
-    .filter((session) => locationsEqual(session.location, location))
-    .map((session) => ({
-      id: String(session.id),
-      parentID: session.parentID == null ? undefined : String(session.parentID),
-      created: DateTime.toEpochMillis(session.time.created),
-      title: session.title ?? "Untitled session",
+  const sessionMetadata = Array.from(entry.sessions.values())
+    .map((record) => record.info)
+    .filter((info) => locationsEqual(info.location, location))
+    .map((info) => ({
+      id: String(info.id),
+      parentID: info.parentID == null ? undefined : String(info.parentID),
+      created: DateTime.toEpochMillis(info.time.created),
+      title: info.title ?? "Untitled session",
     }))
   return {
     project: entry.project,
     location,
-    sessions: Array.from(entry.logs).flatMap(([sessionID, state]) => {
-      const info = entry.info.get(sessionID)
-      return info !== undefined && locationsEqual(info.location, location)
-        ? [sessionView(entry, sessionID, state)]
-        : []
-    }),
+    sessions: Array.from(entry.sessions.values()).flatMap((record) =>
+      record._tag === "Loaded" && locationsEqual(record.info.location, location)
+        ? [sessionView(entry, record)]
+        : [],
+    ),
     recentSessions: createSessionSummaries(sessionMetadata, entry.active),
   }
 }
-const sessionView = (entry: Entry, sessionID: string, state: SessionLogState): ProjectSession => {
-  const info = entry.info.get(sessionID)
-  if (info === undefined) {
-    throw new Error(`Session metadata is missing for ${sessionID}`)
-  }
+const sessionView = (
+  entry: Entry,
+  { info, state }: Extract<SessionRecord, { readonly _tag: "Loaded" }>,
+): ProjectSession => {
   return {
     id: info.id,
     ...(info.parentID == null ? {} : { parentID: info.parentID }),
@@ -152,7 +170,7 @@ const sessionView = (entry: Entry, sessionID: string, state: SessionLogState): P
   }
 }
 const isSelected = (entry: Entry, session: Session.Info) =>
-  entry.selectedRootIDs.has(sessionRootID(session, entry.info))
+  entry.selectedRootIDs.has(sessionRootID(session, sessionInfo(entry)))
 
 const captureWatermark = (client: OpenCodeClient, sessionID: Session.ID) => {
   let current: number | undefined
@@ -246,8 +264,7 @@ export const ProjectRegistryLive = Layer.effect(
 
     const removeSession = (entry: Entry, sessionID: string) =>
       Effect.sync(() => {
-        entry.info.delete(sessionID)
-        entry.logs.delete(sessionID)
+        entry.sessions.delete(sessionID)
         entry.active.delete(sessionID)
         if (entry.ready) {
           emit(entry, { _tag: "Removed", projectID: entry.project.id, sessionID })
@@ -255,9 +272,9 @@ export const ProjectRegistryLive = Layer.effect(
       })
 
     const publish = (entry: Entry, sessionID: string) => {
-      const state = entry.logs.get(sessionID)
-      if (state === undefined) return
-      const next = sessionView(entry, sessionID, state)
+      const record = entry.sessions.get(sessionID)
+      if (record?._tag !== "Loaded") return
+      const next = sessionView(entry, record)
       if (entry.ready) emit(entry, { _tag: "Session", projectID: entry.project.id, session: next })
     }
 
@@ -269,7 +286,7 @@ export const ProjectRegistryLive = Layer.effect(
     ) =>
       Effect.gen(function* () {
         const started = performance.now()
-        entry.info.set(info.id, info)
+        setSessionInfo(entry, info)
         const watermarkStarted = performance.now()
         const sequence = yield* captureWatermark(entry.client, info.id)
         const watermarkDuration = performance.now() - watermarkStarted
@@ -310,10 +327,14 @@ export const ProjectRegistryLive = Layer.effect(
           return question === undefined ? [] : [question]
         })
         const stateBuildStarted = performance.now()
-        entry.logs.set(
-          info.id,
-          initializeSessionLogState(info.id, messages, sequence, [...questions, ...formQuestions]),
-        )
+        entry.sessions.set(info.id, {
+          _tag: "Loaded",
+          info,
+          state: initializeSessionLogState(info.id, messages, sequence, [
+            ...questions,
+            ...formQuestions,
+          ]),
+        })
         publish(entry, info.id)
         const stateBuildDuration = performance.now() - stateBuildStarted
         if (selectionStarted !== undefined && timings !== undefined) {
@@ -337,14 +358,14 @@ export const ProjectRegistryLive = Layer.effect(
       entry.client.session.get({ sessionID }).pipe(
         Effect.flatMap((info) => {
           if (info.projectID !== entry.project.id) return removeSession(entry, info.id)
-          entry.info.set(info.id, info)
+          setSessionInfo(entry, info)
           if (!isSelected(entry, info)) {
             if (entry.ready) emitSnapshot(entry)
             return Effect.void
           }
-          const state = entry.logs.get(info.id)
-          if (state === undefined) return loadSessionState(entry, info)
-          const next = sessionView(entry, info.id, state)
+          const record = entry.sessions.get(info.id)
+          if (record?._tag !== "Loaded") return loadSessionState(entry, info)
+          const next = sessionView(entry, record)
           if (entry.ready) {
             emit(entry, { _tag: "Session", projectID: entry.project.id, session: next })
           }
@@ -362,12 +383,12 @@ export const ProjectRegistryLive = Layer.effect(
         const eventSessionID = sessionIDFromEvent(event)
         if (eventSessionID === undefined) return
         const sessionID = Schema.decodeUnknownSync(Session.ID)(eventSessionID)
-        const current = entry.logs.get(sessionID)
-        if (current === undefined) {
+        const current = entry.sessions.get(sessionID)
+        if (current?._tag !== "Loaded") {
           yield* refreshSession(entry, sessionID)
           return
         }
-        const reduction = reduceSessionLog(current, event)
+        const reduction = reduceSessionLog(current.state, event)
         if (reduction.status === "gap") {
           yield* reloadSessionState(entry, sessionID)
           return
@@ -394,14 +415,17 @@ export const ProjectRegistryLive = Layer.effect(
                   }),
               ),
             )
-          entry.logs.set(sessionID, {
-            ...reduction.state,
-            messages: [
-              ...reduction.state.messages.filter((item) => item.id !== message.id),
-              message,
-            ],
+          entry.sessions.set(sessionID, {
+            ...current,
+            state: {
+              ...reduction.state,
+              messages: [
+                ...reduction.state.messages.filter((item) => item.id !== message.id),
+                message,
+              ],
+            },
           })
-        } else entry.logs.set(sessionID, reduction.state)
+        } else entry.sessions.set(sessionID, { ...current, state: reduction.state })
         publish(entry, sessionID)
       }).pipe(
         Effect.mapError((cause) =>
@@ -420,10 +444,10 @@ export const ProjectRegistryLive = Layer.effect(
         entry.active.clear()
         for (const id of Object.keys(active)) entry.active.add(id)
         const availableIDs = new Set<string>(page.data.map((info) => info.id))
-        for (const sessionID of entry.info.keys()) {
+        for (const sessionID of entry.sessions.keys()) {
           if (!availableIDs.has(sessionID)) yield* removeSession(entry, sessionID)
         }
-        for (const info of page.data) entry.info.set(info.id, info)
+        for (const info of page.data) setSessionInfo(entry, info)
         for (const rootID of entry.selectedRootIDs) {
           if (!page.data.some((info) => info.id === rootID)) entry.selectedRootIDs.delete(rootID)
         }
@@ -456,7 +480,7 @@ export const ProjectRegistryLive = Layer.effect(
         const eventSessionID = sessionIDFromEvent(event)
         if (eventSessionID === undefined) return
         const sessionID = Schema.decodeUnknownSync(Session.ID)(eventSessionID)
-        const known = entry.info.has(sessionID)
+        const known = entry.sessions.has(sessionID)
         const belongsToProject =
           known ||
           (event.type === "session.created" && event.data.projectID === entry.project.id) ||
@@ -483,7 +507,7 @@ export const ProjectRegistryLive = Layer.effect(
         ) {
           yield* refreshSession(entry, sessionID)
         }
-        if (!entry.logs.has(sessionID)) return
+        if (entry.sessions.get(sessionID)?._tag !== "Loaded") return
         yield* apply(entry, event)
       }).pipe(
         Effect.mapError(
@@ -527,7 +551,7 @@ export const ProjectRegistryLive = Layer.effect(
           { concurrency: "unbounded" },
         )
         for (const id of Object.keys(active)) entry.active.add(id)
-        for (const info of page.data) entry.info.set(info.id, info)
+        for (const info of page.data) setSessionInfo(entry, info)
         entry.bootstrapping = true
         yield* Effect.forkChild(watchProject(entry))
         entry.bootstrapping = false
@@ -581,8 +605,7 @@ export const ProjectRegistryLive = Layer.effect(
             location: resolvedLocation,
             directories: knownDirectories,
             client,
-            info: new Map(),
-            logs: new Map(),
+            sessions: new Map(),
             active: new Set(),
             selectedRootIDs: new Set(),
             subscribers: new Map(),
@@ -635,19 +658,20 @@ export const ProjectRegistryLive = Layer.effect(
             new ProjectRegistryError({ message: "Project subscription is closed" }),
           )
         const { entry } = subscription
-        let target = entry.info.get(sessionID)
+        let target = entry.sessions.get(sessionID)?.info
         if (target === undefined) {
           const sessionGetStarted = performance.now()
           target = yield* entry.client.session.get({
             sessionID: Schema.decodeUnknownSync(Session.ID)(sessionID),
           })
           sessionGetDuration = performance.now() - sessionGetStarted
-          entry.info.set(target.id, target)
+          setSessionInfo(entry, target)
         }
-        const rootID = sessionRootID(target, entry.info)
+        const infoByID = sessionInfo(entry)
+        const rootID = sessionRootID(target, infoByID)
         entry.selectedRootIDs.add(rootID)
-        const family = Array.from(entry.info.values()).filter(
-          (info) => sessionRootID(info, entry.info) === rootID,
+        const family = Array.from(infoByID.values()).filter(
+          (info) => sessionRootID(info, infoByID) === rootID,
         )
         yield* Effect.forEach(
           family,
@@ -676,16 +700,16 @@ export const ProjectRegistryLive = Layer.effect(
         const info = yield* entry.client.session.create({
           location: subscriber.location,
         })
-        entry.info.set(info.id, info)
+        setSessionInfo(entry, info)
         entry.selectedRootIDs.add(info.id)
         yield* loadSessionState(entry, info)
         emitSnapshot(entry)
-        const state = entry.logs.get(info.id)
-        if (state === undefined)
+        const record = entry.sessions.get(info.id)
+        if (record?._tag !== "Loaded")
           return yield* Effect.fail(
             new ProjectRegistryError({ message: "The new session could not be projected." }),
           )
-        const session = sessionView(entry, info.id, state)
+        const session = sessionView(entry, record)
         return { _tag: "Success", session } as const
       })
     const submitPrompt = (
@@ -765,11 +789,16 @@ export const ProjectRegistryLive = Layer.effect(
             answer: questionFormAnswer(form, answers),
           })
         }
-        const state = entry.logs.get(decodedSessionID)
-        if (state === undefined) return yield* Effect.void
-        entry.logs.set(decodedSessionID, {
-          ...state,
-          questions: state.questions.filter((request) => request.id !== decodedRequestID),
+        const record = entry.sessions.get(decodedSessionID)
+        if (record?._tag !== "Loaded") return yield* Effect.void
+        entry.sessions.set(decodedSessionID, {
+          ...record,
+          state: {
+            ...record.state,
+            questions: record.state.questions.filter(
+              (request) => request.id !== decodedRequestID,
+            ),
+          },
         })
         publish(entry, decodedSessionID)
         return yield* Effect.void
@@ -797,11 +826,16 @@ export const ProjectRegistryLive = Layer.effect(
         } else {
           yield* entry.client.form.cancel({ sessionID: decodedSessionID, formID })
         }
-        const state = entry.logs.get(decodedSessionID)
-        if (state === undefined) return yield* Effect.void
-        entry.logs.set(decodedSessionID, {
-          ...state,
-          questions: state.questions.filter((request) => request.id !== decodedRequestID),
+        const record = entry.sessions.get(decodedSessionID)
+        if (record?._tag !== "Loaded") return yield* Effect.void
+        entry.sessions.set(decodedSessionID, {
+          ...record,
+          state: {
+            ...record.state,
+            questions: record.state.questions.filter(
+              (request) => request.id !== decodedRequestID,
+            ),
+          },
         })
         publish(entry, decodedSessionID)
         return yield* Effect.void
