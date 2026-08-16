@@ -101,13 +101,13 @@ export function SessionCollapsedSubagentNode({
           type="button"
           aria-label={
             data.kind === "shell-resources"
-              ? `Shell resources summary with ${shells.length} commands`
+              ? `Shell summary with ${shells.length} commands`
               : `${allAction} ${subagents.length} subagents`
           }
           disabled={data.kind === "shell-resources"}
           onClick={data.toggleAll}
         >
-          <strong>{data.kind === "subagents" ? "Subagents" : "Shell resources"}</strong>
+          <strong>{data.kind === "subagents" ? "Subagents" : "Shell"}</strong>
           <span>{activeCount > 0 ? `${activeCount} active` : `${count} items`}</span>
         </button>
       </header>
@@ -143,7 +143,6 @@ export function SessionCollapsedSubagentNode({
               onClick={(event) => setOpenShell({ id: shell.id, returnFocus: event.currentTarget })}
             >
               <span className="collapsed-subagent-list__identity">
-                <strong>Shell</strong>
                 <small title={shell.command}>{shell.command}</small>
               </span>
               <span
