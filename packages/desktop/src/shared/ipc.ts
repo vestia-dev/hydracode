@@ -117,7 +117,10 @@ export interface HydraCodeDesktopApi {
   readonly installUpdate: () => Promise<ProjectCommandResult>
   readonly restartForUpdate: () => Promise<ProjectCommandResult>
   readonly onUpdateState: (listener: (state: unknown) => void) => () => void
-  readonly onProjectUpdate: (listener: (update: unknown) => void) => () => void
+  readonly onProjectUpdate: (
+    subscriptionID: string,
+    listener: (update: unknown) => void,
+  ) => () => void
   readonly onPaneSplit: (listener: (command: PaneSplitCommand) => void) => () => void
   readonly onPaneFocus: (listener: (direction: PaneDirection) => void) => () => void
   readonly onPaneClose: (listener: () => void) => () => void

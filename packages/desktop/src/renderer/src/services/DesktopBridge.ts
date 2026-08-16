@@ -2,7 +2,6 @@ import { Context, Effect, Layer, Option, Schema } from "effect"
 import {
   CreateSessionResult,
   ListProjectsResult,
-  ProjectUpdateEnvelope,
   ProjectUpdate,
   ProjectCommandResult,
   SelectSessionResult,
@@ -371,14 +370,14 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
     watchProject: (subscriptionID, onUpdate) =>
       Effect.acquireRelease(
         Effect.sync(() =>
-          window.hydracode.onProjectUpdate((envelope) => {
+          window.hydracode.onProjectUpdate(subscriptionID, (update) => {
             const started = performance.now()
-            const decoded = Schema.decodeUnknownSync(ProjectUpdateEnvelope)(envelope)
+            const decoded = Schema.decodeUnknownSync(ProjectUpdate)(update)
             recordStartupMeasure("project-update-decode", started, {
-              matched: decoded.subscriptionID === subscriptionID ? 1 : 0,
-              update: decoded.update._tag,
+              matched: 1,
+              update: decoded._tag,
             })
-            if (decoded.subscriptionID === subscriptionID) onUpdate(decoded.update)
+            onUpdate(decoded)
           }),
         ),
         (remove) => Effect.sync(remove),

@@ -1,9 +1,11 @@
 import { contextBridge, ipcRenderer } from "electron"
+import { Schema } from "effect"
 import { DesktopChannels } from "../shared/desktopChannels"
 import type { HydraCodeDesktopApi } from "../shared/ipc"
+import { ProjectUpdateEnvelope } from "../shared/project"
+import { makeProjectUpdateSubscriptions } from "./projectUpdateSubscriptions"
 
-const projectListeners = new Set<(update: unknown) => void>()
-const pendingProjectUpdates: Array<unknown> = []
+const projectUpdates = makeProjectUpdateSubscriptions<unknown>()
 const updateListeners = new Set<(state: unknown) => void>()
 const paneSplitListeners = new Set<(command: "right" | "down" | "left" | "up") => void>()
 const paneFocusListeners = new Set<(direction: "right" | "down" | "left" | "up") => void>()
@@ -16,10 +18,9 @@ ipcRenderer.on(DesktopChannels.updateState, (_event, state: unknown) => {
   for (const listener of updateListeners) listener(state)
 })
 
-ipcRenderer.on(DesktopChannels.projectUpdate, (_event, update: unknown) => {
-  pendingProjectUpdates.push(update)
-  if (pendingProjectUpdates.length > 512) pendingProjectUpdates.shift()
-  for (const listener of projectListeners) listener(update)
+ipcRenderer.on(DesktopChannels.projectUpdate, (_event, input: unknown) => {
+  const envelope = Schema.decodeUnknownSync(ProjectUpdateEnvelope)(input)
+  projectUpdates.publish(envelope.subscriptionID, envelope.update)
 })
 
 ipcRenderer.on(DesktopChannels.paneSplit, (_event, command: "right" | "down" | "left" | "up") => {
@@ -52,7 +53,11 @@ const desktopApi: HydraCodeDesktopApi = {
   saveProjectSelection: (state) => ipcRenderer.invoke(DesktopChannels.saveProjectSelection, state),
   saveProjectUIState: (state) => ipcRenderer.invoke(DesktopChannels.saveProjectUIState, state),
   openProject: (command) => ipcRenderer.invoke(DesktopChannels.openProject, command),
-  closeProject: (command) => ipcRenderer.invoke(DesktopChannels.closeProject, command),
+  closeProject: (command) =>
+    ipcRenderer.invoke(DesktopChannels.closeProject, command).then((result) => {
+      projectUpdates.clear(command.subscriptionID)
+      return result
+    }),
   selectSession: (command) => ipcRenderer.invoke(DesktopChannels.selectSession, command),
   createSession: (command) => ipcRenderer.invoke(DesktopChannels.createSession, command),
   submitPrompt: (command) => ipcRenderer.invoke(DesktopChannels.submitPrompt, command),
@@ -70,10 +75,8 @@ const desktopApi: HydraCodeDesktopApi = {
     updateSubscription ??= ipcRenderer.invoke(DesktopChannels.updateSubscribe)
     return () => updateListeners.delete(listener)
   },
-  onProjectUpdate: (listener) => {
-    projectListeners.add(listener)
-    for (const update of pendingProjectUpdates) listener(update)
-    return () => projectListeners.delete(listener)
+  onProjectUpdate: (subscriptionID, listener) => {
+    return projectUpdates.subscribe(subscriptionID, listener)
   },
   onPaneSplit: (listener) => {
     paneSplitListeners.add(listener)
