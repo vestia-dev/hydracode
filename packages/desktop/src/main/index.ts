@@ -1,6 +1,6 @@
 import { join } from "node:path"
 import { app, BrowserWindow, Menu, type MenuItemConstructorOptions } from "electron"
-import { Effect } from "effect"
+import { Data, Effect } from "effect"
 import { DefaultTheme } from "../shared/theme"
 import { DesktopChannels } from "../shared/desktopChannels"
 import { registerDesktopIpc } from "./ipc"
@@ -9,27 +9,34 @@ import { UpdateService } from "./services/UpdateService"
 
 app.setName("HydraCode")
 
-const createProjectWindow = Effect.sync(() => {
-  const window = new BrowserWindow({
-    width: 1440,
-    height: 960,
-    minWidth: 880,
-    minHeight: 600,
-    backgroundColor: DefaultTheme.colors.background,
-    show: false,
-    ...(process.platform === "darwin"
-      ? {
-          titleBarStyle: "hidden" as const,
-          trafficLightPosition: { x: 14, y: 17 },
-        }
-      : {}),
-    webPreferences: {
-      preload: join(__dirname, "../preload/index.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  })
+class ProjectWindowLoadError extends Data.TaggedError("ProjectWindowLoadError")<{
+  readonly cause: unknown
+}> {}
+
+const createProjectWindow = Effect.gen(function* () {
+  const window = yield* Effect.sync(
+    () =>
+      new BrowserWindow({
+        width: 1440,
+        height: 960,
+        minWidth: 880,
+        minHeight: 600,
+        backgroundColor: DefaultTheme.colors.background,
+        show: false,
+        ...(process.platform === "darwin"
+          ? {
+              titleBarStyle: "hidden" as const,
+              trafficLightPosition: { x: 14, y: 17 },
+            }
+          : {}),
+        webPreferences: {
+          preload: join(__dirname, "../preload/index.js"),
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+        },
+      }),
+  )
 
   window.once("ready-to-show", () => window.show())
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }))
@@ -45,13 +52,20 @@ const createProjectWindow = Effect.sync(() => {
   })
 
   const rendererUrl = process.env.ELECTRON_RENDERER_URL
-  if (rendererUrl !== undefined) {
-    void window.loadURL(rendererUrl)
-  } else {
-    void window.loadFile(join(__dirname, "../renderer/index.html"))
-  }
-
-  return window
+  return yield* Effect.tryPromise({
+    try: () =>
+      rendererUrl !== undefined
+        ? window.loadURL(rendererUrl)
+        : window.loadFile(join(__dirname, "../renderer/index.html")),
+    catch: (cause) => new ProjectWindowLoadError({ cause }),
+  }).pipe(
+    Effect.as(window),
+    Effect.tapError(() =>
+      Effect.sync(() => {
+        if (!window.isDestroyed()) window.destroy()
+      }),
+    ),
+  )
 })
 
 const sendPaneSplit = (command: "right" | "down" | "left" | "up") => {
@@ -195,7 +209,11 @@ const start = Effect.gen(function* () {
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      Effect.runSync(createProjectWindow)
+      MainRuntime.runFork(
+        createProjectWindow.pipe(
+          Effect.catch((error) => Effect.logError("Failed to load project window", error)),
+        ),
+      )
     }
   })
 
