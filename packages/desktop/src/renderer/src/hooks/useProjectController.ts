@@ -93,6 +93,7 @@ export function useProjectController() {
   const [restoredProjectUIStates, setRestoredProjectUIStates] = useState<
     ReadonlyArray<import("../../../shared/applicationState").ProjectUIState>
   >([])
+  const [initialStateResolved, setInitialStateResolved] = useState(false)
   const [landingError, setLandingError] = useState<string | null>(null)
   const selectionFiber = useRef<Fiber.Fiber<unknown, unknown> | null>(null)
   const availableProjectsFiber = useRef<Fiber.Fiber<unknown, unknown> | null>(null)
@@ -607,6 +608,7 @@ export function useProjectController() {
       AppRuntime.runFork(Fiber.interrupt(availableProjectsFiber.current))
     setAvailableProjects({ _tag: "Loading" })
     markStartup("project-catalog-load-start")
+    markStartup("application-state-load-start")
     availableProjectsFiber.current = AppRuntime.runFork(
       DesktopBridge.use((desktop) =>
         Effect.all([desktop.listProjects, desktop.loadApplicationState]),
@@ -615,6 +617,8 @@ export function useProjectController() {
           Effect.sync(() => {
             setAvailableProjects({ _tag: "Ready", projects })
             markStartup("project-catalog-ready", { projects: projects.length })
+            setInitialStateResolved(true)
+            markStartup("application-state-ready")
             const restored = restoreApplicationState(state, projects)
             setRestoredProjectUIStates(restored.projectUIStates)
             startupLocationKey.current = restored.activeLocationKey ?? null
@@ -629,7 +633,11 @@ export function useProjectController() {
           }),
         ),
         Effect.catch((error) =>
-          Effect.sync(() => setAvailableProjects({ _tag: "Error", message: error.message })),
+          Effect.sync(() => {
+            setInitialStateResolved(true)
+            markStartup("application-state-ready")
+            setAvailableProjects({ _tag: "Error", message: error.message })
+          }),
         ),
       ),
     )
@@ -685,6 +693,7 @@ export function useProjectController() {
     openLocations,
     availableProjects,
     restoredProjectUIStates,
+    initialStateResolved,
     landingError,
     loadProjects,
     newProject,

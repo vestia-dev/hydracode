@@ -44,7 +44,6 @@ export function App() {
   const [restoredLocationKeys, setRestoredLocationKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
   )
-  const [applicationStateReady, setApplicationStateReady] = useState(false)
   const [projectLocationRecency, setProjectLocationRecency] = useState<
     ReadonlyMap<Project.ID, string>
   >(() => new Map())
@@ -53,6 +52,7 @@ export function App() {
     openLocations,
     availableProjects,
     restoredProjectUIStates,
+    initialStateResolved,
     landingError,
     newProject,
     openLocation,
@@ -132,31 +132,6 @@ export function App() {
   }, [])
 
   useEffect(() => {
-    markStartup("application-state-load-start")
-    AppRuntime.runFork(
-      DesktopBridge.use((desktop) => desktop.loadApplicationState).pipe(
-        Effect.tap((state) =>
-          Effect.sync(() => {
-            projectUIStateCache.current = new Map(
-              state.version === 2
-                ? state.projects.map((projectState) => [projectState.locationKey, projectState])
-                : [],
-            )
-            setApplicationStateReady(true)
-            markStartup("application-state-ready")
-          }),
-        ),
-        Effect.catch(() =>
-          Effect.sync(() => {
-            setApplicationStateReady(true)
-            markStartup("application-state-ready")
-          }),
-        ),
-      ),
-    )
-  }, [])
-
-  useEffect(() => {
     if (!initialLaunchComplete) return undefined
     markStartup("launch-completion-committed")
     measureStartup(
@@ -175,7 +150,7 @@ export function App() {
     if (
       initialLaunchComplete ||
       !launchDelayElapsed ||
-      !applicationStateReady ||
+      !initialStateResolved ||
       availableProjects._tag === "Loading" ||
       (activeLocationKey !== null &&
         activeLocationState?.status !== "error" &&
@@ -187,7 +162,7 @@ export function App() {
   }, [
     activeLocationKey,
     activeLocationState,
-    applicationStateReady,
+    initialStateResolved,
     availableProjects._tag,
     initialLaunchComplete,
     launchDelayElapsed,
@@ -615,7 +590,7 @@ export function App() {
           />
         ) : null}
         <div className="project-stack" inert={showSettings}>
-          {applicationStateReady
+          {initialStateResolved
             ? [
                 ...orderedOpenProjects,
                 ...(globalLocationState === undefined ? [] : [globalLocationState]),
@@ -673,7 +648,7 @@ export function App() {
                 )
               })
             : null}
-          {activeLocationState?.status === "opening" || !applicationStateReady ? (
+          {activeLocationState?.status === "opening" || !initialStateResolved ? (
             <section
               className="session-pane project-layer project-loading"
               aria-label="Project status"
