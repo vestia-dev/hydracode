@@ -200,12 +200,14 @@ const start = Effect.gen(function* () {
   installApplicationMenu()
   yield* createProjectWindow
 
-  MainRuntime.runFork(UpdateService.use((updates) => updates.checkSilently))
-  const updateTimer = setInterval(
-    () => MainRuntime.runFork(UpdateService.use((updates) => updates.checkSilently)),
-    10 * 60 * 1000,
+  MainRuntime.runFork(
+    Effect.forever(
+      UpdateService.use((updates) => updates.checkSilently).pipe(
+        Effect.catch((error) => Effect.logError("Automatic update check failed", error)),
+        Effect.andThen(Effect.sleep("10 minutes")),
+      ),
+    ),
   )
-  updateTimer.unref()
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -221,9 +223,18 @@ const start = Effect.gen(function* () {
     if (process.platform !== "darwin") app.quit()
   })
 
-  app.on("will-quit", () => {
-    clearInterval(updateTimer)
+  let shutdownState: "active" | "disposing" | "disposed" = "active"
+  app.on("before-quit", (event) => {
+    if (shutdownState === "disposed") return
+    event.preventDefault()
+    if (shutdownState === "disposing") return
+    shutdownState = "disposing"
     void MainRuntime.dispose()
+      .catch((cause: unknown) => console.error("Failed to release application services", cause))
+      .finally(() => {
+        shutdownState = "disposed"
+        app.quit()
+      })
   })
 })
 
