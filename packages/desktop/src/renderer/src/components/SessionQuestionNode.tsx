@@ -4,6 +4,14 @@ import { Effect, Fiber } from "effect"
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react"
 import { AppRuntime } from "../runtime"
 import type { DesktopBridge, DesktopBridgeError } from "../services/DesktopBridge"
+import {
+  answersFromDrafts,
+  createAnswerDrafts,
+  draftIsAnswered,
+  selectAnswerOption,
+  setCustomAnswer,
+  toggleCustomAnswer,
+} from "../domain/questionDrafts"
 
 type SubmissionState =
   | { readonly _tag: "Idle" }
@@ -22,15 +30,9 @@ export interface SessionQuestionNodeData extends Record<string, unknown> {
 
 export type SessionQuestionFlowNode = Node<SessionQuestionNodeData, "sessionQuestion">
 
-const emptyAnswers = (request: Question.Request) => request.questions.map(() => [] as string[])
-const emptyCustom = (request: Question.Request) => request.questions.map(() => "")
-const emptyCustomActive = (request: Question.Request) => request.questions.map(() => false)
-
 export function SessionQuestionNode({ data }: NodeProps<SessionQuestionFlowNode>) {
   const [index, setIndex] = useState(0)
-  const [selected, setSelected] = useState(() => emptyAnswers(data.request))
-  const [custom, setCustom] = useState(() => emptyCustom(data.request))
-  const [customActive, setCustomActive] = useState(() => emptyCustomActive(data.request))
+  const [drafts, setDrafts] = useState(() => createAnswerDrafts(data.request))
   const [submission, setSubmission] = useState<SubmissionState>({ _tag: "Idle" })
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([])
   const customButton = useRef<HTMLButtonElement>(null)
@@ -38,13 +40,12 @@ export function SessionQuestionNode({ data }: NodeProps<SessionQuestionFlowNode>
   const submissionFiber = useRef<Fiber.Fiber<unknown, unknown> | null>(null)
   const requestID = data.request.id
   const question = data.request.questions[index]
+  const draft = drafts[index]
   const sending = submission._tag === "Replying" || submission._tag === "Rejecting"
 
   useEffect(() => {
     setIndex(0)
-    setSelected(emptyAnswers(data.request))
-    setCustom(emptyCustom(data.request))
-    setCustomActive(emptyCustomActive(data.request))
+    setDrafts(createAnswerDrafts(data.request))
     setSubmission({ _tag: "Idle" })
   }, [requestID])
 
@@ -58,11 +59,11 @@ export function SessionQuestionNode({ data }: NodeProps<SessionQuestionFlowNode>
 
   useEffect(() => {
     if (data.focusRequest === undefined || sending) return
-    const target = customActive[index]
+    const target = draft?.customEnabled
       ? (customInput.current ?? customButton.current)
       : (optionRefs.current[0] ?? customButton.current)
     target?.focus({ preventScroll: true })
-  }, [customActive, data.focusRequest, index, sending])
+  }, [data.focusRequest, draft?.customEnabled, sending])
 
   const run = useCallback(
     (
@@ -83,15 +84,7 @@ export function SessionQuestionNode({ data }: NodeProps<SessionQuestionFlowNode>
     [],
   )
 
-  const answers = useCallback(
-    () =>
-      data.request.questions.map((_, questionIndex) => {
-        const answer = selected[questionIndex] ?? []
-        const own = customActive[questionIndex] ? (custom[questionIndex] ?? "").trim() : ""
-        return own === "" || answer.includes(own) ? answer : [...answer, own]
-      }),
-    [custom, customActive, data.request.questions, selected],
-  )
+  const answers = useCallback(() => answersFromDrafts(drafts), [drafts])
 
   const submit = useCallback(() => {
     if (sending) return
@@ -111,32 +104,13 @@ export function SessionQuestionNode({ data }: NodeProps<SessionQuestionFlowNode>
   const select = (label: string) => {
     if (question === undefined || sending) return
     setSubmission({ _tag: "Idle" })
-    setSelected((current) =>
-      current.map((answer, questionIndex) => {
-        if (questionIndex !== index) return answer
-        if (question.multiple === true)
-          return answer.includes(label)
-            ? answer.filter((item) => item !== label)
-            : [...answer, label]
-        return [label]
-      }),
-    )
-    if (question.multiple !== true) {
-      setCustomActive((current) => current.map((active, i) => (i === index ? false : active)))
-    }
+    setDrafts((current) => selectAnswerOption(current, index, label, question.multiple === true))
   }
 
   const activateCustom = () => {
     if (question === undefined || sending) return
     setSubmission({ _tag: "Idle" })
-    setCustomActive((current) =>
-      current.map((active, i) =>
-        i === index ? (question.multiple === true ? !active : true) : active,
-      ),
-    )
-    if (question.multiple !== true) {
-      setSelected((current) => current.map((answer, i) => (i === index ? [] : answer)))
-    }
+    setDrafts((current) => toggleCustomAnswer(current, index, question.multiple === true))
     window.requestAnimationFrame(() => customInput.current?.focus())
   }
 
@@ -178,10 +152,7 @@ export function SessionQuestionNode({ data }: NodeProps<SessionQuestionFlowNode>
                 aria-label={`Go to question ${questionIndex + 1}`}
                 aria-current={questionIndex === index ? "step" : undefined}
                 data-active={questionIndex === index}
-                data-answered={
-                  (selected[questionIndex]?.length ?? 0) > 0 ||
-                  (customActive[questionIndex] && (custom[questionIndex] ?? "").trim() !== "")
-                }
+                data-answered={draftIsAnswered(drafts[questionIndex])}
                 disabled={sending}
                 onClick={() => setIndex(questionIndex)}
               />
@@ -197,7 +168,7 @@ export function SessionQuestionNode({ data }: NodeProps<SessionQuestionFlowNode>
 
       <div className="question-node__options" role={multi ? "group" : "radiogroup"}>
         {question.options.map((option, optionIndex) => {
-          const picked = selected[index]?.includes(option.label) ?? false
+          const picked = draft?.selectedOptions.includes(option.label) ?? false
           return (
             <button
               key={`${option.label}:${optionIndex}`}
@@ -222,35 +193,35 @@ export function SessionQuestionNode({ data }: NodeProps<SessionQuestionFlowNode>
         })}
 
         {allowCustom ? (
-          <div className="question-node__custom" data-active={customActive[index]}>
+          <div className="question-node__custom" data-active={draft?.customEnabled === true}>
             <button
               ref={customButton}
               type="button"
               className="question-node__option nodrag nopan"
               role={multi ? "checkbox" : "radio"}
-              aria-checked={customActive[index]}
-              data-picked={customActive[index]}
+              aria-checked={draft?.customEnabled === true}
+              data-picked={draft?.customEnabled === true}
               disabled={sending}
               onClick={activateCustom}
             >
               <span className="question-node__mark" data-multiple={multi} aria-hidden="true" />
               <span>
                 <strong>Type your own answer</strong>
-                <small>{custom[index]?.trim() || "Enter a custom response"}</small>
+                <small>{draft?.customText.trim() || "Enter a custom response"}</small>
               </span>
             </button>
-            {customActive[index] ? (
+            {draft?.customEnabled === true ? (
               <textarea
                 ref={customInput}
                 className="question-node__custom-input nodrag nopan nowheel"
                 aria-label="Custom answer"
                 rows={2}
-                value={custom[index] ?? ""}
+                value={draft.customText}
                 disabled={sending}
                 placeholder="Type your answer"
                 onChange={(event) => {
                   const value = event.target.value
-                  setCustom((current) => current.map((answer, i) => (i === index ? value : answer)))
+                  setDrafts((current) => setCustomAnswer(current, index, value))
                   if (submission._tag === "Error") setSubmission({ _tag: "Idle" })
                 }}
                 onKeyDown={(event) => {
