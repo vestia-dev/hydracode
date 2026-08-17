@@ -7,7 +7,7 @@ import {
   type OpenCodeClient,
   type OpenCodeEvent,
 } from "@opencode-ai/client/effect"
-import { Context, DateTime, Effect, Fiber, Layer, Queue, Scope, Stream } from "effect"
+import { Context, DateTime, Effect, Layer, Queue, Scope, Semaphore, Stream } from "effect"
 import { Schema } from "effect"
 import { performance } from "node:perf_hooks"
 import {
@@ -53,16 +53,12 @@ type SessionRecord =
 interface Entry {
   project: ProjectDetails
   readonly location: Location.Ref
-  readonly directories: Set<string>
   readonly client: OpenCodeClient
   readonly sessions: Map<string, SessionRecord>
   readonly active: Set<Session.ID>
   notify: (update: ProjectUpdate) => void
-  readonly events: Queue.Queue<OpenCodeEvent>
   readonly selectedRootIDs: Set<string>
-  connected: boolean
   ready: boolean
-  readonly fibers: Array<Fiber.Fiber<never, unknown>>
 }
 
 interface ProjectRegistryShape {
@@ -171,6 +167,10 @@ export const ProjectRegistryLive = Layer.effect(
     const openCode = yield* OpenCodeService
     const scope = yield* Scope.Scope
     const entries = new Map<string, Entry>()
+    const events = yield* Queue.unbounded<OpenCodeEvent>()
+    const eventStreamLock = yield* Semaphore.make(1)
+    let eventStreamStarted = false
+    let serverConnected = false
     const emitSessions = (entry: Entry) =>
       emit(entry, {
         _tag: "Sessions",
@@ -329,7 +329,8 @@ export const ProjectRegistryLive = Layer.effect(
     const refreshSession = (entry: Entry, sessionID: Session.ID) =>
       entry.client.session.get({ sessionID }).pipe(
         Effect.flatMap((info) => {
-          if (info.projectID !== entry.project.id) return removeSession(entry, info.id)
+          if (info.projectID !== entry.project.id || !locationsEqual(info.location, entry.location))
+            return entry.sessions.has(info.id) ? removeSession(entry, info.id) : Effect.void
           setSessionInfo(entry, info)
           if (!isSelected(entry, info)) {
             if (entry.ready)
@@ -443,20 +444,11 @@ export const ProjectRegistryLive = Layer.effect(
     ): Effect.Effect<void, ProjectRegistryError> =>
       Effect.gen(function* () {
         if (event.type === "server.connected") {
-          if (!entry.connected) {
-            entry.connected = true
-            return
-          }
           yield* reconcileSessions(entry)
           return
         }
         if (event.type === "worktree.updated") {
           if (event.data.projectID !== entry.project.id) return
-          const directories = yield* entry.client.worktree.list({
-            projectID: entry.project.id,
-          })
-          entry.directories.clear()
-          for (const item of directories) entry.directories.add(item.directory)
           yield* reconcileSessions(entry)
           return
         }
@@ -464,12 +456,13 @@ export const ProjectRegistryLive = Layer.effect(
         if (eventSessionID === undefined) return
         const sessionID = Schema.decodeUnknownSync(Session.ID)(eventSessionID)
         const known = entry.sessions.has(sessionID)
-        const belongsToProject =
+        const belongsToLocation =
           known ||
-          (event.type === "session.created" && event.data.projectID === entry.project.id) ||
-          (event.type === "session.moved" && event.data.projectID === entry.project.id) ||
-          (event.location !== undefined && entry.directories.has(event.location.directory))
-        if (!belongsToProject) return
+          (event.location !== undefined && locationsEqual(event.location, entry.location)) ||
+          (event.location === undefined &&
+            ((event.type === "session.created" && event.data.projectID === entry.project.id) ||
+              (event.type === "session.moved" && event.data.projectID === entry.project.id)))
+        if (!belongsToLocation) return
         if (event.type === "session.deleted") {
           yield* removeSession(entry, sessionID)
           return
@@ -501,20 +494,14 @@ export const ProjectRegistryLive = Layer.effect(
         ),
       )
 
-    const watchProject = (entry: Entry) => {
-      const consume = entry.client.event
+    const watchServer = (client: OpenCodeClient) => {
+      const consume = client.event
         .subscribe()
-        .pipe(Stream.runForEach((event) => Queue.offer(entry.events, event).pipe(Effect.asVoid)))
+        .pipe(Stream.runForEach((event) => Queue.offer(events, event).pipe(Effect.asVoid)))
       const loop: Effect.Effect<never> = consume.pipe(
         Effect.catch((cause) =>
           Effect.gen(function* () {
             yield* Effect.logWarning("OpenCode event stream disconnected", cause)
-            if (!entry.ready)
-              emit(entry, {
-                _tag: "Error",
-                message:
-                  cause instanceof Error ? cause.message : "OpenCode event stream disconnected",
-              })
             yield* Effect.sleep("500 millis")
           }),
         ),
@@ -523,12 +510,35 @@ export const ProjectRegistryLive = Layer.effect(
       return loop
     }
 
-    const processEvents = (entry: Entry) =>
-      Effect.forever(
-        Queue.take(entry.events).pipe(
-          Effect.flatMap((event) => processEvent(entry, event)),
-          Effect.catch((cause) => Effect.logWarning("Could not process OpenCode event", cause)),
-        ),
+    const processEvents = Effect.forever(
+      Queue.take(events).pipe(
+        Effect.flatMap((event) => {
+          if (event.type === "server.connected" && !serverConnected) {
+            serverConnected = true
+            return Effect.void
+          }
+          return Effect.forEach(
+            Array.from(entries.values()),
+            (entry) =>
+              processEvent(entry, event).pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("Could not process OpenCode event", cause),
+                ),
+              ),
+            { discard: true },
+          )
+        }),
+      ),
+    )
+
+    const startServerEvents = (client: OpenCodeClient) =>
+      eventStreamLock.withPermits(1)(
+        Effect.gen(function* () {
+          if (eventStreamStarted) return
+          yield* Effect.forkIn(watchServer(client), scope)
+          yield* Effect.forkIn(processEvents, scope)
+          eventStreamStarted = true
+        }),
       )
 
     const open = (
@@ -537,6 +547,7 @@ export const ProjectRegistryLive = Layer.effect(
     ): Effect.Effect<Project.ID, unknown> =>
       Effect.gen(function* () {
         const client = yield* openCode.client
+        yield* startServerEvents(client)
         const current = yield* client.project.current(
           location === undefined
             ? undefined
@@ -557,48 +568,34 @@ export const ProjectRegistryLive = Layer.effect(
           directory: location?.directory ?? current.directory,
           ...(location?.workspaceID === undefined ? {} : { workspaceID: location.workspaceID }),
         })
-        const knownDirectories = new Set([resolvedLocation.directory])
         const key = `${current.id}:${locationKey(resolvedLocation)}`
         let entry = entries.get(key)
         if (entry === undefined) {
-          const events = yield* Queue.unbounded<OpenCodeEvent>()
           entry = {
             project,
             location: resolvedLocation,
-            directories: knownDirectories,
             client,
             sessions: new Map(),
             active: new Set(),
             selectedRootIDs: new Set(),
-            connected: false,
             notify: (update) => notify(resolvedLocation, update),
-            events,
-            ready: false,
-            fibers: [],
+            ready: true,
           }
         } else {
           entry.project = project
           entry.notify = (update) => notify(resolvedLocation, update)
-          for (const directory of knownDirectories) entry.directories.add(directory)
         }
         entries.set(key, entry)
-        if (!entry.ready) {
-          entry.fibers.push(yield* Effect.forkIn(watchProject(entry), scope))
-          yield* Effect.yieldNow
-          entry.ready = true
-          entry.fibers.push(yield* Effect.forkIn(processEvents(entry), scope))
-        }
         return current.id
       })
     const close = (location: Location.Ref): Effect.Effect<void, unknown> =>
-      Effect.gen(function* () {
+      Effect.sync(() => {
         const found = Array.from(entries.entries()).find(([, entry]) =>
           locationsEqual(entry.location, location),
         )
         if (found === undefined) return
-        const [key, entry] = found
+        const [key] = found
         entries.delete(key)
-        yield* Fiber.interruptAll(entry.fibers)
       })
     const selectSession = (
       location: Location.Ref,
