@@ -129,9 +129,6 @@ export const ActiveSessionsResult = Schema.Union([
 ])
 export type ActiveSessionsResult = typeof ActiveSessionsResult.Type
 
-export const CloseProjectCommand = Schema.Struct({ location: Location.Ref })
-export type CloseProjectCommand = typeof CloseProjectCommand.Type
-
 export const SessionCommand = Schema.Struct({ sessionID: Session.ID })
 export type SessionCommand = typeof SessionCommand.Type
 

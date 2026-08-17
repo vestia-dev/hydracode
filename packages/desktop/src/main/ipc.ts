@@ -13,7 +13,6 @@ import {
 import {
   CreateSessionCommand,
   CreateSessionResult,
-  CloseProjectCommand,
   ListProjectsResult,
   OpenProjectCommand,
   OpenProjectResult,
@@ -253,10 +252,6 @@ export function registerDesktopIpc() {
       )
       .catch((cause) => ({ _tag: "Failure" as const, message: failureMessage(cause) })),
   )
-  ipcMain.handle(DesktopChannels.closeProject, (_event, input: unknown) => {
-    const command = Schema.decodeUnknownSync(CloseProjectCommand)(input)
-    return result(ProjectRegistry.use((registry) => registry.close(command.location)))
-  })
   ipcMain.handle(DesktopChannels.selectSession, (_event, input: unknown) => {
     const command = Schema.decodeUnknownSync(SessionCommand)(input)
     return MainRuntime.runPromise(

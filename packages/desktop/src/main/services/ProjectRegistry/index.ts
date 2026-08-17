@@ -52,7 +52,6 @@ interface ProjectRegistryShape {
     location: Location.Ref | undefined,
     notify: (location: Location.Ref, update: ProjectUpdate) => void,
   ) => Effect.Effect<Project.ID, unknown>
-  readonly close: (location: Location.Ref) => Effect.Effect<void, unknown>
   readonly selectSession: (sessionID: Session.ID) => Effect.Effect<SessionSelectionTiming, unknown>
 }
 
@@ -558,15 +557,6 @@ export const ProjectRegistryLive = Layer.effect(
         entries.set(key, entry)
         return current.id
       })
-    const close = (location: Location.Ref): Effect.Effect<void, unknown> =>
-      Effect.sync(() => {
-        const found = Array.from(entries.entries()).find(([, entry]) =>
-          locationsEqual(entry.location, location),
-        )
-        if (found === undefined) return
-        const [key] = found
-        entries.delete(key)
-      })
     const selectSession = (sessionID: Session.ID): Effect.Effect<SessionSelectionTiming, unknown> =>
       Effect.gen(function* () {
         const started = performance.now()
@@ -617,7 +607,6 @@ export const ProjectRegistryLive = Layer.effect(
       })
     return ProjectRegistry.of({
       open,
-      close,
       selectSession,
     })
   }),

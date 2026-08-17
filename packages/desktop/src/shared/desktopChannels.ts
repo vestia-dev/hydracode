@@ -9,7 +9,6 @@ export const DesktopChannels = {
   openProject: "hydracode:open-project",
   listProjectSessions: "hydracode:list-project-sessions",
   listActiveSessions: "hydracode:list-active-sessions",
-  closeProject: "hydracode:close-project",
   projectUpdate: "hydracode:project-update",
   selectSession: "hydracode:select-session",
   createSession: "hydracode:create-session",

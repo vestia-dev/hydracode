@@ -164,11 +164,7 @@ export function useProjectController() {
               if (ready) onUpdate(update)
               else pendingUpdates.push(update)
             }),
-            (remove) =>
-              Effect.sync(remove).pipe(
-                Effect.andThen(desktop.closeProject({ location })),
-                Effect.ignore,
-              ),
+            (remove) => Effect.sync(remove),
           ).pipe(
             Effect.flatMap(() => desktop.openProject({ location })),
             Effect.flatMap((projectID) =>

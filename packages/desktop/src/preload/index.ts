@@ -52,7 +52,6 @@ const desktopApi: HydraCodeDesktopApi = {
   listProjectSessions: (command) =>
     ipcRenderer.invoke(DesktopChannels.listProjectSessions, command),
   listActiveSessions: () => ipcRenderer.invoke(DesktopChannels.listActiveSessions),
-  closeProject: (command) => ipcRenderer.invoke(DesktopChannels.closeProject, command),
   selectSession: (command) => ipcRenderer.invoke(DesktopChannels.selectSession, command),
   createSession: (command) => ipcRenderer.invoke(DesktopChannels.createSession, command),
   submitPrompt: (command) => ipcRenderer.invoke(DesktopChannels.submitPrompt, command),

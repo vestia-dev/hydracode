@@ -11,7 +11,6 @@ import {
   ActiveSessionsResult,
   type OpenProjectCommand,
   type ListProjectSessionsCommand,
-  type CloseProjectCommand,
   type CreateSessionCommand,
   type SubmitPromptCommand,
   type SessionInboxCommand,
@@ -25,7 +24,7 @@ import { recordStartupDuration, recordStartupMeasure } from "../startupTiming"
 import { ThemeResult, ProjectSelectionResult } from "../../../shared/ipc"
 import type { BundledThemeID, Theme } from "../../../shared/theme"
 import type { ProjectCatalogEntry } from "../../../shared/project"
-import type { Project, Session } from "@opencode-ai/client/effect"
+import type { Location, Project, Session } from "@opencode-ai/client/effect"
 import {
   ApplicationStateResult,
   ProjectUIStateResult,
@@ -68,7 +67,6 @@ interface DesktopBridgeShape {
     command: ListProjectSessionsCommand,
   ) => Effect.Effect<ReadonlyArray<Session.Info>, DesktopBridgeError>
   readonly listActiveSessions: Effect.Effect<ReadonlyArray<Session.ID>, DesktopBridgeError>
-  readonly closeProject: (command: CloseProjectCommand) => Effect.Effect<void, DesktopBridgeError>
   readonly selectSession: (command: SessionCommand) => Effect.Effect<void, DesktopBridgeError>
   readonly createSession: (
     command: CreateSessionCommand,
@@ -103,7 +101,7 @@ interface DesktopBridgeShape {
     onFollow: () => void,
   ) => Effect.Effect<() => void, DesktopBridgeError>
   readonly subscribeProject: (
-    location: CloseProjectCommand["location"],
+    location: Location.Ref,
     onUpdate: (update: ProjectUpdate) => void,
   ) => Effect.Effect<() => void, DesktopBridgeError>
 }
@@ -247,7 +245,6 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
           : Effect.fail(new DesktopBridgeError({ message: result.message, cause: result })),
       ),
     ),
-    closeProject: (request) => command(() => window.hydracode.closeProject(request)),
     selectSession: (request) =>
       Effect.suspend(() => {
         const started = performance.now()
