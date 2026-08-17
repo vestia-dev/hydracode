@@ -12,7 +12,7 @@ import { AppRuntime } from "../runtime"
 import { recordStartupMeasure } from "../startupTiming"
 import type { DesktopBridge, DesktopBridgeError } from "../services/DesktopBridge"
 import { IconButton } from "./IconButton"
-import type { ProjectPendingPrompt } from "../../../shared/project"
+import type { PendingPrompt } from "../services/OpenCodeGateway"
 
 type SubmissionState =
   | { readonly _tag: "Idle" }
@@ -27,9 +27,9 @@ export interface SessionPromptNodeData extends Record<string, unknown> {
     text: string,
     delivery?: "queue" | "steer",
   ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
-  readonly pendingPrompts: ReadonlyArray<ProjectPendingPrompt>
+  readonly pendingPrompts: ReadonlyArray<PendingPrompt>
   readonly updatePendingPrompt: (
-    inboxID: ProjectPendingPrompt["id"],
+    inboxID: PendingPrompt["id"],
     action: "cancel" | "queue" | "steer",
   ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
   readonly retryPrompt?: { readonly text: string; readonly message: string }

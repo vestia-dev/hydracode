@@ -8,8 +8,8 @@ import {
   useRef,
   useState,
 } from "react"
-import { Effect } from "effect"
-import { type Question } from "@opencode-ai/client/effect"
+import { Effect, Schema } from "effect"
+import { Session, type Question } from "@opencode-ai/client/effect"
 import { ProjectView } from "./ProjectView"
 import { savePaneLayout } from "../domain/paneLayout"
 import { createPaneState, reducePaneState, type PaneStateAction } from "../domain/paneState"
@@ -38,6 +38,7 @@ export interface ProjectContainerHandle {
 interface ProjectContainerProps {
   readonly defaultLocationState: OpenLocationState
   readonly locationStates: ReadonlyMap<string, OpenLocationState>
+  readonly sessions: ReadonlyMap<SessionView["id"], SessionView>
   readonly project: ProjectCatalogEntry
   readonly selectLocation: (location: ProjectCatalogEntry["locations"][number]["ref"]) => void
   readonly active: boolean
@@ -229,11 +230,12 @@ export const ProjectContainer = forwardRef<ProjectContainerHandle, ProjectContai
         )
           return []
         const sessionID = pane.content.sessionID
+        const loaded = props.sessions.get(Schema.decodeUnknownSync(Session.ID)(sessionID))
         const location = Array.from(props.locationStates.entries()).find(([, state]) =>
-          state.snapshot === undefined
-            ? false
-            : state.snapshot.sessions.some((session) => session.id === sessionID) ||
-              state.snapshot.recentSessions.some((session) => session.id === sessionID),
+          loaded !== undefined
+            ? state.location.directory === loaded.location.directory &&
+              state.location.workspaceID === loaded.location.workspaceID
+            : (state.snapshot?.recentSessions.some((session) => session.id === sessionID) ?? false),
         )
         if (location === undefined) return []
         restoredSessionIDs.current.add(sessionID)
@@ -318,6 +320,7 @@ export const ProjectContainer = forwardRef<ProjectContainerHandle, ProjectContai
           }
         >
           <ProjectView
+            sessions={props.sessions}
             locationStates={props.locationStates}
             defaultLocationKey={locationKey}
             project={props.project}

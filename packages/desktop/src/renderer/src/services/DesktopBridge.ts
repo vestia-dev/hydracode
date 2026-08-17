@@ -2,10 +2,7 @@ import { Context, Effect, Layer, Option, Schema } from "effect"
 import {
   CreateSessionResult,
   ListProjectsResult,
-  ProjectUpdate,
-  ProjectUpdateEnvelope,
   ProjectCommandResult,
-  SelectSessionResult,
   OpenProjectResult,
   ListProjectSessionsResult,
   ActiveSessionsResult,
@@ -17,14 +14,18 @@ import {
   type ReplyQuestionCommand,
   type QuestionCommand,
   type SessionCommand,
+  SessionSnapshotResult,
+  SessionMessageResult,
+  type SessionMessageCommand,
   UpdateState,
   OpenCodeDiagnosticsResult,
 } from "../../../shared/ipc"
-import { recordStartupDuration, recordStartupMeasure } from "../startupTiming"
 import { ThemeResult, ProjectSelectionResult } from "../../../shared/ipc"
 import type { BundledThemeID, Theme } from "../../../shared/theme"
-import type { ProjectCatalogEntry } from "../../../shared/project"
-import type { Location, Project, Session } from "@opencode-ai/client/effect"
+import type { ProjectCatalogEntry, SessionSnapshot } from "../../../shared/project"
+import type { Project, Session, SessionMessage } from "@opencode-ai/client/effect"
+import type { OpenCodeEvent } from "@opencode-ai/client/effect"
+import { OpenCodeEvent as OpenCodeEventSchema } from "@opencode-ai/protocol/groups/event"
 import {
   ApplicationStateResult,
   ProjectUIStateResult,
@@ -67,7 +68,12 @@ interface DesktopBridgeShape {
     command: ListProjectSessionsCommand,
   ) => Effect.Effect<ReadonlyArray<Session.Info>, DesktopBridgeError>
   readonly listActiveSessions: Effect.Effect<ReadonlyArray<Session.ID>, DesktopBridgeError>
-  readonly selectSession: (command: SessionCommand) => Effect.Effect<void, DesktopBridgeError>
+  readonly loadSessionSnapshot: (
+    command: SessionCommand,
+  ) => Effect.Effect<SessionSnapshot, DesktopBridgeError>
+  readonly getSessionMessage: (
+    command: SessionMessageCommand,
+  ) => Effect.Effect<SessionMessage.Info, DesktopBridgeError>
   readonly createSession: (
     command: CreateSessionCommand,
   ) => Effect.Effect<Exclude<CreateSessionResult, { readonly _tag: "Failure" }>, DesktopBridgeError>
@@ -100,9 +106,8 @@ interface DesktopBridgeShape {
   readonly subscribeFollowLatest: (
     onFollow: () => void,
   ) => Effect.Effect<() => void, DesktopBridgeError>
-  readonly subscribeProject: (
-    location: Location.Ref,
-    onUpdate: (update: ProjectUpdate) => void,
+  readonly subscribeOpenCodeEvents: (
+    onEvent: (event: OpenCodeEvent) => void,
   ) => Effect.Effect<() => void, DesktopBridgeError>
 }
 
@@ -245,75 +250,22 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
           : Effect.fail(new DesktopBridgeError({ message: result.message, cause: result })),
       ),
     ),
-    selectSession: (request) =>
-      Effect.suspend(() => {
-        const started = performance.now()
-        return invoke(() => window.hydracode.selectSession(request), SelectSessionResult).pipe(
-          Effect.flatMap((result) => {
-            if (result._tag === "Failure")
-              return Effect.fail(new DesktopBridgeError({ message: result.message, cause: result }))
-            const timing = result.timing
-            recordStartupDuration("main-session-selection", started, timing.duration, {
-              sessionID: request.sessionID,
-              familySize: timing.familySize,
-              sessionGetDuration: timing.sessionGetDuration,
-              snapshotDuration: timing.snapshotDuration,
-            })
-            for (const session of timing.sessions) {
-              const sessionStarted = started + session.offset
-              const fetchStarted = sessionStarted + session.watermarkDuration
-              const stateBuildStarted =
-                fetchStarted +
-                Math.max(session.messagesDuration, session.questionsDuration, session.formsDuration)
-              const counts = {
-                sessionID: session.sessionID,
-                messages: session.messages,
-                questions: session.questions,
-                forms: session.forms,
-              }
-              recordStartupDuration("main-session-load", sessionStarted, session.duration, counts)
-              recordStartupDuration(
-                "main-session-watermark",
-                sessionStarted,
-                session.watermarkDuration,
-                counts,
-              )
-              recordStartupDuration(
-                "main-session-messages",
-                fetchStarted,
-                session.messagesDuration,
-                counts,
-              )
-              recordStartupDuration(
-                "main-session-questions",
-                fetchStarted,
-                session.questionsDuration,
-                counts,
-              )
-              recordStartupDuration(
-                "main-session-forms",
-                fetchStarted,
-                session.formsDuration,
-                counts,
-              )
-              recordStartupDuration(
-                "main-session-state-build",
-                stateBuildStarted,
-                session.stateBuildDuration,
-                counts,
-              )
-            }
-            return Effect.void
-          }),
-          Effect.ensuring(
-            Effect.sync(() =>
-              recordStartupMeasure("renderer-session-selection", started, {
-                sessionID: request.sessionID,
-              }),
-            ),
-          ),
-        )
-      }),
+    loadSessionSnapshot: (request) =>
+      invoke(() => window.hydracode.loadSessionSnapshot(request), SessionSnapshotResult).pipe(
+        Effect.flatMap((result) =>
+          result._tag === "Success"
+            ? Effect.succeed(result.snapshot)
+            : Effect.fail(new DesktopBridgeError({ message: result.message, cause: result })),
+        ),
+      ),
+    getSessionMessage: (request) =>
+      invoke(() => window.hydracode.getSessionMessage(request), SessionMessageResult).pipe(
+        Effect.flatMap((result) =>
+          result._tag === "Success"
+            ? Effect.succeed(result.message)
+            : Effect.fail(new DesktopBridgeError({ message: result.message, cause: result })),
+        ),
+      ),
     createSession: (request) =>
       invoke(() => window.hydracode.createSession(request), CreateSessionResult).pipe(
         Effect.flatMap((result) =>
@@ -394,26 +346,15 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
             cause,
           }),
       }),
-    subscribeProject: (location, onUpdate) =>
+    subscribeOpenCodeEvents: (onEvent) =>
       Effect.try({
         try: () =>
-          window.hydracode.onProjectUpdate((update) => {
-            const started = performance.now()
-            const decoded = Schema.decodeUnknownSync(ProjectUpdateEnvelope)(update)
-            if (
-              decoded.location.directory !== location.directory ||
-              decoded.location.workspaceID !== location.workspaceID
-            )
-              return
-            recordStartupMeasure("project-update-decode", started, {
-              matched: 1,
-              update: decoded.update._tag,
-            })
-            onUpdate(decoded.update)
+          window.hydracode.onOpenCodeEvent((event) => {
+            onEvent(Schema.decodeUnknownSync(OpenCodeEventSchema)(event))
           }),
         catch: (cause) =>
           new DesktopBridgeError({
-            message: "HydraCode could not subscribe to project updates.",
+            message: "HydraCode could not subscribe to OpenCode events.",
             cause,
           }),
       }),

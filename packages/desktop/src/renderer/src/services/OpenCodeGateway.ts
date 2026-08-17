@@ -1,8 +1,16 @@
 import type { Question, Session } from "@opencode-ai/client/effect"
 import type { SemanticGraph } from "../domain/graph"
 import type { OptimisticPrompt } from "../domain/optimisticPrompts"
-import type { ProjectPendingPrompt, ProjectSessionExecution } from "../../../shared/project"
 import type { AbsolutePath, Location, Project } from "@opencode-ai/client/effect"
+import type { SessionExecutionState } from "../../../shared/domain/sessionLog"
+import type { SessionInbox } from "@opencode-ai/schema/session-inbox"
+import type { SessionMessage } from "@opencode-ai/schema/session-message"
+
+export interface PendingPrompt {
+  readonly id: SessionMessage.ID
+  readonly text: string
+  readonly delivery: SessionInbox.Delivery
+}
 
 export interface SessionView {
   readonly id: Session.ID
@@ -11,9 +19,9 @@ export interface SessionView {
   readonly created: number
   readonly title: string
   readonly active: boolean
-  readonly execution: ProjectSessionExecution
+  readonly execution: SessionExecutionState
   readonly questions: ReadonlyArray<Question.Request>
-  readonly pendingPrompts: ReadonlyArray<ProjectPendingPrompt>
+  readonly pendingPrompts: ReadonlyArray<PendingPrompt>
   readonly provisional: boolean
   readonly authoritativeGraph: SemanticGraph
   readonly optimisticPrompts: ReadonlyArray<OptimisticPrompt>
@@ -35,6 +43,5 @@ export interface ProjectView {
     readonly icon?: Project.Icon | undefined
   }
   readonly location: Location.Ref
-  readonly sessions: ReadonlyArray<SessionView>
   readonly recentSessions: ReadonlyArray<SessionSummary>
 }

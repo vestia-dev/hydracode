@@ -7,20 +7,13 @@ import {
   Session,
   SessionMessage,
 } from "@opencode-ai/client/effect"
-import type { ProjectUpdate } from "../../../shared/project"
 import type { OpenLocationState } from "./projectLocationState"
 import type { SemanticGraph, SemanticGraphNode } from "./graph"
-import {
-  applyProjectUpdate,
-  createSessionView,
-  openProjectState,
-  preserveCompletedGraph,
-} from "./projectLocationState"
+import { createSessionView, openProjectState, preserveCompletedGraph } from "./projectLocationState"
 
 const projectA = Schema.decodeUnknownSync(Project.ID)("project-a")
 const projectB = Schema.decodeUnknownSync(Project.ID)("project-b")
 const sessionA = Schema.decodeUnknownSync(Session.ID)("session-a")
-const sessionB = Schema.decodeUnknownSync(Session.ID)("session-b")
 const location = Location.Ref.make({ directory: AbsolutePath.make("/tmp/project-a") })
 const provenance = {
   source: "explicit" as const,
@@ -60,7 +53,7 @@ function opening(projectID: Project.ID): OpenLocationState {
   }
 }
 
-describe("applyProjectUpdate", () => {
+describe("openProjectState", () => {
   it("opens only the owning location state", () => {
     const state = opening(projectA)
     const next = openProjectState(
@@ -75,76 +68,7 @@ describe("applyProjectUpdate", () => {
     expect(next.snapshot?.project.id).toBe(projectB)
   })
 
-  it("keeps another project's session updates isolated", () => {
-    const ready = openProjectState(
-      opening(projectA),
-      { id: projectA, canonical: AbsolutePath.make("/tmp/project-a") },
-      projectA,
-      [],
-      [],
-    )
-    const foreign: ProjectUpdate = {
-      _tag: "Session",
-      projectID: projectB,
-      session: {
-        id: sessionB,
-        location,
-        created: 1,
-        title: "Foreign session",
-        active: true,
-        execution: { _tag: "Running" },
-        messages: [],
-        pendingPrompts: [],
-        questions: [],
-      },
-    }
-
-    expect(applyProjectUpdate(projectA, ready, foreign)).toBe(ready)
-  })
-
-  it("still removes sessions through explicit removal updates", () => {
-    const opened = openProjectState(
-      opening(projectA),
-      { id: projectA, canonical: AbsolutePath.make("/tmp/project-a") },
-      projectA,
-      [],
-      [],
-    )
-    const ready = applyProjectUpdate(projectA, opened, {
-      _tag: "Session",
-      projectID: projectA,
-      session: {
-        id: sessionA,
-        location,
-        created: 1,
-        title: "Hydrated session",
-        active: false,
-        execution: { _tag: "Idle" },
-        messages: [],
-        pendingPrompts: [],
-        questions: [],
-      },
-    })
-    expect(ready.snapshot?.sessions[0]?.location).toEqual(location)
-
-    const removed = applyProjectUpdate(projectA, ready, {
-      _tag: "Removed",
-      projectID: projectA,
-      sessionID: sessionA,
-    })
-
-    expect(removed.snapshot?.sessions).toEqual([])
-    expect(removed.snapshot?.recentSessions).toEqual([])
-  })
-
-  it("adds root session metadata to the recent sessions", () => {
-    const ready = openProjectState(
-      opening(projectA),
-      { id: projectA, canonical: AbsolutePath.make("/tmp/project-a") },
-      projectA,
-      [],
-      [],
-    )
+  it("projects root metadata into recent sessions", () => {
     const info = Schema.decodeUnknownSync(Session.Info)({
       id: sessionA,
       projectID: "project-a",
@@ -155,12 +79,13 @@ describe("applyProjectUpdate", () => {
       location: { directory: "/tmp/project-a" },
     })
 
-    const updated = applyProjectUpdate(projectA, ready, {
-      _tag: "Info",
-      projectID: projectA,
-      session: info,
-      active: true,
-    })
+    const updated = openProjectState(
+      opening(projectA),
+      { id: projectA, canonical: AbsolutePath.make("/tmp/project-a") },
+      projectA,
+      [info],
+      [sessionA],
+    )
 
     expect(updated.snapshot?.recentSessions).toMatchObject([
       { id: "session-a", title: "New session", active: true },
@@ -169,24 +94,30 @@ describe("applyProjectUpdate", () => {
 })
 
 it("reconciles an optimistic prompt when OpenCode admits it to the inbox", () => {
+  const info = Schema.decodeUnknownSync(Session.Info)({
+    id: sessionA,
+    projectID: projectA,
+    cost: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    time: { created: 1, updated: 1 },
+    title: "Session",
+    location,
+  })
   const view = createSessionView(
+    info,
     {
-      id: sessionA,
-      location,
-      created: 1,
-      title: "Session",
-      active: true,
+      sessionID: sessionA,
       execution: { _tag: "Running" },
       messages: [],
-      pendingPrompts: [
-        {
-          id: Schema.decodeUnknownSync(SessionMessage.ID)("msg_pending"),
-          text: "Queue this",
-          delivery: "queue",
-        },
-      ],
       questions: [],
+      pending: new Map([
+        [
+          Schema.decodeUnknownSync(SessionMessage.ID)("msg_pending"),
+          { type: "user", payload: { text: "Queue this" }, delivery: "queue" },
+        ],
+      ]),
     },
+    true,
     undefined,
     [
       {

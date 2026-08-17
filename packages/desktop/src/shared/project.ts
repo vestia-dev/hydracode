@@ -1,41 +1,15 @@
 import { Schema } from "effect"
-import { AbsolutePath, Location, Project, Question, Session } from "@opencode-ai/client/effect"
+import {
+  AbsolutePath,
+  Event,
+  Form,
+  Location,
+  Project,
+  Question,
+  Session,
+} from "@opencode-ai/client/effect"
 import { SessionMessage } from "@opencode-ai/schema/session-message"
 import { SessionInbox } from "@opencode-ai/schema/session-inbox"
-
-export const ProjectSessionExecution = Schema.Union([
-  Schema.Struct({ _tag: Schema.Literal("Idle") }),
-  Schema.Struct({ _tag: Schema.Literal("Running") }),
-  Schema.Struct({
-    _tag: Schema.Literal("Retrying"),
-    attempt: Schema.Number,
-    at: Schema.Number,
-    message: Schema.String,
-  }),
-  Schema.Struct({ _tag: Schema.Literal("Failed"), message: Schema.String }),
-])
-export type ProjectSessionExecution = typeof ProjectSessionExecution.Type
-
-export const ProjectPendingPrompt = Schema.Struct({
-  id: SessionMessage.ID,
-  text: Schema.String,
-  delivery: SessionInbox.Delivery,
-})
-export type ProjectPendingPrompt = typeof ProjectPendingPrompt.Type
-
-export const ProjectSession = Schema.Struct({
-  id: Session.ID,
-  parentID: Schema.optional(Session.ID),
-  location: Location.Ref,
-  created: Schema.Number,
-  title: Schema.String,
-  active: Schema.Boolean,
-  execution: ProjectSessionExecution,
-  messages: Schema.Array(SessionMessage.Info),
-  pendingPrompts: Schema.Array(ProjectPendingPrompt),
-  questions: Schema.Array(Question.Request),
-})
-export type ProjectSession = typeof ProjectSession.Type
 
 export const ProjectDetails = Schema.Struct({
   id: Project.ID,
@@ -69,38 +43,6 @@ export const ListProjectsResult = Schema.Union([
 ])
 export type ListProjectsResult = typeof ListProjectsResult.Type
 
-export const ProjectUpdate = Schema.Union([
-  Schema.Struct({
-    _tag: Schema.Literal("Sessions"),
-    projectID: Project.ID,
-    sessions: Schema.Array(Session.Info),
-    activeSessionIDs: Schema.Array(Session.ID),
-  }),
-  Schema.Struct({
-    _tag: Schema.Literal("Session"),
-    projectID: Project.ID,
-    session: ProjectSession,
-  }),
-  Schema.Struct({
-    _tag: Schema.Literal("Info"),
-    projectID: Project.ID,
-    session: Session.Info,
-    active: Schema.Boolean,
-  }),
-  Schema.Struct({
-    _tag: Schema.Literal("Removed"),
-    projectID: Project.ID,
-    sessionID: Session.ID,
-  }),
-])
-export type ProjectUpdate = typeof ProjectUpdate.Type
-
-export const ProjectUpdateEnvelope = Schema.Struct({
-  location: Location.Ref,
-  update: ProjectUpdate,
-})
-export type ProjectUpdateEnvelope = typeof ProjectUpdateEnvelope.Type
-
 export const OpenProjectCommand = Schema.Struct({ location: Schema.optional(Location.Ref) })
 export type OpenProjectCommand = typeof OpenProjectCommand.Type
 
@@ -130,6 +72,34 @@ export type ActiveSessionsResult = typeof ActiveSessionsResult.Type
 
 export const SessionCommand = Schema.Struct({ sessionID: Session.ID })
 export type SessionCommand = typeof SessionCommand.Type
+
+export const SessionSnapshot = Schema.Struct({
+  info: Session.Info,
+  messages: Schema.Array(SessionMessage.Info),
+  durableSeq: Schema.optional(Event.Seq),
+  questions: Schema.Array(Question.Request),
+  forms: Schema.Array(Form.Info),
+  inbox: Schema.Array(SessionInbox.Info),
+})
+export type SessionSnapshot = typeof SessionSnapshot.Type
+
+export const SessionSnapshotResult = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal("Success"), snapshot: SessionSnapshot }),
+  Schema.Struct({ _tag: Schema.Literal("Failure"), message: Schema.String }),
+])
+export type SessionSnapshotResult = typeof SessionSnapshotResult.Type
+
+export const SessionMessageCommand = Schema.Struct({
+  sessionID: Session.ID,
+  messageID: SessionMessage.ID,
+})
+export type SessionMessageCommand = typeof SessionMessageCommand.Type
+
+export const SessionMessageResult = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal("Success"), message: SessionMessage.Info }),
+  Schema.Struct({ _tag: Schema.Literal("Failure"), message: Schema.String }),
+])
+export type SessionMessageResult = typeof SessionMessageResult.Type
 
 export const SubmitPromptCommand = Schema.Struct({
   sessionID: Session.ID,
@@ -173,33 +143,3 @@ export const ProjectCommandResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Failure"), message: Schema.String }),
 ])
 export type ProjectCommandResult = typeof ProjectCommandResult.Type
-
-export const SessionLoadTiming = Schema.Struct({
-  sessionID: Schema.String,
-  offset: Schema.Number,
-  duration: Schema.Number,
-  watermarkDuration: Schema.Number,
-  messagesDuration: Schema.Number,
-  questionsDuration: Schema.Number,
-  formsDuration: Schema.Number,
-  stateBuildDuration: Schema.Number,
-  messages: Schema.Number,
-  questions: Schema.Number,
-  forms: Schema.Number,
-})
-export type SessionLoadTiming = typeof SessionLoadTiming.Type
-
-export const SessionSelectionTiming = Schema.Struct({
-  duration: Schema.Number,
-  sessionGetDuration: Schema.Number,
-  familySize: Schema.Number,
-  snapshotDuration: Schema.Number,
-  sessions: Schema.Array(SessionLoadTiming),
-})
-export type SessionSelectionTiming = typeof SessionSelectionTiming.Type
-
-export const SelectSessionResult = Schema.Union([
-  Schema.Struct({ _tag: Schema.Literal("Success"), timing: SessionSelectionTiming }),
-  Schema.Struct({ _tag: Schema.Literal("Failure"), message: Schema.String }),
-])
-export type SelectSessionResult = typeof SelectSessionResult.Type

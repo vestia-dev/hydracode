@@ -5,7 +5,7 @@ import { OpenCodeService } from "../OpenCodeService"
 type EventListener = (event: OpenCodeEvent) => Effect.Effect<void>
 
 interface OpenCodeEventServiceShape {
-  readonly subscribe: (listener: EventListener) => Effect.Effect<void, unknown>
+  readonly subscribe: (listener: EventListener) => Effect.Effect<() => void, unknown>
 }
 
 export class OpenCodeEventService extends Context.Service<
@@ -54,7 +54,7 @@ export const OpenCodeEventServiceLive = Layer.effect(
             }),
           ),
         ),
-        Effect.asVoid,
+        Effect.as(() => () => listeners.delete(listener)),
       )
 
     return OpenCodeEventService.of({ subscribe })

@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer } from "electron"
 import { DesktopChannels } from "../shared/desktopChannels"
 import type { HydraCodeDesktopApi } from "../shared/ipc"
 
-const projectUpdateListeners = new Set<(update: unknown) => void>()
+const openCodeEventListeners = new Set<(event: unknown) => void>()
 const updateListeners = new Set<(state: unknown) => void>()
 const paneSplitListeners = new Set<(command: "right" | "down" | "left" | "up") => void>()
 const paneFocusListeners = new Set<(direction: "right" | "down" | "left" | "up") => void>()
@@ -10,13 +10,14 @@ const paneCloseListeners = new Set<() => void>()
 const promptFocusListeners = new Set<() => void>()
 const followLatestListeners = new Set<() => void>()
 let updateSubscription: Promise<unknown> | undefined
+let openCodeEventSubscription: Promise<unknown> | undefined
 
 ipcRenderer.on(DesktopChannels.updateState, (_event, state: unknown) => {
   for (const listener of updateListeners) listener(state)
 })
 
-ipcRenderer.on(DesktopChannels.projectUpdate, (_event, input: unknown) => {
-  for (const listener of projectUpdateListeners) listener(input)
+ipcRenderer.on(DesktopChannels.openCodeEvent, (_event, input: unknown) => {
+  for (const listener of openCodeEventListeners) listener(input)
 })
 
 ipcRenderer.on(DesktopChannels.paneSplit, (_event, command: "right" | "down" | "left" | "up") => {
@@ -52,7 +53,9 @@ const desktopApi: HydraCodeDesktopApi = {
   listProjectSessions: (command) =>
     ipcRenderer.invoke(DesktopChannels.listProjectSessions, command),
   listActiveSessions: () => ipcRenderer.invoke(DesktopChannels.listActiveSessions),
-  selectSession: (command) => ipcRenderer.invoke(DesktopChannels.selectSession, command),
+  loadSessionSnapshot: (command) =>
+    ipcRenderer.invoke(DesktopChannels.loadSessionSnapshot, command),
+  getSessionMessage: (command) => ipcRenderer.invoke(DesktopChannels.getSessionMessage, command),
   createSession: (command) => ipcRenderer.invoke(DesktopChannels.createSession, command),
   submitPrompt: (command) => ipcRenderer.invoke(DesktopChannels.submitPrompt, command),
   updateSessionInbox: (command) => ipcRenderer.invoke(DesktopChannels.updateSessionInbox, command),
@@ -70,9 +73,10 @@ const desktopApi: HydraCodeDesktopApi = {
     updateSubscription ??= ipcRenderer.invoke(DesktopChannels.updateSubscribe)
     return () => updateListeners.delete(listener)
   },
-  onProjectUpdate: (listener) => {
-    projectUpdateListeners.add(listener)
-    return () => projectUpdateListeners.delete(listener)
+  onOpenCodeEvent: (listener) => {
+    openCodeEventListeners.add(listener)
+    openCodeEventSubscription ??= ipcRenderer.invoke(DesktopChannels.openCodeEventSubscribe)
+    return () => openCodeEventListeners.delete(listener)
   },
   onPaneSplit: (listener) => {
     paneSplitListeners.add(listener)

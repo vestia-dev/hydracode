@@ -29,10 +29,10 @@ import {
   ReplyQuestionCommand,
   QuestionCommand,
   ProjectCommandResult,
-  SelectSessionResult,
   SessionCommand,
-  ProjectUpdate,
-  ProjectUpdateEnvelope,
+  SessionSnapshotResult,
+  SessionMessageCommand,
+  SessionMessageResult,
 } from "./project"
 
 export const DesktopFailure = Schema.Struct({
@@ -82,10 +82,10 @@ export {
   ReplyQuestionCommand,
   QuestionCommand,
   ProjectCommandResult,
-  SelectSessionResult,
   SessionCommand,
-  ProjectUpdate,
-  ProjectUpdateEnvelope,
+  SessionSnapshotResult,
+  SessionMessageCommand,
+  SessionMessageResult,
   UpdateState,
   SetBundledThemeCommand,
 }
@@ -98,6 +98,7 @@ export type {
   ReplyQuestionCommand as ReplyQuestionCommandType,
   QuestionCommand as QuestionCommandType,
   SessionCommand as SessionCommandType,
+  SessionMessageCommand as SessionMessageCommandType,
   SetBundledThemeCommand as SetBundledThemeCommandType,
 }
 
@@ -115,7 +116,8 @@ export interface HydraCodeDesktopApi {
     command: ListProjectSessionsCommand,
   ) => Promise<ListProjectSessionsResult>
   readonly listActiveSessions: () => Promise<ActiveSessionsResult>
-  readonly selectSession: (command: SessionCommand) => Promise<SelectSessionResult>
+  readonly loadSessionSnapshot: (command: SessionCommand) => Promise<SessionSnapshotResult>
+  readonly getSessionMessage: (command: SessionMessageCommand) => Promise<SessionMessageResult>
   readonly createSession: (command: CreateSessionCommand) => Promise<CreateSessionResult>
   readonly submitPrompt: (command: SubmitPromptCommand) => Promise<ProjectCommandResult>
   readonly updateSessionInbox: (command: SessionInboxCommand) => Promise<ProjectCommandResult>
@@ -129,7 +131,7 @@ export interface HydraCodeDesktopApi {
   readonly installUpdate: () => Promise<ProjectCommandResult>
   readonly restartForUpdate: () => Promise<ProjectCommandResult>
   readonly onUpdateState: (listener: (state: unknown) => void) => () => void
-  readonly onProjectUpdate: (listener: (update: unknown) => void) => () => void
+  readonly onOpenCodeEvent: (listener: (event: unknown) => void) => () => void
   readonly onPaneSplit: (listener: (command: PaneSplitCommand) => void) => () => void
   readonly onPaneFocus: (listener: (direction: PaneDirection) => void) => () => void
   readonly onPaneClose: (listener: () => void) => () => void

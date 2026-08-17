@@ -1,6 +1,6 @@
 import { DateTime, Schema } from "effect"
 import { Location, Project, Session } from "@opencode-ai/client/effect"
-import type { ProjectDetails, ProjectSession, ProjectUpdate } from "../../../shared/project"
+import type { ProjectDetails } from "../../../shared/project"
 import type { ProjectView, SessionView } from "../services/OpenCodeGateway"
 import { buildSessionGraph } from "./sessionGraph"
 import type { SemanticGraph } from "./graph"
@@ -11,6 +11,8 @@ import {
   reconcileOptimisticPrompts,
   type OptimisticPrompt,
 } from "./optimisticPrompts"
+import type { SessionLogState } from "../../../shared/domain/sessionLog"
+import { SessionMessage } from "@opencode-ai/schema/session-message"
 
 export interface PromptRetry {
   readonly sessionID: SessionView["id"]
@@ -47,17 +49,30 @@ export type OpenLocationState = OpenLocationCommon &
   )
 
 export function createSessionView(
-  value: ProjectSession,
+  info: Session.Info,
+  state: SessionLogState,
+  active: boolean,
   previous?: SessionView,
   optimisticPrompts: ReadonlyArray<OptimisticPrompt> = previous?.optimisticPrompts ?? [],
 ): SessionView {
   const started = performance.now()
   const authoritativeGraph = preserveCompletedGraph(
-    buildSessionGraph(value.messages, value.active),
+    buildSessionGraph(state.messages, active),
     previous?.authoritativeGraph,
   )
-  const pendingTexts = value.pendingPrompts.map((prompt) => prompt.text)
-  const reconciled = reconcileOptimisticPrompts(optimisticPrompts, value.messages).filter(
+  const pendingPrompts = Array.from(state.pending.entries()).flatMap(([id, item]) =>
+    item.type === "user"
+      ? [
+          {
+            id: Schema.decodeUnknownSync(SessionMessage.ID)(id),
+            text: item.payload.text,
+            delivery: item.delivery,
+          },
+        ]
+      : [],
+  )
+  const pendingTexts = pendingPrompts.map((prompt) => prompt.text)
+  const reconciled = reconcileOptimisticPrompts(optimisticPrompts, state.messages).filter(
     (prompt) => {
       const index = pendingTexts.indexOf(prompt.text)
       if (index === -1) return true
@@ -65,25 +80,23 @@ export function createSessionView(
       return false
     },
   )
-  const view = {
-    id: Schema.decodeUnknownSync(Session.ID)(value.id),
-    ...(value.parentID === undefined
-      ? {}
-      : { parentID: Schema.decodeUnknownSync(Session.ID)(value.parentID) }),
-    location: value.location,
-    created: value.created,
-    title: value.title,
-    active: value.active,
-    execution: value.execution,
-    questions: value.questions,
-    pendingPrompts: value.pendingPrompts,
+  const view: SessionView = {
+    id: info.id,
+    ...(info.parentID === undefined ? {} : { parentID: info.parentID }),
+    location: info.location,
+    created: DateTime.toEpochMillis(info.time.created),
+    title: info.title ?? "Untitled session",
+    active,
+    execution: state.execution,
+    questions: state.questions,
+    pendingPrompts,
     provisional: false,
     authoritativeGraph,
     optimisticPrompts: reconciled,
     graph: applyOptimisticPrompts(authoritativeGraph, reconciled),
   }
   recordStartupMeasure("session-graph-build", started, {
-    messages: value.messages.length,
+    messages: state.messages.length,
     nodes: view.graph.nodes.length,
     edges: view.graph.edges.length,
   })
@@ -139,71 +152,8 @@ export function openProjectState(
     snapshot: {
       project: { ...project, id: projectID },
       location: current.location,
-      sessions: current.snapshot?.sessions ?? [],
       recentSessions: sessionSummaries(sessions, activeSessionIDs),
     },
     error: undefined,
-  }
-}
-
-export function applyProjectUpdate(
-  projectID: Project.ID,
-  current: OpenLocationState,
-  update: ProjectUpdate,
-): OpenLocationState {
-  if (update._tag === "Sessions") {
-    if (current.snapshot === undefined || update.projectID !== projectID) return current
-    return {
-      ...current,
-      snapshot: {
-        ...current.snapshot,
-        recentSessions: sessionSummaries(update.sessions, update.activeSessionIDs),
-      },
-    }
-  }
-  if (current.snapshot === undefined || update.projectID !== projectID) return current
-  if (update._tag === "Info") {
-    if (update.session.parentID != null) return current
-    const summary = {
-      id: update.session.id,
-      created: DateTime.toEpochMillis(update.session.time.created),
-      title: update.session.title ?? "Untitled session",
-      active: update.active,
-    }
-    return {
-      ...current,
-      snapshot: {
-        ...current.snapshot,
-        recentSessions: [
-          summary,
-          ...current.snapshot.recentSessions.filter((item) => item.id !== summary.id),
-        ].toSorted((left, right) => right.created - left.created),
-      },
-    }
-  }
-  if (update._tag === "Removed") {
-    return {
-      ...current,
-      snapshot: {
-        ...current.snapshot,
-        sessions: current.snapshot.sessions.filter((item) => item.id !== update.sessionID),
-        recentSessions: current.snapshot.recentSessions.filter(
-          (item) => item.id !== update.sessionID,
-        ),
-      },
-    }
-  }
-  const existing = current.snapshot.sessions.find((item) => item.id === update.session.id)
-  if (existing === undefined && current.snapshot.sessions.some((item) => item.provisional))
-    return current
-  return {
-    ...current,
-    snapshot: {
-      ...current.snapshot,
-      sessions: [
-        ...current.snapshot.sessions.filter((item) => item.id !== update.session.id),
-        createSessionView(update.session, existing),
-      ],
-    },
   }
 }

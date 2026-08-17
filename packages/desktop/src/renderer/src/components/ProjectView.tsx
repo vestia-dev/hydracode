@@ -1,8 +1,8 @@
 import type { CSSProperties, PointerEvent, ReactNode } from "react"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import type { SessionView } from "../services/OpenCodeGateway"
 import type { DesktopBridge, DesktopBridgeError } from "../services/DesktopBridge"
-import type { Question } from "@opencode-ai/client/effect"
+import { Session, type Question } from "@opencode-ai/client/effect"
 import { groupSessionFamilies } from "../domain/projectSessions"
 import type { PaneLayout } from "../domain/paneLayout"
 import { SessionLanding } from "./SessionLanding"
@@ -14,6 +14,7 @@ import { locationKey } from "../../../shared/domain/projectCatalog"
 
 interface ProjectViewProps {
   readonly locationStates: ReadonlyMap<string, OpenLocationState>
+  readonly sessions: ReadonlyMap<SessionView["id"], SessionView>
   readonly defaultLocationKey: string
   readonly project: ProjectCatalogEntry
   readonly selectLocation: (location: ProjectCatalogEntry["locations"][number]["ref"]) => void
@@ -199,13 +200,19 @@ export function ProjectView(props: ProjectViewProps) {
       _tag: "NewSession",
       locationKey: props.defaultLocationKey,
     }
+    const loadedSession =
+      content._tag === "Session"
+        ? props.sessions.get(Schema.decodeUnknownSync(Session.ID)(content.sessionID))
+        : undefined
     const sessionLocation =
       content._tag === "Session"
         ? Array.from(props.locationStates.entries()).find(([, state]) =>
-            state.snapshot === undefined
-              ? false
-              : state.snapshot.sessions.some((session) => session.id === content.sessionID) ||
-                state.snapshot.recentSessions.some((session) => session.id === content.sessionID),
+            loadedSession !== undefined
+              ? state.location.directory === loadedSession.location.directory &&
+                state.location.workspaceID === loadedSession.location.workspaceID
+              : (state.snapshot?.recentSessions.some(
+                  (session) => session.id === content.sessionID,
+                ) ?? false),
           )
         : undefined
     const paneLocationKey =
@@ -214,7 +221,13 @@ export function ProjectView(props: ProjectViewProps) {
         : (sessionLocation?.[0] ?? props.defaultLocationKey)
     const locationState = props.locationStates.get(paneLocationKey)
     const snapshot = locationState?.snapshot
-    const families = groupSessionFamilies(snapshot?.sessions ?? [])
+    const locationSessions = Array.from(props.sessions.values()).filter(
+      (session) =>
+        snapshot !== undefined &&
+        session.location.directory === snapshot.location.directory &&
+        session.location.workspaceID === snapshot.location.workspaceID,
+    )
+    const families = groupSessionFamilies(locationSessions)
     const family =
       content._tag === "Session"
         ? families.find(({ root }) => root.id === content.sessionID)

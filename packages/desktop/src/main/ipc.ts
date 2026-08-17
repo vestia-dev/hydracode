@@ -1,13 +1,12 @@
-import { Effect, Schema } from "effect"
+import { Effect, Schema, Stream } from "effect"
 import { ipcMain } from "electron"
-import { Location, Project, Session } from "@opencode-ai/client/effect"
+import { Event, Location, Project, Session } from "@opencode-ai/client/effect"
 import { DesktopChannels } from "../shared/desktopChannels"
 import { SetBundledThemeCommand } from "../shared/theme"
 import {
   ThemeResult,
   OpenCodeDiagnosticsResult,
   UpdateState,
-  ProjectUpdateEnvelope,
   type ProjectCommandResult as ProjectCommandResultType,
 } from "../shared/ipc"
 import {
@@ -24,13 +23,15 @@ import {
   SubmitPromptCommand,
   SessionInboxCommand,
   SessionCommand,
+  SessionSnapshotResult,
+  SessionMessageCommand,
+  SessionMessageResult,
   type ProjectLocation,
 } from "../shared/project"
 import { MainRuntime } from "./runtime"
 import { DesktopService } from "./services/DesktopService"
 import { ThemeService } from "./services/ThemeService"
 import { UpdateService } from "./services/UpdateService"
-import { ProjectRegistry } from "./services/ProjectRegistry"
 import { OpenCodeService, OpenCodeServiceError } from "./services/OpenCodeService"
 import {
   ApplicationStateResult,
@@ -41,8 +42,12 @@ import {
 import { ApplicationStateService } from "./services/ApplicationStateService"
 import { questionFormAnswer, questionFormID } from "../shared/domain/sessionLog"
 import { availableProjects, projectName } from "../shared/domain/projectCatalog"
+import { OpenCodeEvent as OpenCodeEventSchema } from "@opencode-ai/protocol/groups/event"
+import { OpenCodeEventService } from "./services/OpenCodeEventService"
+import { listAllSessionMessages } from "../shared/domain/sessionMessages"
 
 const updateSubscriptions = new Map<number, () => void>()
+const openCodeEventSubscriptions = new Map<number, () => void>()
 
 function failureMessage(cause: unknown) {
   return cause instanceof Error && cause.message !== ""
@@ -201,12 +206,11 @@ export function registerDesktopIpc() {
       ),
     ),
   )
-  ipcMain.handle(DesktopChannels.openProject, (event, input: unknown) => {
+  ipcMain.handle(DesktopChannels.openProject, (_event, input: unknown) => {
     const command = Schema.decodeUnknownSync(OpenProjectCommand)(input)
     return MainRuntime.runPromise(
       Effect.gen(function* () {
         const service = yield* OpenCodeService
-        const registry = yield* ProjectRegistry
         const client = yield* service.client
         const current = yield* client.project.current(
           command.location === undefined
@@ -220,19 +224,6 @@ export function registerDesktopIpc() {
                 },
               },
         )
-        const location = Location.Ref.make({
-          directory: command.location?.directory ?? current.directory,
-          ...(command.location?.workspaceID === undefined
-            ? {}
-            : { workspaceID: command.location.workspaceID }),
-        })
-        yield* registry.watch(current.id, location, (updateLocation, update) => {
-          const envelope = Schema.encodeSync(ProjectUpdateEnvelope)({
-            location: updateLocation,
-            update,
-          })
-          event.sender.send(DesktopChannels.projectUpdate, envelope)
-        })
         return current.id
       }),
     )
@@ -277,12 +268,52 @@ export function registerDesktopIpc() {
       )
       .catch((cause) => ({ _tag: "Failure" as const, message: failureMessage(cause) })),
   )
-  ipcMain.handle(DesktopChannels.selectSession, (_event, input: unknown) => {
+  ipcMain.handle(DesktopChannels.loadSessionSnapshot, (_event, input: unknown) => {
     const command = Schema.decodeUnknownSync(SessionCommand)(input)
     return MainRuntime.runPromise(
-      ProjectRegistry.use((registry) => registry.selectSession(command.sessionID)),
+      OpenCodeService.use((service) =>
+        Effect.gen(function* () {
+          const client = yield* service.client
+          const info = yield* client.session.get({ sessionID: command.sessionID })
+          let durableSeq: typeof Event.Seq.Type | undefined
+          yield* client.session.log({ sessionID: command.sessionID, follow: false }).pipe(
+            Stream.runForEach((event) =>
+              Effect.sync(() => {
+                if (event.type === "log.synced") durableSeq = event.seq
+              }),
+            ),
+          )
+          const [messages, questions, forms, inbox] = yield* Effect.all(
+            [
+              listAllSessionMessages(client.message.list, command.sessionID),
+              client.question.list({ sessionID: command.sessionID }),
+              client.form.list({ sessionID: command.sessionID }),
+              client.session.inbox.list({ sessionID: command.sessionID }),
+            ],
+            { concurrency: "unbounded" },
+          )
+          return {
+            info,
+            messages,
+            ...(durableSeq === undefined ? {} : { durableSeq }),
+            questions,
+            forms,
+            inbox,
+          }
+        }),
+      ),
     )
-      .then((timing) => ({ _tag: "Success" as const, timing }))
+      .then((snapshot) => Schema.encodeSync(SessionSnapshotResult)({ _tag: "Success", snapshot }))
+      .catch((cause) => ({ _tag: "Failure" as const, message: failureMessage(cause) }))
+  })
+  ipcMain.handle(DesktopChannels.getSessionMessage, (_event, input: unknown) => {
+    const command = Schema.decodeUnknownSync(SessionMessageCommand)(input)
+    return MainRuntime.runPromise(
+      OpenCodeService.use((service) =>
+        service.client.pipe(Effect.flatMap((client) => client.session.message(command))),
+      ),
+    )
+      .then((message) => Schema.encodeSync(SessionMessageResult)({ _tag: "Success", message }))
       .catch((cause) => ({ _tag: "Failure" as const, message: failureMessage(cause) }))
   })
   ipcMain.handle(DesktopChannels.createSession, (_event, input: unknown) => {
@@ -423,6 +454,29 @@ export function registerDesktopIpc() {
       event.sender.once("destroyed", () => {
         updateSubscriptions.get(id)?.()
         updateSubscriptions.delete(id)
+      })
+    }),
+  )
+  ipcMain.handle(DesktopChannels.openCodeEventSubscribe, (event) =>
+    MainRuntime.runPromise(
+      OpenCodeEventService.use((events) =>
+        events.subscribe((value) =>
+          Effect.sync(() => {
+            if (event.sender.isDestroyed()) return
+            event.sender.send(
+              DesktopChannels.openCodeEvent,
+              Schema.encodeSync(OpenCodeEventSchema)(value),
+            )
+          }),
+        ),
+      ),
+    ).then((remove) => {
+      const id = event.sender.id
+      openCodeEventSubscriptions.get(id)?.()
+      openCodeEventSubscriptions.set(id, remove)
+      event.sender.once("destroyed", () => {
+        openCodeEventSubscriptions.get(id)?.()
+        openCodeEventSubscriptions.delete(id)
       })
     }),
   )

@@ -50,6 +50,7 @@ export function App() {
   const {
     activeLocationKey,
     openLocations,
+    sessions,
     availableProjects,
     restoredProjectUIStates,
     initialStateResolved,
@@ -357,8 +358,13 @@ export function App() {
       }
     )
   }
-  const creatingSession =
-    activeLocationState?.snapshot?.sessions.some((session) => session.provisional) ?? false
+  const creatingSession = Array.from(sessions.values()).some(
+    (session) =>
+      session.provisional &&
+      activeLocationState !== undefined &&
+      session.location.directory === activeLocationState.location.directory &&
+      session.location.workspaceID === activeLocationState.location.workspaceID,
+  )
   const showProject = (action: () => void) => () => {
     setOverlay("none")
     action()
@@ -612,6 +618,7 @@ export function App() {
                     }}
                     defaultLocationState={defaultLocationState}
                     locationStates={projectLocations}
+                    sessions={sessions}
                     project={project}
                     selectLocation={(location) => ensureLocation(project, location)}
                     active={projectState.projectID === activeLocationState?.projectID}
