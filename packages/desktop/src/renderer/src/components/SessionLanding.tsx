@@ -9,7 +9,7 @@ import {
 } from "react"
 import { Effect, Fiber } from "effect"
 import { AppRuntime } from "../runtime"
-import type { ProjectSnapshot, SessionSummary, SessionView } from "../services/OpenCodeGateway"
+import type { ProjectView, SessionSummary, SessionView } from "../services/OpenCodeGateway"
 import type { DesktopBridge, DesktopBridgeError } from "../services/DesktopBridge"
 import type { ProjectCatalogEntry } from "../../../shared/project"
 import {
@@ -21,7 +21,7 @@ import { projectDisplayName } from "../domain/projectPresentation"
 import { IconButton } from "./IconButton"
 
 interface SessionLandingProps {
-  readonly snapshot: ProjectSnapshot
+  readonly snapshot: ProjectView
   readonly project: ProjectCatalogEntry
   readonly initialError: string | null
   readonly createSession: (text: string) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>

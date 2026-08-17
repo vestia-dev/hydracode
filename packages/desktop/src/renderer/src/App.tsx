@@ -144,7 +144,7 @@ export function App() {
   }, [initialLaunchComplete])
 
   useEffect(() => {
-    if (activeLocationState?.status === "ready") markStartup("project-snapshot-ready")
+    if (activeLocationState?.status === "ready") markStartup("project-open-ready")
   }, [activeLocationState?.status])
 
   useEffect(() => {

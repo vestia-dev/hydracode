@@ -6,6 +6,7 @@ import {
   ProjectUpdateEnvelope,
   ProjectCommandResult,
   SelectSessionResult,
+  OpenProjectResult,
   type OpenProjectCommand,
   type CloseProjectCommand,
   type CreateSessionCommand,
@@ -22,6 +23,7 @@ import { recordStartupDuration, recordStartupMeasure } from "../startupTiming"
 import { ThemeResult, ProjectSelectionResult } from "../../../shared/ipc"
 import type { BundledThemeID, Theme } from "../../../shared/theme"
 import type { ProjectCatalogEntry } from "../../../shared/project"
+import type { OpenedProject } from "../../../shared/project"
 import {
   ApplicationStateResult,
   ProjectUIStateResult,
@@ -57,7 +59,9 @@ interface DesktopBridgeShape {
   ) => Effect.Effect<ProjectUIState, DesktopBridgeError>
   readonly getOpenCodeDiagnostics: Effect.Effect<OpenCodeDiagnostics, DesktopBridgeError>
   readonly installOpenCode: Effect.Effect<void, DesktopBridgeError>
-  readonly openProject: (command: OpenProjectCommand) => Effect.Effect<void, DesktopBridgeError>
+  readonly openProject: (
+    command: OpenProjectCommand,
+  ) => Effect.Effect<OpenedProject, DesktopBridgeError>
   readonly closeProject: (command: CloseProjectCommand) => Effect.Effect<void, DesktopBridgeError>
   readonly selectSession: (
     command: ProjectSessionCommand,
@@ -213,7 +217,14 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
       ),
     ),
     installOpenCode: command(() => window.hydracode.installOpenCode()),
-    openProject: (request) => command(() => window.hydracode.openProject(request)),
+    openProject: (request) =>
+      invoke(() => window.hydracode.openProject(request), OpenProjectResult).pipe(
+        Effect.flatMap((result) =>
+          result._tag === "Success"
+            ? Effect.succeed(result.opened)
+            : Effect.fail(new DesktopBridgeError({ message: result.message, cause: result })),
+        ),
+      ),
     closeProject: (request) => command(() => window.hydracode.closeProject(request)),
     selectSession: (request) =>
       Effect.suspend(() => {

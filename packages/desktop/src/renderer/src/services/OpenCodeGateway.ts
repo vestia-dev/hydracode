@@ -27,7 +27,7 @@ export interface SessionSummary {
   readonly active: boolean
 }
 
-export interface ProjectSnapshot {
+export interface ProjectView {
   readonly project: {
     readonly id: Project.ID
     readonly canonical: AbsolutePath

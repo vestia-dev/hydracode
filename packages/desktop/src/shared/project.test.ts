@@ -1,6 +1,6 @@
 import { expect, it } from "@effect/vitest"
 import { Effect, Schema } from "effect"
-import { OpenProjectCommand, ProjectSnapshot } from "./project"
+import { OpenedProject, OpenProjectCommand } from "./project"
 
 it.effect("preserves a remote workspace location when opening a project", () =>
   Effect.sync(() => {
@@ -20,7 +20,7 @@ it.effect("preserves a remote workspace location when opening a project", () =>
 
 it.effect("keeps project identity separate from its active location", () =>
   Effect.sync(() => {
-    const snapshot = Schema.decodeUnknownSync(ProjectSnapshot)({
+    const opened = Schema.decodeUnknownSync(OpenedProject)({
       project: {
         id: "project-hydracode",
         canonical: "/code/hydracode",
@@ -32,16 +32,16 @@ it.effect("keeps project identity separate from its active location", () =>
         workspaceID: "wrk_remote",
       },
       sessions: [],
-      recentSessions: [],
+      activeSessionIDs: [],
     })
 
-    expect(snapshot.project.id).toBe("project-hydracode")
-    expect(snapshot.project.canonical).toBe("/code/hydracode")
-    expect(snapshot.project.icon).toEqual({
+    expect(opened.project.id).toBe("project-hydracode")
+    expect(opened.project.canonical).toBe("/code/hydracode")
+    expect(opened.project.icon).toEqual({
       url: "data:image/svg+xml,icon",
       color: "#663399",
     })
-    expect(snapshot.location.directory).toBe("/workspace/hydracode")
-    expect(snapshot.location.workspaceID).toBe("wrk_remote")
+    expect(opened.location.directory).toBe("/workspace/hydracode")
+    expect(opened.location.workspaceID).toBe("wrk_remote")
   }),
 )

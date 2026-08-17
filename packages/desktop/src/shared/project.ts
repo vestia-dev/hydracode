@@ -37,14 +37,6 @@ export const ProjectSession = Schema.Struct({
 })
 export type ProjectSession = typeof ProjectSession.Type
 
-export const ProjectSessionSummary = Schema.Struct({
-  id: Schema.String,
-  created: Schema.Number,
-  title: Schema.String,
-  active: Schema.Boolean,
-})
-export type ProjectSessionSummary = typeof ProjectSessionSummary.Type
-
 export const ProjectDetails = Schema.Struct({
   id: Project.ID,
   canonical: AbsolutePath,
@@ -77,16 +69,21 @@ export const ListProjectsResult = Schema.Union([
 ])
 export type ListProjectsResult = typeof ListProjectsResult.Type
 
-export const ProjectSnapshot = Schema.Struct({
+export const OpenedProject = Schema.Struct({
   project: ProjectDetails,
   location: Location.Ref,
-  sessions: Schema.Array(ProjectSession),
-  recentSessions: Schema.Array(ProjectSessionSummary),
+  sessions: Schema.Array(Session.Info),
+  activeSessionIDs: Schema.Array(Session.ID),
 })
-export type ProjectSnapshot = typeof ProjectSnapshot.Type
+export type OpenedProject = typeof OpenedProject.Type
 
 export const ProjectUpdate = Schema.Union([
-  Schema.Struct({ _tag: Schema.Literal("Snapshot"), snapshot: ProjectSnapshot }),
+  Schema.Struct({
+    _tag: Schema.Literal("Sessions"),
+    projectID: Project.ID,
+    sessions: Schema.Array(Session.Info),
+    activeSessionIDs: Schema.Array(Session.ID),
+  }),
   Schema.Struct({
     _tag: Schema.Literal("Session"),
     projectID: Project.ID,
@@ -109,6 +106,12 @@ export type ProjectUpdateEnvelope = typeof ProjectUpdateEnvelope.Type
 
 export const OpenProjectCommand = Schema.Struct({ location: Schema.optional(Location.Ref) })
 export type OpenProjectCommand = typeof OpenProjectCommand.Type
+
+export const OpenProjectResult = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal("Success"), opened: OpenedProject }),
+  Schema.Struct({ _tag: Schema.Literal("Failure"), message: Schema.String }),
+])
+export type OpenProjectResult = typeof OpenProjectResult.Type
 
 export const CloseProjectCommand = Schema.Struct({ location: Location.Ref })
 export type CloseProjectCommand = typeof CloseProjectCommand.Type

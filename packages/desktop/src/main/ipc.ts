@@ -16,6 +16,7 @@ import {
   CloseProjectCommand,
   ListProjectsResult,
   OpenProjectCommand,
+  OpenProjectResult,
   QuestionCommand,
   ReplyQuestionCommand,
   SubmitPromptCommand,
@@ -168,7 +169,7 @@ export function registerDesktopIpc() {
         }),
       ),
     )
-      .then(() => ({ _tag: "Success" as const }))
+      .then((opened) => Schema.encodeSync(OpenProjectResult)({ _tag: "Success", opened }))
       .catch((cause) => ({ _tag: "Failure" as const, message: failureMessage(cause) }))
   })
   ipcMain.handle(DesktopChannels.closeProject, (_event, input: unknown) => {

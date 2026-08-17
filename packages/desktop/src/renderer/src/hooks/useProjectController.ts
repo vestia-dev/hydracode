@@ -3,10 +3,7 @@ import { Effect, Fiber, Option } from "effect"
 import { AbsolutePath, Location, Project, type Question } from "@opencode-ai/client/effect"
 import { AppRuntime } from "../runtime"
 import { DesktopBridge, DesktopBridgeError } from "../services/DesktopBridge"
-import type {
-  ProjectSnapshot as ProjectViewSnapshot,
-  SessionView,
-} from "../services/OpenCodeGateway"
+import type { ProjectView, SessionView } from "../services/OpenCodeGateway"
 import { buildSessionGraph } from "../domain/sessionGraph"
 import {
   createProvisionalSessionID,
@@ -21,6 +18,7 @@ import type {
 import {
   applyProjectUpdate as reduceProjectUpdate,
   createSessionView,
+  openProjectState,
   type OpenLocationState,
 } from "../domain/projectLocationState"
 import { restoreApplicationState } from "../domain/applicationState"
@@ -53,7 +51,7 @@ function pendingPrompt(session: SessionView, text: string): OptimisticPrompt {
 
 function mapLocationSnapshot(
   current: OpenLocationState,
-  transform: (snapshot: ProjectViewSnapshot) => ProjectViewSnapshot,
+  transform: (snapshot: ProjectView) => ProjectView,
 ): OpenLocationState {
   if (current.status === "opening" || current.snapshot === undefined) return current
   return { ...current, snapshot: transform(current.snapshot) }
@@ -135,12 +133,6 @@ export function useProjectController() {
     (locationKeyValue: string, update: ProjectUpdate) =>
       Effect.sync(() => {
         const started = performance.now()
-        const initialStartupSnapshot =
-          locationKeyValue === startupLocationKey.current && update._tag === "Snapshot"
-        if (initialStartupSnapshot)
-          markStartup("project-snapshot-received", {
-            sessions: update.snapshot.sessions.length,
-          })
         const projectUpdate = () =>
           updateProject(locationKeyValue, (current) =>
             reduceProjectUpdate(current.projectID, current, update),
@@ -150,9 +142,7 @@ export function useProjectController() {
         recordStartupMeasure("project-update-projection", started, {
           locationKey: locationKeyValue,
           update: update._tag,
-          ...(update._tag === "Snapshot" ? { sessions: update.snapshot.sessions.length } : {}),
         })
-        if (initialStartupSnapshot) markStartup("project-snapshot-projected")
       }),
     [updateProject],
   )
@@ -174,7 +164,20 @@ export function useProjectController() {
             ),
           ).pipe(
             Effect.flatMap(() => desktop.openProject({ location })),
-            Effect.tap(() => Effect.sync(() => onConnected?.())),
+            Effect.tap((opened) =>
+              Effect.sync(() => {
+                const started = performance.now()
+                if (key === startupLocationKey.current)
+                  markStartup("project-open-received", { sessions: opened.sessions.length })
+                updateProject(key, (current) => openProjectState(current, opened))
+                recordStartupMeasure("project-open-projection", started, {
+                  locationKey: key,
+                  sessions: opened.sessions.length,
+                })
+                if (key === startupLocationKey.current) markStartup("project-open-projected")
+                onConnected?.()
+              }),
+            ),
             Effect.andThen(Effect.never),
           ),
         ),
@@ -518,21 +521,24 @@ export function useProjectController() {
       setOpenLocations(locationsRef.current)
       setActiveLocationKey(key)
       setLandingError(null)
-      let started = false
-      startLocationConnection(key, location, (update) => {
-        AppRuntime.runFork(applyProjectUpdate(key, update))
-        if (update._tag !== "Snapshot" || started) return
-        started = true
-        AppRuntime.runFork(
-          createSession(key, text, (sessionID) => {
-            if (sessionID === undefined) return
-            updateProject(key, (current) => ({
-              ...current,
-              requestedSessionID: sessionID,
-            }))
-          }).pipe(Effect.catch((error) => Effect.sync(() => setLandingError(error.message)))),
-        )
-      })
+      startLocationConnection(
+        key,
+        location,
+        (update) => {
+          AppRuntime.runFork(applyProjectUpdate(key, update))
+        },
+        () => {
+          AppRuntime.runFork(
+            createSession(key, text, (sessionID) => {
+              if (sessionID === undefined) return
+              updateProject(key, (current) => ({
+                ...current,
+                requestedSessionID: sessionID,
+              }))
+            }).pipe(Effect.catch((error) => Effect.sync(() => setLandingError(error.message)))),
+          )
+        },
+      )
       return Effect.void
     },
     [applyProjectUpdate, createSession, startLocationConnection, updateProject],

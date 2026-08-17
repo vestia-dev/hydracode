@@ -21,6 +21,7 @@ import {
   ListProjectsResult,
   CloseProjectCommand,
   OpenProjectCommand,
+  OpenProjectResult,
   SubmitPromptCommand,
   SessionInboxCommand,
   ReplyQuestionCommand,
@@ -72,6 +73,7 @@ export {
   ListProjectsResult,
   CloseProjectCommand,
   OpenProjectCommand,
+  OpenProjectResult,
   SubmitPromptCommand,
   SessionInboxCommand,
   ReplyQuestionCommand,
@@ -107,7 +109,7 @@ export interface HydraCodeDesktopApi {
   readonly loadApplicationState: () => Promise<ApplicationStateResult>
   readonly saveProjectSelection: (state: ProjectSelectionState) => Promise<ApplicationStateResult>
   readonly saveProjectUIState: (state: ProjectUIState) => Promise<ProjectUIStateResult>
-  readonly openProject: (command: OpenProjectCommand) => Promise<ProjectCommandResult>
+  readonly openProject: (command: OpenProjectCommand) => Promise<OpenProjectResult>
   readonly closeProject: (command: CloseProjectCommand) => Promise<ProjectCommandResult>
   readonly selectSession: (command: ProjectSessionCommand) => Promise<SelectSessionResult>
   readonly createSession: (command: CreateSessionCommand) => Promise<CreateSessionResult>

@@ -1,13 +1,11 @@
-import { Schema } from "effect"
+import { DateTime, Schema } from "effect"
 import { Location, Project, Session } from "@opencode-ai/client/effect"
-import type { ProjectSession, ProjectSnapshot, ProjectUpdate } from "../../../shared/project"
-import type {
-  ProjectSnapshot as ProjectViewSnapshot,
-  SessionView,
-} from "../services/OpenCodeGateway"
+import type { OpenedProject, ProjectSession, ProjectUpdate } from "../../../shared/project"
+import type { ProjectView, SessionView } from "../services/OpenCodeGateway"
 import { buildSessionGraph } from "./sessionGraph"
 import type { SemanticGraph } from "./graph"
 import { recordStartupMeasure } from "../startupTiming"
+import { createSessionSummaries } from "../../../shared/domain/projectCatalog"
 import {
   applyOptimisticPrompts,
   reconcileOptimisticPrompts,
@@ -38,12 +36,12 @@ export type OpenLocationState = OpenLocationCommon &
       }
     | {
         readonly status: "ready"
-        readonly snapshot: ProjectViewSnapshot
+        readonly snapshot: ProjectView
         readonly error: undefined
       }
     | {
         readonly status: "error"
-        readonly snapshot: ProjectViewSnapshot | undefined
+        readonly snapshot: ProjectView | undefined
         readonly error: string
       }
   )
@@ -106,25 +104,42 @@ export function preserveCompletedGraph(current: SemanticGraph, previous?: Semant
   }
 }
 
-function createProjectViewState(
-  value: ProjectSnapshot,
-  previous?: ProjectViewSnapshot,
-): ProjectViewSnapshot {
-  const sessions = value.sessions.map((session) => {
-    const current = previous?.sessions.find((item) => item.id === session.id)
-    return createSessionView(session, current)
-  })
-  const provisional = previous?.sessions.filter(
-    (session) => session.provisional && !sessions.some((item) => item.id === session.id),
-  )
-  return {
-    project: value.project,
-    location: value.location,
-    sessions: [...sessions, ...(provisional ?? [])],
-    recentSessions: value.recentSessions.map((session) => ({
-      ...session,
-      id: Schema.decodeUnknownSync(Session.ID)(session.id),
+function sessionSummaries(
+  sessions: OpenedProject["sessions"],
+  activeSessionIDs: OpenedProject["activeSessionIDs"],
+) {
+  const active = new Set(activeSessionIDs)
+  return createSessionSummaries(
+    sessions.map((session) => ({
+      id: session.id,
+      parentID: session.parentID,
+      created: DateTime.toEpochMillis(session.time.created),
+      title: session.title ?? "Untitled session",
     })),
+    active,
+  ).map((session) => ({
+    id: Schema.decodeUnknownSync(Session.ID)(session.id),
+    created: session.created,
+    title: session.title,
+    active: session.active,
+  }))
+}
+
+export function openProjectState(
+  current: OpenLocationState,
+  opened: OpenedProject,
+): OpenLocationState {
+  if (opened.project.id !== current.projectID) return current
+  return {
+    ...current,
+    status: "ready",
+    snapshot: {
+      project: opened.project,
+      location: opened.location,
+      sessions: current.snapshot?.sessions ?? [],
+      recentSessions: sessionSummaries(opened.sessions, opened.activeSessionIDs),
+    },
+    error: undefined,
   }
 }
 
@@ -133,13 +148,14 @@ export function applyProjectUpdate(
   current: OpenLocationState,
   update: ProjectUpdate,
 ): OpenLocationState {
-  if (update._tag === "Snapshot") {
-    if (update.snapshot.project.id !== projectID) return current
+  if (update._tag === "Sessions") {
+    if (current.snapshot === undefined || update.projectID !== projectID) return current
     return {
       ...current,
-      status: "ready",
-      snapshot: createProjectViewState(update.snapshot, current.snapshot),
-      error: undefined,
+      snapshot: {
+        ...current.snapshot,
+        recentSessions: sessionSummaries(update.sessions, update.activeSessionIDs),
+      },
     }
   }
   if (update._tag === "Error") return { ...current, status: "error", error: update.message }

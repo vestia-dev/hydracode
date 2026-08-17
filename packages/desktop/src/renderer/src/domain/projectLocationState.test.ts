@@ -7,6 +7,7 @@ import type { SemanticGraph, SemanticGraphNode } from "./graph"
 import {
   applyProjectUpdate,
   createSessionView,
+  openProjectState,
   preserveCompletedGraph,
 } from "./projectLocationState"
 
@@ -52,30 +53,24 @@ function opening(projectID: Project.ID): OpenLocationState {
 }
 
 describe("applyProjectUpdate", () => {
-  it("accepts a snapshot only for its owning location state", () => {
+  it("opens only the owning location state", () => {
     const state = opening(projectA)
-    const foreign: ProjectUpdate = {
-      _tag: "Snapshot",
-      snapshot: {
-        project: { id: projectB, canonical: AbsolutePath.make("/tmp/project-b") },
-        location,
-        sessions: [],
-        recentSessions: [],
-      },
+    const foreign = {
+      project: { id: projectB, canonical: AbsolutePath.make("/tmp/project-b") },
+      location,
+      sessions: [],
+      activeSessionIDs: [],
     }
 
-    expect(applyProjectUpdate(projectA, state, foreign)).toBe(state)
+    expect(openProjectState(state, foreign)).toBe(state)
   })
 
   it("keeps another project's session updates isolated", () => {
-    const ready = applyProjectUpdate(projectA, opening(projectA), {
-      _tag: "Snapshot",
-      snapshot: {
-        project: { id: projectA, canonical: AbsolutePath.make("/tmp/project-a") },
-        location,
-        sessions: [],
-        recentSessions: [],
-      },
+    const ready = openProjectState(opening(projectA), {
+      project: { id: projectA, canonical: AbsolutePath.make("/tmp/project-a") },
+      location,
+      sessions: [],
+      activeSessionIDs: [],
     })
     const foreign: ProjectUpdate = {
       _tag: "Session",
@@ -97,32 +92,25 @@ describe("applyProjectUpdate", () => {
   })
 
   it("still removes sessions through explicit removal updates", () => {
-    const ready = applyProjectUpdate(projectA, opening(projectA), {
-      _tag: "Snapshot",
-      snapshot: {
-        project: { id: projectA, canonical: AbsolutePath.make("/tmp/project-a") },
+    const opened = openProjectState(opening(projectA), {
+      project: { id: projectA, canonical: AbsolutePath.make("/tmp/project-a") },
+      location,
+      sessions: [],
+      activeSessionIDs: [],
+    })
+    const ready = applyProjectUpdate(projectA, opened, {
+      _tag: "Session",
+      projectID: projectA,
+      session: {
+        id: "session-a",
         location,
-        sessions: [
-          {
-            id: "session-a",
-            location,
-            created: 1,
-            title: "Hydrated session",
-            active: false,
-            execution: { _tag: "Idle" },
-            messages: [],
-            pendingPrompts: [],
-            questions: [],
-          },
-        ],
-        recentSessions: [
-          {
-            id: "session-a",
-            created: 1,
-            title: "Hydrated session",
-            active: false,
-          },
-        ],
+        created: 1,
+        title: "Hydrated session",
+        active: false,
+        execution: { _tag: "Idle" },
+        messages: [],
+        pendingPrompts: [],
+        questions: [],
       },
     })
     expect(ready.snapshot?.sessions[0]?.location).toEqual(location)
