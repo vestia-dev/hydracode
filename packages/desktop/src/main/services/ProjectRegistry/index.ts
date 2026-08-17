@@ -156,10 +156,10 @@ export const ProjectRegistryLive = Layer.effect(
         activeSessionIDs: Array.from(activeSessionIDs),
       })
 
-    const removeSession = (entry: Entry, sessionID: string, removeActive = false) =>
+    const removeSession = (entry: Entry, sessionID: Session.ID, removeActive = false) =>
       Effect.sync(() => {
         sessions.delete(sessionID)
-        if (removeActive) activeSessionIDs.delete(Schema.decodeUnknownSync(Session.ID)(sessionID))
+        if (removeActive) activeSessionIDs.delete(sessionID)
         emit(entry, { _tag: "Removed", projectID: entry.projectID, sessionID })
       })
 

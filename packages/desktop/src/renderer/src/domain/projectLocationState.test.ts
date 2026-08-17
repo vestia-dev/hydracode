@@ -19,6 +19,8 @@ import {
 
 const projectA = Schema.decodeUnknownSync(Project.ID)("project-a")
 const projectB = Schema.decodeUnknownSync(Project.ID)("project-b")
+const sessionA = Schema.decodeUnknownSync(Session.ID)("session-a")
+const sessionB = Schema.decodeUnknownSync(Session.ID)("session-b")
 const location = Location.Ref.make({ directory: AbsolutePath.make("/tmp/project-a") })
 const provenance = {
   source: "explicit" as const,
@@ -85,7 +87,7 @@ describe("applyProjectUpdate", () => {
       _tag: "Session",
       projectID: projectB,
       session: {
-        id: "session-b",
+        id: sessionB,
         location,
         created: 1,
         title: "Foreign session",
@@ -112,7 +114,7 @@ describe("applyProjectUpdate", () => {
       _tag: "Session",
       projectID: projectA,
       session: {
-        id: "session-a",
+        id: sessionA,
         location,
         created: 1,
         title: "Hydrated session",
@@ -128,7 +130,7 @@ describe("applyProjectUpdate", () => {
     const removed = applyProjectUpdate(projectA, ready, {
       _tag: "Removed",
       projectID: projectA,
-      sessionID: "session-a",
+      sessionID: sessionA,
     })
 
     expect(removed.snapshot?.sessions).toEqual([])
@@ -144,7 +146,7 @@ describe("applyProjectUpdate", () => {
       [],
     )
     const info = Schema.decodeUnknownSync(Session.Info)({
-      id: "session-a",
+      id: sessionA,
       projectID: "project-a",
       cost: 0,
       tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
@@ -169,7 +171,7 @@ describe("applyProjectUpdate", () => {
 it("reconciles an optimistic prompt when OpenCode admits it to the inbox", () => {
   const view = createSessionView(
     {
-      id: "session-a",
+      id: sessionA,
       location,
       created: 1,
       title: "Session",

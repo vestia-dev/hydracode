@@ -24,8 +24,8 @@ export const ProjectPendingPrompt = Schema.Struct({
 export type ProjectPendingPrompt = typeof ProjectPendingPrompt.Type
 
 export const ProjectSession = Schema.Struct({
-  id: Schema.String,
-  parentID: Schema.optional(Schema.String),
+  id: Session.ID,
+  parentID: Schema.optional(Session.ID),
   location: Schema.optional(Location.Ref),
   created: Schema.Number,
   title: Schema.String,
@@ -90,7 +90,7 @@ export const ProjectUpdate = Schema.Union([
   Schema.Struct({
     _tag: Schema.Literal("Removed"),
     projectID: Project.ID,
-    sessionID: Schema.String,
+    sessionID: Session.ID,
   }),
 ])
 export type ProjectUpdate = typeof ProjectUpdate.Type
