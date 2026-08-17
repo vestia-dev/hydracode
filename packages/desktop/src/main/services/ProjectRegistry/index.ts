@@ -6,7 +6,7 @@ import {
   type OpenCodeClient,
   type OpenCodeEvent,
 } from "@opencode-ai/client/effect"
-import { Context, DateTime, Effect, Layer, Queue, Scope, Semaphore, Stream } from "effect"
+import { Context, DateTime, Effect, Layer, Stream } from "effect"
 import { Schema } from "effect"
 import { performance } from "node:perf_hooks"
 import {
@@ -24,6 +24,7 @@ import type {
 } from "../../../shared/project"
 import { locationsEqual, locationKey, sessionRootID } from "../../../shared/domain/projectCatalog"
 import { OpenCodeService } from "../OpenCodeService"
+import { OpenCodeEventService } from "../OpenCodeEventService"
 
 export class ProjectRegistryError extends Schema.TaggedErrorClass<ProjectRegistryError>()(
   "ProjectRegistryError",
@@ -141,14 +142,11 @@ export const ProjectRegistryLive = Layer.effect(
   ProjectRegistry,
   Effect.gen(function* () {
     const openCode = yield* OpenCodeService
-    const scope = yield* Scope.Scope
+    const openCodeEvents = yield* OpenCodeEventService
     const entries = new Map<string, Entry>()
     const sessions = new Map<string, SessionRecord>()
     const activeSessionIDs = new Set<Session.ID>()
     const selectedRootIDs = new Set<string>()
-    const events = yield* Queue.unbounded<OpenCodeEvent>()
-    const eventStreamLock = yield* Semaphore.make(1)
-    let eventStreamStarted = false
     let serverConnected = false
     const emitSessions = (entry: Entry) =>
       emit(entry, {
@@ -430,22 +428,6 @@ export const ProjectRegistryLive = Layer.effect(
         ),
       )
 
-    const watchServer = (client: OpenCodeClient) => {
-      const consume = client.event
-        .subscribe()
-        .pipe(Stream.runForEach((event) => Queue.offer(events, event).pipe(Effect.asVoid)))
-      const loop: Effect.Effect<never> = consume.pipe(
-        Effect.catch((cause) =>
-          Effect.gen(function* () {
-            yield* Effect.logWarning("OpenCode event stream disconnected", cause)
-            yield* Effect.sleep("500 millis")
-          }),
-        ),
-        Effect.andThen(Effect.suspend(() => loop)),
-      )
-      return loop
-    }
-
     const entriesForEvent = (event: OpenCodeEvent): ReadonlyArray<Entry> => {
       const openEntries = Array.from(entries.values())
       if (event.type === "server.connected" || event.type === "worktree.updated") return openEntries
@@ -473,36 +455,20 @@ export const ProjectRegistryLive = Layer.effect(
       return Array.from(candidates)
     }
 
-    const processEvents = Effect.forever(
-      Queue.take(events).pipe(
-        Effect.flatMap((event) => {
-          if (event.type === "server.connected" && !serverConnected) {
-            serverConnected = true
-            return Effect.void
-          }
-          return Effect.forEach(
-            entriesForEvent(event),
-            (entry) =>
-              processEvent(entry, event).pipe(
-                Effect.catch((cause) =>
-                  Effect.logWarning("Could not process OpenCode event", cause),
-                ),
-              ),
-            { discard: true },
-          )
-        }),
-      ),
-    )
-
-    const startServerEvents = (client: OpenCodeClient) =>
-      eventStreamLock.withPermits(1)(
-        Effect.gen(function* () {
-          if (eventStreamStarted) return
-          yield* Effect.forkIn(watchServer(client), scope)
-          yield* Effect.forkIn(processEvents, scope)
-          eventStreamStarted = true
-        }),
+    const processEvents = (event: OpenCodeEvent) => {
+      if (event.type === "server.connected" && !serverConnected) {
+        serverConnected = true
+        return Effect.void
+      }
+      return Effect.forEach(
+        entriesForEvent(event),
+        (entry) =>
+          processEvent(entry, event).pipe(
+            Effect.catch((cause) => Effect.logWarning("Could not process OpenCode event", cause)),
+          ),
+        { discard: true },
       )
+    }
 
     const open = (
       location: Location.Ref | undefined,
@@ -510,7 +476,7 @@ export const ProjectRegistryLive = Layer.effect(
     ): Effect.Effect<Project.ID, unknown> =>
       Effect.gen(function* () {
         const client = yield* openCode.client
-        yield* startServerEvents(client)
+        yield* openCodeEvents.subscribe(processEvents)
         const current = yield* client.project.current(
           location === undefined
             ? undefined
