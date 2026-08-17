@@ -85,12 +85,6 @@ interface ProjectRegistryShape {
     sessionID: string,
   ) => Effect.Effect<SessionSelectionTiming, unknown>
   readonly createSession: (subscriptionID: string) => Effect.Effect<CreateSessionResult, unknown>
-  readonly updateInbox: (
-    subscriptionID: string,
-    sessionID: string,
-    inboxID: string,
-    action: "cancel" | "queue" | "steer",
-  ) => Effect.Effect<void, unknown>
   readonly replyQuestion: (
     subscriptionID: string,
     sessionID: string,
@@ -719,24 +713,6 @@ export const ProjectRegistryLive = Layer.effect(
         const session = sessionView(entry, record)
         return { _tag: "Success", session } as const
       })
-    const updateInbox = (
-      subscriptionID: string,
-      sessionID: string,
-      inboxID: string,
-      action: "cancel" | "queue" | "steer",
-    ): Effect.Effect<void, unknown> =>
-      Effect.gen(function* () {
-        const subscription = subscriptions.get(subscriptionID)
-        if (subscription === undefined)
-          return yield* Effect.fail(
-            new ProjectRegistryError({ message: "Project subscription is closed" }),
-          )
-        const input = {
-          sessionID: Schema.decodeUnknownSync(Session.ID)(sessionID),
-          inboxID: Schema.decodeUnknownSync(SessionMessage.ID)(inboxID),
-        }
-        return yield* subscription.entry.client.session.inbox[action](input)
-      })
     const replyQuestion = (
       subscriptionID: string,
       sessionID: string,
@@ -821,7 +797,6 @@ export const ProjectRegistryLive = Layer.effect(
       close,
       selectSession,
       createSession,
-      updateInbox,
       replyQuestion,
       rejectQuestion,
     })

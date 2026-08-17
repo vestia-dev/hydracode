@@ -223,12 +223,14 @@ export function registerDesktopIpc() {
   ipcMain.handle(DesktopChannels.updateSessionInbox, (_event, input: unknown) => {
     const command = Schema.decodeUnknownSync(SessionInboxCommand)(input)
     return result(
-      ProjectRegistry.use((registry) =>
-        registry.updateInbox(
-          command.subscriptionID,
-          command.sessionID,
-          command.inboxID,
-          command.action,
+      OpenCodeService.use((service) =>
+        service.client.pipe(
+          Effect.flatMap((client) =>
+            client.session.inbox[command.action]({
+              sessionID: command.sessionID,
+              inboxID: command.inboxID,
+            }),
+          ),
         ),
       ),
     )

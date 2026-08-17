@@ -384,17 +384,12 @@ export function useProjectController() {
 
   const updateSessionInbox = useCallback(
     (
-      locationKeyValue: string,
+      _locationKeyValue: string,
       sessionID: SessionView["id"],
       inboxID: ProjectPendingPrompt["id"],
       action: "cancel" | "queue" | "steer",
-    ) =>
-      withProjectSubscription(locationKeyValue, sessionID, (subscriptionID) =>
-        DesktopBridge.use((desktop) =>
-          desktop.updateSessionInbox({ subscriptionID, sessionID, inboxID, action }),
-        ),
-      ),
-    [withProjectSubscription],
+    ) => DesktopBridge.use((desktop) => desktop.updateSessionInbox({ sessionID, inboxID, action })),
+    [],
   )
 
   const selectSession = useCallback(

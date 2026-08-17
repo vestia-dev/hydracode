@@ -139,7 +139,7 @@ export const SubmitPromptCommand = Schema.Struct({
 export type SubmitPromptCommand = typeof SubmitPromptCommand.Type
 
 export const SessionInboxCommand = Schema.Struct({
-  ...ProjectSessionCommand.fields,
+  sessionID: Session.ID,
   inboxID: SessionMessage.ID,
   action: Schema.Literals(["cancel", "queue", "steer"]),
 })
