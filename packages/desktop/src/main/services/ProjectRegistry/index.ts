@@ -42,7 +42,6 @@ type SessionRecord =
 interface Entry {
   readonly projectID: Project.ID
   readonly location: Location.Ref
-  readonly client: OpenCodeClient
   notify: (update: ProjectUpdate) => void
 }
 
@@ -129,8 +128,8 @@ const captureWatermark = (client: OpenCodeClient, sessionID: Session.ID) => {
   )
 }
 
-const listSessions = (entry: Entry, location: Location.Ref) =>
-  entry.client.session.list({
+const listSessions = (client: OpenCodeClient, entry: Entry, location: Location.Ref) =>
+  client.session.list({
     project: entry.projectID,
     directory: location.directory,
     ...(location.workspaceID === undefined ? {} : { workspace: location.workspaceID }),
@@ -178,9 +177,10 @@ export const ProjectRegistryLive = Layer.effect(
     ) =>
       Effect.gen(function* () {
         const started = performance.now()
+        const client = yield* openCode.client
         setSessionInfo(sessions, info)
         const watermarkStarted = performance.now()
-        const sequence = yield* captureWatermark(entry.client, info.id)
+        const sequence = yield* captureWatermark(client, info.id)
         const watermarkDuration = performance.now() - watermarkStarted
         let contextDuration = 0
         let questionsDuration = 0
@@ -190,28 +190,28 @@ export const ProjectRegistryLive = Layer.effect(
         const formsStarted = performance.now()
         const [messages, questions, forms, inbox] = yield* Effect.all(
           [
-            entry.client.session.context({ sessionID: info.id }).pipe(
+            client.session.context({ sessionID: info.id }).pipe(
               Effect.tap(() =>
                 Effect.sync(() => {
                   contextDuration = performance.now() - contextStarted
                 }),
               ),
             ),
-            entry.client.question.list({ sessionID: info.id }).pipe(
+            client.question.list({ sessionID: info.id }).pipe(
               Effect.tap(() =>
                 Effect.sync(() => {
                   questionsDuration = performance.now() - questionsStarted
                 }),
               ),
             ),
-            entry.client.form.list({ sessionID: info.id }).pipe(
+            client.form.list({ sessionID: info.id }).pipe(
               Effect.tap(() =>
                 Effect.sync(() => {
                   formsDuration = performance.now() - formsStarted
                 }),
               ),
             ),
-            entry.client.session.inbox.list({ sessionID: info.id }),
+            client.session.inbox.list({ sessionID: info.id }),
           ],
           { concurrency: "unbounded" },
         )
@@ -251,7 +251,8 @@ export const ProjectRegistryLive = Layer.effect(
       })
 
     const refreshSession = (entry: Entry, sessionID: Session.ID) =>
-      entry.client.session.get({ sessionID }).pipe(
+      openCode.client.pipe(
+        Effect.flatMap((client) => client.session.get({ sessionID })),
         Effect.flatMap((info) => {
           const previous = sessions.get(info.id)?.info
           setSessionInfo(sessions, info)
@@ -288,9 +289,10 @@ export const ProjectRegistryLive = Layer.effect(
       )
 
     const reloadSessionState = (entry: Entry, sessionID: Session.ID) =>
-      entry.client.session
-        .get({ sessionID })
-        .pipe(Effect.flatMap((info) => loadSessionState(entry, info)))
+      openCode.client.pipe(
+        Effect.flatMap((client) => client.session.get({ sessionID })),
+        Effect.flatMap((info) => loadSessionState(entry, info)),
+      )
 
     const apply = (entry: Entry, event: OpenCodeEvent): Effect.Effect<void, ProjectRegistryError> =>
       Effect.gen(function* () {
@@ -316,7 +318,8 @@ export const ProjectRegistryLive = Layer.effect(
         )
           activeSessionIDs.delete(sessionID)
         if (reduction.status === "missing-input") {
-          const message = yield* entry.client.session
+          const client = yield* openCode.client
+          const message = yield* client.session
             .message({
               sessionID,
               messageID: Schema.decodeUnknownSync(SessionMessage.ID)(reduction.inputID),
@@ -351,8 +354,9 @@ export const ProjectRegistryLive = Layer.effect(
 
     const reconcileSessions = (entry: Entry) =>
       Effect.gen(function* () {
+        const client = yield* openCode.client
         const [page, active] = yield* Effect.all(
-          [listSessions(entry, entry.location), entry.client.session.active()],
+          [listSessions(client, entry, entry.location), client.session.active()],
           { concurrency: "unbounded" },
         )
         activeSessionIDs.clear()
@@ -499,7 +503,6 @@ export const ProjectRegistryLive = Layer.effect(
           entry = {
             projectID: current.id,
             location: resolvedLocation,
-            client,
             notify: (update) => notify(resolvedLocation, update),
           }
         } else {
@@ -526,7 +529,7 @@ export const ProjectRegistryLive = Layer.effect(
             new ProjectRegistryError({ message: "Session location is closed" }),
           )
         const [page, active] = yield* Effect.all(
-          [listSessions(entry, target.location), entry.client.session.active()],
+          [listSessions(client, entry, target.location), client.session.active()],
           { concurrency: "unbounded" },
         )
         activeSessionIDs.clear()
