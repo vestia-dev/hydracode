@@ -1,12 +1,8 @@
 import { contextBridge, ipcRenderer } from "electron"
 import { DesktopChannels } from "../shared/desktopChannels"
 import type { HydraCodeDesktopApi } from "../shared/ipc"
-import {
-  makeProjectUpdateSubscriptions,
-  readProjectUpdateEnvelope,
-} from "./projectUpdateSubscriptions"
 
-const projectUpdates = makeProjectUpdateSubscriptions<unknown>()
+const projectUpdateListeners = new Set<(update: unknown) => void>()
 const updateListeners = new Set<(state: unknown) => void>()
 const paneSplitListeners = new Set<(command: "right" | "down" | "left" | "up") => void>()
 const paneFocusListeners = new Set<(direction: "right" | "down" | "left" | "up") => void>()
@@ -20,9 +16,7 @@ ipcRenderer.on(DesktopChannels.updateState, (_event, state: unknown) => {
 })
 
 ipcRenderer.on(DesktopChannels.projectUpdate, (_event, input: unknown) => {
-  const envelope = readProjectUpdateEnvelope(input)
-  if (envelope === undefined) return
-  projectUpdates.publish(envelope.subscriptionID, envelope.update)
+  for (const listener of projectUpdateListeners) listener(input)
 })
 
 ipcRenderer.on(DesktopChannels.paneSplit, (_event, command: "right" | "down" | "left" | "up") => {
@@ -55,11 +49,7 @@ const desktopApi: HydraCodeDesktopApi = {
   saveProjectSelection: (state) => ipcRenderer.invoke(DesktopChannels.saveProjectSelection, state),
   saveProjectUIState: (state) => ipcRenderer.invoke(DesktopChannels.saveProjectUIState, state),
   openProject: (command) => ipcRenderer.invoke(DesktopChannels.openProject, command),
-  closeProject: (command) =>
-    ipcRenderer.invoke(DesktopChannels.closeProject, command).then((result) => {
-      projectUpdates.clear(command.subscriptionID)
-      return result
-    }),
+  closeProject: (command) => ipcRenderer.invoke(DesktopChannels.closeProject, command),
   selectSession: (command) => ipcRenderer.invoke(DesktopChannels.selectSession, command),
   createSession: (command) => ipcRenderer.invoke(DesktopChannels.createSession, command),
   submitPrompt: (command) => ipcRenderer.invoke(DesktopChannels.submitPrompt, command),
@@ -78,8 +68,9 @@ const desktopApi: HydraCodeDesktopApi = {
     updateSubscription ??= ipcRenderer.invoke(DesktopChannels.updateSubscribe)
     return () => updateListeners.delete(listener)
   },
-  onProjectUpdate: (subscriptionID, listener) => {
-    return projectUpdates.subscribe(subscriptionID, listener)
+  onProjectUpdate: (listener) => {
+    projectUpdateListeners.add(listener)
+    return () => projectUpdateListeners.delete(listener)
   },
   onPaneSplit: (listener) => {
     paneSplitListeners.add(listener)

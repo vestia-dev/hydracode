@@ -7,13 +7,13 @@ import {
   ThemeResult,
   OpenCodeDiagnosticsResult,
   UpdateState,
-  ProjectSubscription,
   ProjectUpdateEnvelope,
   type ProjectCommandResult as ProjectCommandResultType,
 } from "../shared/ipc"
 import {
   CreateSessionCommand,
   CreateSessionResult,
+  CloseProjectCommand,
   ListProjectsResult,
   OpenProjectCommand,
   QuestionCommand,
@@ -162,27 +162,24 @@ export function registerDesktopIpc() {
     const command = Schema.decodeUnknownSync(OpenProjectCommand)(input)
     return MainRuntime.runPromise(
       ProjectRegistry.use((registry) =>
-        registry.open(command.location, (subscriptionID, update) => {
-          const envelope = Schema.encodeSync(ProjectUpdateEnvelope)({ subscriptionID, update })
+        registry.open(command.location, (location, update) => {
+          const envelope = Schema.encodeSync(ProjectUpdateEnvelope)({ location, update })
           event.sender.send(DesktopChannels.projectUpdate, envelope)
         }),
       ),
     )
-      .then((subscriptionID) => {
-        return { subscriptionID }
-      })
-      .then((value) => value)
-      .catch((cause) => ({ _tag: "Failure", message: failureMessage(cause) }))
+      .then(() => ({ _tag: "Success" as const }))
+      .catch((cause) => ({ _tag: "Failure" as const, message: failureMessage(cause) }))
   })
   ipcMain.handle(DesktopChannels.closeProject, (_event, input: unknown) => {
-    const command = Schema.decodeUnknownSync(ProjectSubscription)(input)
-    return result(ProjectRegistry.use((registry) => registry.close(command.subscriptionID)))
+    const command = Schema.decodeUnknownSync(CloseProjectCommand)(input)
+    return result(ProjectRegistry.use((registry) => registry.close(command.location)))
   })
   ipcMain.handle(DesktopChannels.selectSession, (_event, input: unknown) => {
     const command = Schema.decodeUnknownSync(ProjectSessionCommand)(input)
     return MainRuntime.runPromise(
       ProjectRegistry.use((registry) =>
-        registry.selectSession(command.subscriptionID, command.sessionID),
+        registry.selectSession(command.location, command.sessionID),
       ),
     )
       .then((timing) => ({ _tag: "Success" as const, timing }))
@@ -191,7 +188,7 @@ export function registerDesktopIpc() {
   ipcMain.handle(DesktopChannels.createSession, (_event, input: unknown) => {
     const command = Schema.decodeUnknownSync(CreateSessionCommand)(input)
     return MainRuntime.runPromise(
-      ProjectRegistry.use((registry) => registry.createSession(command.subscriptionID)),
+      ProjectRegistry.use((registry) => registry.createSession(command.location)),
     )
       .then((value) => Schema.encodeSync(CreateSessionResult)(value))
       .catch((cause) => ({ _tag: "Failure" as const, message: failureMessage(cause) }))
@@ -239,12 +236,7 @@ export function registerDesktopIpc() {
     const command = Schema.decodeUnknownSync(ReplyQuestionCommand)(input)
     return result(
       ProjectRegistry.use((registry) =>
-        registry.replyQuestion(
-          command.subscriptionID,
-          command.sessionID,
-          command.requestID,
-          command.answers,
-        ),
+        registry.replyQuestion(command.sessionID, command.requestID, command.answers),
       ),
     )
   })
@@ -252,7 +244,7 @@ export function registerDesktopIpc() {
     const command = Schema.decodeUnknownSync(QuestionCommand)(input)
     return result(
       ProjectRegistry.use((registry) =>
-        registry.rejectQuestion(command.subscriptionID, command.sessionID, command.requestID),
+        registry.rejectQuestion(command.sessionID, command.requestID),
       ),
     )
   })

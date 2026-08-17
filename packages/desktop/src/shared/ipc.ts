@@ -19,8 +19,8 @@ import {
   CreateSessionCommand,
   CreateSessionResult,
   ListProjectsResult,
+  CloseProjectCommand,
   OpenProjectCommand,
-  OpenProjectResult,
   SubmitPromptCommand,
   SessionInboxCommand,
   ReplyQuestionCommand,
@@ -29,7 +29,6 @@ import {
   SelectSessionResult,
   ProjectSessionCommand,
   SessionCommand,
-  ProjectSubscription,
   ProjectUpdate,
   ProjectUpdateEnvelope,
 } from "./project"
@@ -71,8 +70,8 @@ export {
   CreateSessionCommand,
   CreateSessionResult,
   ListProjectsResult,
+  CloseProjectCommand,
   OpenProjectCommand,
-  OpenProjectResult,
   SubmitPromptCommand,
   SessionInboxCommand,
   ReplyQuestionCommand,
@@ -81,7 +80,6 @@ export {
   SelectSessionResult,
   ProjectSessionCommand,
   SessionCommand,
-  ProjectSubscription,
   ProjectUpdate,
   ProjectUpdateEnvelope,
   UpdateState,
@@ -89,6 +87,7 @@ export {
 }
 export type {
   CreateSessionCommand as CreateSessionCommandType,
+  CloseProjectCommand as CloseProjectCommandType,
   OpenProjectCommand as OpenProjectCommandType,
   SubmitPromptCommand as SubmitPromptCommandType,
   SessionInboxCommand as SessionInboxCommandType,
@@ -108,8 +107,8 @@ export interface HydraCodeDesktopApi {
   readonly loadApplicationState: () => Promise<ApplicationStateResult>
   readonly saveProjectSelection: (state: ProjectSelectionState) => Promise<ApplicationStateResult>
   readonly saveProjectUIState: (state: ProjectUIState) => Promise<ProjectUIStateResult>
-  readonly openProject: (command: OpenProjectCommand) => Promise<OpenProjectResult>
-  readonly closeProject: (command: ProjectSubscription) => Promise<ProjectCommandResult>
+  readonly openProject: (command: OpenProjectCommand) => Promise<ProjectCommandResult>
+  readonly closeProject: (command: CloseProjectCommand) => Promise<ProjectCommandResult>
   readonly selectSession: (command: ProjectSessionCommand) => Promise<SelectSessionResult>
   readonly createSession: (command: CreateSessionCommand) => Promise<CreateSessionResult>
   readonly submitPrompt: (command: SubmitPromptCommand) => Promise<ProjectCommandResult>
@@ -124,10 +123,7 @@ export interface HydraCodeDesktopApi {
   readonly installUpdate: () => Promise<ProjectCommandResult>
   readonly restartForUpdate: () => Promise<ProjectCommandResult>
   readonly onUpdateState: (listener: (state: unknown) => void) => () => void
-  readonly onProjectUpdate: (
-    subscriptionID: string,
-    listener: (update: unknown) => void,
-  ) => () => void
+  readonly onProjectUpdate: (listener: (update: unknown) => void) => () => void
   readonly onPaneSplit: (listener: (command: PaneSplitCommand) => void) => () => void
   readonly onPaneFocus: (listener: (direction: PaneDirection) => void) => () => void
   readonly onPaneClose: (listener: () => void) => () => void

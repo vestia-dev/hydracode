@@ -3,10 +3,11 @@ import {
   CreateSessionResult,
   ListProjectsResult,
   ProjectUpdate,
+  ProjectUpdateEnvelope,
   ProjectCommandResult,
   SelectSessionResult,
-  OpenProjectResult,
   type OpenProjectCommand,
+  type CloseProjectCommand,
   type CreateSessionCommand,
   type SubmitPromptCommand,
   type SessionInboxCommand,
@@ -56,8 +57,8 @@ interface DesktopBridgeShape {
   ) => Effect.Effect<ProjectUIState, DesktopBridgeError>
   readonly getOpenCodeDiagnostics: Effect.Effect<OpenCodeDiagnostics, DesktopBridgeError>
   readonly installOpenCode: Effect.Effect<void, DesktopBridgeError>
-  readonly openProject: (command: OpenProjectCommand) => Effect.Effect<string, DesktopBridgeError>
-  readonly closeProject: (subscriptionID: string) => Effect.Effect<void, DesktopBridgeError>
+  readonly openProject: (command: OpenProjectCommand) => Effect.Effect<void, DesktopBridgeError>
+  readonly closeProject: (command: CloseProjectCommand) => Effect.Effect<void, DesktopBridgeError>
   readonly selectSession: (
     command: ProjectSessionCommand,
   ) => Effect.Effect<void, DesktopBridgeError>
@@ -93,10 +94,10 @@ interface DesktopBridgeShape {
   readonly subscribeFollowLatest: (
     onFollow: () => void,
   ) => Effect.Effect<() => void, DesktopBridgeError>
-  readonly watchProject: (
-    subscriptionID: string,
+  readonly subscribeProject: (
+    location: CloseProjectCommand["location"],
     onUpdate: (update: ProjectUpdate) => void,
-  ) => Effect.Effect<never, DesktopBridgeError>
+  ) => Effect.Effect<() => void, DesktopBridgeError>
 }
 
 export class DesktopBridge extends Context.Service<DesktopBridge, DesktopBridgeShape>()(
@@ -212,16 +213,8 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
       ),
     ),
     installOpenCode: command(() => window.hydracode.installOpenCode()),
-    openProject: (request) =>
-      invoke(() => window.hydracode.openProject(request), OpenProjectResult).pipe(
-        Effect.flatMap((value) =>
-          "subscriptionID" in value
-            ? Effect.succeed(value.subscriptionID)
-            : Effect.fail(new DesktopBridgeError({ message: value.message, cause: value })),
-        ),
-      ),
-    closeProject: (subscriptionID) =>
-      command(() => window.hydracode.closeProject({ subscriptionID })),
+    openProject: (request) => command(() => window.hydracode.openProject(request)),
+    closeProject: (request) => command(() => window.hydracode.closeProject(request)),
     selectSession: (request) =>
       Effect.suspend(() => {
         const started = performance.now()
@@ -371,31 +364,28 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
             cause,
           }),
       }),
-    watchProject: (subscriptionID, onUpdate) =>
-      Effect.acquireRelease(
-        Effect.sync(() =>
-          window.hydracode.onProjectUpdate(subscriptionID, (update) => {
+    subscribeProject: (location, onUpdate) =>
+      Effect.try({
+        try: () =>
+          window.hydracode.onProjectUpdate((update) => {
             const started = performance.now()
-            const decoded = Schema.decodeUnknownSync(ProjectUpdate)(update)
+            const decoded = Schema.decodeUnknownSync(ProjectUpdateEnvelope)(update)
+            if (
+              decoded.location.directory !== location.directory ||
+              decoded.location.workspaceID !== location.workspaceID
+            )
+              return
             recordStartupMeasure("project-update-decode", started, {
               matched: 1,
-              update: decoded._tag,
+              update: decoded.update._tag,
             })
-            onUpdate(decoded)
+            onUpdate(decoded.update)
           }),
-        ),
-        (remove) => Effect.sync(remove),
-      )
-        .pipe(
-          Effect.flatMap(() => Effect.never),
-          Effect.mapError(
-            (cause) =>
-              new DesktopBridgeError({
-                message: "HydraCode could not subscribe to project updates.",
-                cause,
-              }),
-          ),
-        )
-        .pipe(Effect.scoped),
+        catch: (cause) =>
+          new DesktopBridgeError({
+            message: "HydraCode could not subscribe to project updates.",
+            cause,
+          }),
+      }),
   }),
 )

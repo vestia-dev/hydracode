@@ -44,12 +44,6 @@ export class ProjectRegistryError extends Schema.TaggedErrorClass<ProjectRegistr
   { message: Schema.String },
 ) {}
 
-interface Subscriber {
-  readonly id: string
-  readonly location: Location.Ref
-  readonly notify: (subscriptionID: string, update: ProjectUpdate) => void
-}
-
 type SessionRecord =
   | { readonly _tag: "Metadata"; readonly info: Session.Info }
   | {
@@ -65,7 +59,7 @@ interface Entry {
   readonly client: OpenCodeClient
   readonly sessions: Map<string, SessionRecord>
   readonly active: Set<string>
-  readonly subscribers: Map<string, Subscriber>
+  notify: (update: ProjectUpdate) => void
   readonly events: Queue.Queue<OpenCodeEvent>
   readonly selectedRootIDs: Set<string>
   ready: boolean
@@ -77,34 +71,28 @@ interface ProjectRegistryShape {
   readonly resolve: (location: Location.Ref) => Effect.Effect<ProjectCatalogEntry, unknown>
   readonly open: (
     location: Location.Ref | undefined,
-    notify: (subscriptionID: string, update: ProjectUpdate) => void,
-  ) => Effect.Effect<string, unknown>
-  readonly close: (subscriptionID: string) => Effect.Effect<void, unknown>
+    notify: (location: Location.Ref, update: ProjectUpdate) => void,
+  ) => Effect.Effect<void, unknown>
+  readonly close: (location: Location.Ref) => Effect.Effect<void, unknown>
   readonly selectSession: (
-    subscriptionID: string,
+    location: Location.Ref,
     sessionID: string,
   ) => Effect.Effect<SessionSelectionTiming, unknown>
-  readonly createSession: (subscriptionID: string) => Effect.Effect<CreateSessionResult, unknown>
+  readonly createSession: (location: Location.Ref) => Effect.Effect<CreateSessionResult, unknown>
   readonly replyQuestion: (
-    subscriptionID: string,
     sessionID: string,
     requestID: string,
     answers: ReadonlyArray<Question.Answer>,
   ) => Effect.Effect<void, unknown>
-  readonly rejectQuestion: (
-    subscriptionID: string,
-    sessionID: string,
-    requestID: string,
-  ) => Effect.Effect<void, unknown>
+  readonly rejectQuestion: (sessionID: string, requestID: string) => Effect.Effect<void, unknown>
 }
 
 export class ProjectRegistry extends Context.Service<ProjectRegistry, ProjectRegistryShape>()(
   "HydraCode/ProjectRegistry",
 ) {}
 
-const nextID = () => `project-${crypto.randomUUID()}`
 const emit = (entry: Entry, update: ProjectUpdate) => {
-  for (const subscriber of entry.subscribers.values()) subscriber.notify(subscriber.id, update)
+  entry.notify(update)
 }
 const sessionInfo = (entry: Entry) =>
   new Map(Array.from(entry.sessions, ([id, record]) => [id, record.info] as const))
@@ -200,14 +188,11 @@ export const ProjectRegistryLive = Layer.effect(
     const openCode = yield* OpenCodeService
     const scope = yield* Scope.Scope
     const entries = new Map<string, Entry>()
-    const subscriptions = new Map<string, { entry: Entry; subscriber: Subscriber }>()
     const emitSnapshot = (entry: Entry) => {
-      for (const subscriber of entry.subscribers.values()) {
-        subscriber.notify(subscriber.id, {
-          _tag: "Snapshot",
-          snapshot: snapshot(entry, subscriber.location),
-        })
-      }
+      entry.notify({
+        _tag: "Snapshot",
+        snapshot: snapshot(entry, entry.location),
+      })
     }
 
     const list: Effect.Effect<ReadonlyArray<ProjectCatalogEntry>, unknown> = Effect.gen(
@@ -565,8 +550,8 @@ export const ProjectRegistryLive = Layer.effect(
 
     const open = (
       location: Location.Ref | undefined,
-      notify: (subscriptionID: string, update: ProjectUpdate) => void,
-    ): Effect.Effect<string, unknown> =>
+      notify: (location: Location.Ref, update: ProjectUpdate) => void,
+    ): Effect.Effect<void, unknown> =>
       Effect.gen(function* () {
         const client = yield* openCode.client
         const current = yield* client.project.current(
@@ -610,55 +595,50 @@ export const ProjectRegistryLive = Layer.effect(
             sessions: new Map(),
             active: new Set(),
             selectedRootIDs: new Set(),
-            subscribers: new Map(),
+            notify: (update) => notify(resolvedLocation, update),
             events,
             ready: false,
           }
         } else {
           entry.project = project
+          entry.notify = (update) => notify(resolvedLocation, update)
           for (const directory of knownDirectories) entry.directories.add(directory)
         }
-        const subscriptionID = nextID()
-        const subscriber = { id: subscriptionID, location: resolvedLocation, notify }
-        entry.subscribers.set(subscriptionID, subscriber)
-        subscriptions.set(subscriptionID, { entry, subscriber })
+        entries.set(key, entry)
         if (entry.fiber === undefined) {
           entry.fiber = yield* Effect.forkIn(start(entry), scope)
         } else if (entry.ready) {
-          notify(subscriptionID, {
+          notify(resolvedLocation, {
             _tag: "Snapshot",
             snapshot: snapshot(entry, resolvedLocation),
           })
         }
-        entries.set(key, entry)
-        return subscriptionID
       })
-    const close = (subscriptionID: string): Effect.Effect<void, unknown> =>
+    const close = (location: Location.Ref): Effect.Effect<void, unknown> =>
       Effect.gen(function* () {
-        const subscription = subscriptions.get(subscriptionID)
-        if (subscription === undefined) return
-        const { entry } = subscription
-        entry.subscribers.delete(subscriptionID)
-        subscriptions.delete(subscriptionID)
-        if (entry.subscribers.size === 0) {
-          entries.delete(`${entry.project.id}:${locationKey(entry.location)}`)
-          if (entry.fiber !== undefined) yield* Fiber.interrupt(entry.fiber)
-        }
+        const found = Array.from(entries.entries()).find(([, entry]) =>
+          locationsEqual(entry.location, location),
+        )
+        if (found === undefined) return
+        const [key, entry] = found
+        entries.delete(key)
+        if (entry.fiber !== undefined) yield* Fiber.interrupt(entry.fiber)
       })
     const selectSession = (
-      subscriptionID: string,
+      location: Location.Ref,
       sessionID: string,
     ): Effect.Effect<SessionSelectionTiming, unknown> =>
       Effect.gen(function* () {
         const started = performance.now()
         let sessionGetDuration = 0
         const loadTimings: Array<SessionLoadTiming> = []
-        const subscription = subscriptions.get(subscriptionID)
-        if (subscription === undefined)
+        const entry = Array.from(entries.values()).find((candidate) =>
+          locationsEqual(candidate.location, location),
+        )
+        if (entry === undefined)
           return yield* Effect.fail(
-            new ProjectRegistryError({ message: "Project subscription is closed" }),
+            new ProjectRegistryError({ message: "Project location is closed" }),
           )
-        const { entry } = subscription
         let target = entry.sessions.get(sessionID)?.info
         if (target === undefined) {
           const sessionGetStarted = performance.now()
@@ -690,16 +670,17 @@ export const ProjectRegistryLive = Layer.effect(
           sessions: loadTimings,
         }
       })
-    const createSession = (subscriptionID: string): Effect.Effect<CreateSessionResult, unknown> =>
+    const createSession = (location: Location.Ref): Effect.Effect<CreateSessionResult, unknown> =>
       Effect.gen(function* () {
-        const subscription = subscriptions.get(subscriptionID)
-        if (subscription === undefined)
+        const entry = Array.from(entries.values()).find((candidate) =>
+          locationsEqual(candidate.location, location),
+        )
+        if (entry === undefined)
           return yield* Effect.fail(
-            new ProjectRegistryError({ message: "Project subscription is closed" }),
+            new ProjectRegistryError({ message: "Project location is closed" }),
           )
-        const { entry, subscriber } = subscription
         const info = yield* entry.client.session.create({
-          location: subscriber.location,
+          location,
         })
         setSessionInfo(entry, info)
         entry.selectedRootIDs.add(info.id)
@@ -714,19 +695,17 @@ export const ProjectRegistryLive = Layer.effect(
         return { _tag: "Success", session } as const
       })
     const replyQuestion = (
-      subscriptionID: string,
       sessionID: string,
       requestID: string,
       answers: ReadonlyArray<Question.Answer>,
     ): Effect.Effect<void, unknown> =>
       Effect.gen(function* () {
-        const subscription = subscriptions.get(subscriptionID)
-        if (subscription === undefined)
-          return yield* Effect.fail(
-            new ProjectRegistryError({ message: "Project subscription is closed" }),
-          )
-        const { entry } = subscription
         const decodedSessionID = Schema.decodeUnknownSync(Session.ID)(sessionID)
+        const entry = Array.from(entries.values()).find((candidate) =>
+          candidate.sessions.has(decodedSessionID),
+        )
+        if (entry === undefined)
+          return yield* Effect.fail(new ProjectRegistryError({ message: "Session is not open" }))
         const formID = questionFormID(requestID)
         const decodedRequestID = Schema.decodeUnknownSync(Question.ID)(requestID)
         if (formID === undefined) {
@@ -755,19 +734,14 @@ export const ProjectRegistryLive = Layer.effect(
         publish(entry, decodedSessionID)
         return yield* Effect.void
       })
-    const rejectQuestion = (
-      subscriptionID: string,
-      sessionID: string,
-      requestID: string,
-    ): Effect.Effect<void, unknown> =>
+    const rejectQuestion = (sessionID: string, requestID: string): Effect.Effect<void, unknown> =>
       Effect.gen(function* () {
-        const subscription = subscriptions.get(subscriptionID)
-        if (subscription === undefined)
-          return yield* Effect.fail(
-            new ProjectRegistryError({ message: "Project subscription is closed" }),
-          )
-        const { entry } = subscription
         const decodedSessionID = Schema.decodeUnknownSync(Session.ID)(sessionID)
+        const entry = Array.from(entries.values()).find((candidate) =>
+          candidate.sessions.has(decodedSessionID),
+        )
+        if (entry === undefined)
+          return yield* Effect.fail(new ProjectRegistryError({ message: "Session is not open" }))
         const formID = questionFormID(requestID)
         const decodedRequestID = Schema.decodeUnknownSync(Question.ID)(requestID)
         if (formID === undefined) {

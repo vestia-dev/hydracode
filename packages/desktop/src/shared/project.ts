@@ -102,7 +102,7 @@ export const ProjectUpdate = Schema.Union([
 export type ProjectUpdate = typeof ProjectUpdate.Type
 
 export const ProjectUpdateEnvelope = Schema.Struct({
-  subscriptionID: Schema.String,
+  location: Location.Ref,
   update: ProjectUpdate,
 })
 export type ProjectUpdateEnvelope = typeof ProjectUpdateEnvelope.Type
@@ -110,20 +110,11 @@ export type ProjectUpdateEnvelope = typeof ProjectUpdateEnvelope.Type
 export const OpenProjectCommand = Schema.Struct({ location: Schema.optional(Location.Ref) })
 export type OpenProjectCommand = typeof OpenProjectCommand.Type
 
-export const ProjectSubscription = Schema.Struct({ subscriptionID: Schema.String })
-export type ProjectSubscription = typeof ProjectSubscription.Type
-
-export const OpenProjectResult = Schema.Union([
-  ProjectSubscription,
-  Schema.Struct({
-    _tag: Schema.Literal("Failure"),
-    message: Schema.String,
-  }),
-])
-export type OpenProjectResult = typeof OpenProjectResult.Type
+export const CloseProjectCommand = Schema.Struct({ location: Location.Ref })
+export type CloseProjectCommand = typeof CloseProjectCommand.Type
 
 export const ProjectSessionCommand = Schema.Struct({
-  subscriptionID: Schema.String,
+  location: Location.Ref,
   sessionID: Schema.String,
 })
 export type ProjectSessionCommand = typeof ProjectSessionCommand.Type
@@ -146,8 +137,7 @@ export const SessionInboxCommand = Schema.Struct({
 export type SessionInboxCommand = typeof SessionInboxCommand.Type
 
 export const QuestionCommand = Schema.Struct({
-  subscriptionID: Schema.String,
-  sessionID: Schema.String,
+  sessionID: Session.ID,
   requestID: Question.ID,
 })
 export type QuestionCommand = typeof QuestionCommand.Type
@@ -159,7 +149,7 @@ export const ReplyQuestionCommand = Schema.Struct({
 export type ReplyQuestionCommand = typeof ReplyQuestionCommand.Type
 
 export const CreateSessionCommand = Schema.Struct({
-  subscriptionID: Schema.String,
+  location: Location.Ref,
 })
 export type CreateSessionCommand = typeof CreateSessionCommand.Type
 
