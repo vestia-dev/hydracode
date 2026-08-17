@@ -54,7 +54,6 @@ interface Entry {
   readonly location: Location.Ref
   readonly client: OpenCodeClient
   readonly sessions: Map<string, SessionRecord>
-  readonly active: Set<Session.ID>
   notify: (update: ProjectUpdate) => void
   readonly selectedRootIDs: Set<string>
   ready: boolean
@@ -101,8 +100,8 @@ const sessionMetadata = (entry: Entry) =>
     .filter((info) => locationsEqual(info.location, entry.location))
 
 const sessionView = (
-  entry: Entry,
   { info, state }: Extract<SessionRecord, { readonly _tag: "Loaded" }>,
+  activeSessionIDs: ReadonlySet<Session.ID>,
 ): ProjectSession => {
   return {
     id: info.id,
@@ -113,7 +112,7 @@ const sessionView = (
     active:
       state.execution._tag === "Running" ||
       state.execution._tag === "Retrying" ||
-      entry.active.has(info.id),
+      activeSessionIDs.has(info.id),
     execution: state.execution,
     messages: state.messages,
     pendingPrompts: Array.from(state.pending, ([id, item]) =>
@@ -162,6 +161,7 @@ export const ProjectRegistryLive = Layer.effect(
     const openCode = yield* OpenCodeService
     const scope = yield* Scope.Scope
     const entries = new Map<string, Entry>()
+    const activeSessionIDs = new Set<Session.ID>()
     const events = yield* Queue.unbounded<OpenCodeEvent>()
     const eventStreamLock = yield* Semaphore.make(1)
     let eventStreamStarted = false
@@ -171,7 +171,7 @@ export const ProjectRegistryLive = Layer.effect(
         _tag: "Sessions",
         projectID: entry.project.id,
         sessions: sessionMetadata(entry),
-        activeSessionIDs: Array.from(entry.active),
+        activeSessionIDs: Array.from(activeSessionIDs),
       })
 
     const list: Effect.Effect<ReadonlyArray<ProjectCatalogEntry>, unknown> = Effect.gen(
@@ -225,10 +225,10 @@ export const ProjectRegistryLive = Layer.effect(
         }
       })
 
-    const removeSession = (entry: Entry, sessionID: string) =>
+    const removeSession = (entry: Entry, sessionID: string, removeActive = false) =>
       Effect.sync(() => {
         entry.sessions.delete(sessionID)
-        entry.active.delete(Schema.decodeUnknownSync(Session.ID)(sessionID))
+        if (removeActive) activeSessionIDs.delete(Schema.decodeUnknownSync(Session.ID)(sessionID))
         if (entry.ready) {
           emit(entry, { _tag: "Removed", projectID: entry.project.id, sessionID })
         }
@@ -237,7 +237,7 @@ export const ProjectRegistryLive = Layer.effect(
     const publish = (entry: Entry, sessionID: string) => {
       const record = entry.sessions.get(sessionID)
       if (record?._tag !== "Loaded") return
-      const next = sessionView(entry, record)
+      const next = sessionView(record, activeSessionIDs)
       if (entry.ready) emit(entry, { _tag: "Session", projectID: entry.project.id, session: next })
     }
 
@@ -333,13 +333,13 @@ export const ProjectRegistryLive = Layer.effect(
                 _tag: "Info",
                 projectID: entry.project.id,
                 session: info,
-                active: entry.active.has(info.id),
+                active: activeSessionIDs.has(info.id),
               })
             return Effect.void
           }
           const record = entry.sessions.get(info.id)
           if (record?._tag !== "Loaded") return loadSessionState(entry, info)
-          const next = sessionView(entry, record)
+          const next = sessionView(record, activeSessionIDs)
           if (entry.ready) {
             emit(entry, { _tag: "Session", projectID: entry.project.id, session: next })
           }
@@ -368,13 +368,13 @@ export const ProjectRegistryLive = Layer.effect(
           return
         }
         if (reduction.status === "duplicate" || reduction.status === "ignored") return
-        if (event.type === "session.execution.started") entry.active.add(sessionID)
+        if (event.type === "session.execution.started") activeSessionIDs.add(sessionID)
         if (
           event.type === "session.execution.succeeded" ||
           event.type === "session.execution.interrupted" ||
           event.type === "session.execution.failed"
         )
-          entry.active.delete(sessionID)
+          activeSessionIDs.delete(sessionID)
         if (reduction.status === "missing-input") {
           const message = yield* entry.client.session
             .message({
@@ -415,9 +415,9 @@ export const ProjectRegistryLive = Layer.effect(
           [listSessions(entry, entry.location), entry.client.session.active()],
           { concurrency: "unbounded" },
         )
-        entry.active.clear()
+        activeSessionIDs.clear()
         for (const id of Object.keys(active))
-          entry.active.add(Schema.decodeUnknownSync(Session.ID)(id))
+          activeSessionIDs.add(Schema.decodeUnknownSync(Session.ID)(id))
         const availableIDs = new Set<string>(page.data.map((info) => info.id))
         for (const sessionID of entry.sessions.keys()) {
           if (!availableIDs.has(sessionID)) yield* removeSession(entry, sessionID)
@@ -459,7 +459,7 @@ export const ProjectRegistryLive = Layer.effect(
               (event.type === "session.moved" && event.data.projectID === entry.project.id)))
         if (!belongsToLocation) return
         if (event.type === "session.deleted") {
-          yield* removeSession(entry, sessionID)
+          yield* removeSession(entry, sessionID, true)
           return
         }
         if (
@@ -571,7 +571,6 @@ export const ProjectRegistryLive = Layer.effect(
             location: resolvedLocation,
             client,
             sessions: new Map(),
-            active: new Set(),
             selectedRootIDs: new Set(),
             notify: (update) => notify(resolvedLocation, update),
             ready: true,
@@ -613,9 +612,9 @@ export const ProjectRegistryLive = Layer.effect(
           [listSessions(entry, target.location), entry.client.session.active()],
           { concurrency: "unbounded" },
         )
-        entry.active.clear()
+        activeSessionIDs.clear()
         for (const id of Object.keys(active))
-          entry.active.add(Schema.decodeUnknownSync(Session.ID)(id))
+          activeSessionIDs.add(Schema.decodeUnknownSync(Session.ID)(id))
         for (const info of page.data) setSessionInfo(entry, info)
         setSessionInfo(entry, target)
         const infoByID = sessionInfo(entry)
