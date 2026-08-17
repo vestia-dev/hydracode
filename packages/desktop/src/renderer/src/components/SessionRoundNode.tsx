@@ -60,6 +60,7 @@ function useRoundNodeRef(data: SessionRoundNodeData) {
   useEffect(() => {
     updateNodeInternals(data.id)
   }, [
+    data.hasArtifacts,
     data.hasSubagents,
     data.hasShellResources,
     data.hasTools,

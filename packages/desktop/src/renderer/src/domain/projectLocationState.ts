@@ -3,7 +3,6 @@ import { Location, Project, Session } from "@opencode-ai/client/effect"
 import type { ProjectDetails } from "../../../shared/project"
 import type { ProjectView, SessionView } from "../services/OpenCodeGateway"
 import { buildSessionGraph } from "./sessionGraph"
-import type { SemanticGraph } from "./graph"
 import { recordStartupMeasure } from "../startupTiming"
 import { createSessionSummaries } from "../../../shared/domain/projectCatalog"
 import {
@@ -56,10 +55,7 @@ export function createSessionView(
   optimisticPrompts: ReadonlyArray<OptimisticPrompt> = previous?.optimisticPrompts ?? [],
 ): SessionView {
   const started = performance.now()
-  const authoritativeGraph = preserveCompletedGraph(
-    buildSessionGraph(state.messages, active),
-    previous?.authoritativeGraph,
-  )
+  const authoritativeGraph = buildSessionGraph(state.messages, active)
   const pendingPrompts = Array.from(state.pending.entries()).flatMap(([id, item]) =>
     item.type === "user"
       ? [
@@ -101,20 +97,6 @@ export function createSessionView(
     edges: view.graph.edges.length,
   })
   return view
-}
-
-export function preserveCompletedGraph(current: SemanticGraph, previous?: SemanticGraph) {
-  if (previous === undefined) return current
-  const previousNodes = new Map(previous.nodes.map((node) => [node.id, node]))
-  const previousEdges = new Map(previous.edges.map((edge) => [edge.id, edge]))
-  return {
-    ...current,
-    nodes: current.nodes.map((node) => {
-      const existing = previousNodes.get(node.id)
-      return existing?.status === "completed" || existing?.status === "error" ? existing : node
-    }),
-    edges: current.edges.map((edge) => previousEdges.get(edge.id) ?? edge),
-  }
 }
 
 function sessionSummaries(

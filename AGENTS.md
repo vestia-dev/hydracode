@@ -9,10 +9,14 @@
 - OpenCode has a split client and server architecture. HydraCode is the client side of this. Existing clients already exist like the OpenCode TUI and OpenCode Desktop application. We can use these to help us make decisions.
 - We must treat the OpenCode API as the source of truth for naming, architecture guidance and authority. This includes using the OpenCode client packages types instead of making our own.
 - We must do our best to not invent new concepts at all. This often leads to wrappers of existing OpenCode functionality.
+- The value comes just as much from what we don't write as much as what we do. Avoid writing slop, spaghetti code, temporary hacks etc. You can always consult with the user about the right thing to do.
 
 ## Your explanation style
 
-- You should explain things like you are talking to a junior engineer. Use simple terminology but don't overlook or skip anything. Avoid jargon without sacrificing detail and nuance. Avoid metaphors.
+- You should explain things like you are talking to a junior engineer. 
+- Use simple terminology but don't overlook or skip anything. 
+- Avoid jargon without sacrificing detail and nuance. 
+- Avoid metaphors.
 
 ## Desktop boundaries
 

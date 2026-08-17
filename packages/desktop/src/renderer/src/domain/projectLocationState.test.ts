@@ -8,37 +8,12 @@ import {
   SessionMessage,
 } from "@opencode-ai/client/effect"
 import type { OpenLocationState } from "./projectLocationState"
-import type { SemanticGraph, SemanticGraphNode } from "./graph"
-import { createSessionView, openProjectState, preserveCompletedGraph } from "./projectLocationState"
+import { createSessionView, openProjectState } from "./projectLocationState"
 
 const projectA = Schema.decodeUnknownSync(Project.ID)("project-a")
 const projectB = Schema.decodeUnknownSync(Project.ID)("project-b")
 const sessionA = Schema.decodeUnknownSync(Session.ID)("session-a")
 const location = Location.Ref.make({ directory: AbsolutePath.make("/tmp/project-a") })
-const provenance = {
-  source: "explicit" as const,
-  messageIDs: [],
-  contentIndexes: [],
-  toolCallIDs: [],
-}
-
-function graphNode(id: string, status: SemanticGraphNode["status"]): SemanticGraphNode {
-  return {
-    id,
-    status,
-    kind: "round",
-    title: id,
-    detail: id,
-    artifacts: [],
-    provenance,
-    agentRunID: id,
-    round: { history: [] },
-  }
-}
-
-function graph(nodes: ReadonlyArray<SemanticGraphNode>): SemanticGraph {
-  return { nodes, edges: [], completedSubagentSessionIDs: [] }
-}
 
 function opening(projectID: Project.ID): OpenLocationState {
   return {
@@ -51,6 +26,31 @@ function opening(projectID: Project.ID): OpenLocationState {
     promptRetry: null,
     landingError: null,
   }
+}
+
+function assistantToolMessage(id: string, callID: string, created: number) {
+  return Schema.decodeUnknownSync(SessionMessage.Info)({
+    id,
+    type: "assistant",
+    agent: "build",
+    model: { providerID: "openai", id: "gpt-5" },
+    finish: "tool-calls",
+    content: [
+      {
+        type: "tool",
+        id: callID,
+        name: "read",
+        state: {
+          status: "completed",
+          input: {},
+          metadata: {},
+          content: [{ type: "text", text: "ok" }],
+        },
+        time: { created, ran: created + 1, completed: created + 2 },
+      },
+    ],
+    time: { created, completed: created + 2 },
+  })
 }
 
 describe("openProjectState", () => {
@@ -133,17 +133,40 @@ it("reconciles an optimistic prompt when OpenCode admits it to the inbox", () =>
   expect(view.pendingPrompts).toMatchObject([{ text: "Queue this", delivery: "queue" }])
 })
 
-describe("preserveCompletedGraph", () => {
-  it("reuses completed history while replacing the active tail", () => {
-    const completed = graphNode("completed", "completed")
-    const running = graphNode("running", "running")
-    const next = preserveCompletedGraph(
-      graph([graphNode("completed", "completed"), graphNode("running", "completed")]),
-      graph([completed, running]),
-    )
-
-    expect(next.nodes[0]).toBe(completed)
-    expect(next.nodes[1]).not.toBe(running)
-    expect(next.nodes[1]?.status).toBe("completed")
+it("rebuilds a completed round when later tool calls join it", () => {
+  const info = Schema.decodeUnknownSync(Session.Info)({
+    id: sessionA,
+    projectID: projectA,
+    cost: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    time: { created: 1, updated: 1 },
+    title: "Session",
+    location,
   })
+  const user = Schema.decodeUnknownSync(SessionMessage.Info)({
+    id: "msg_user",
+    type: "user",
+    text: "Inspect the app",
+    time: { created: 1 },
+  })
+  const state = {
+    sessionID: sessionA,
+    execution: { _tag: "Idle" as const },
+    messages: [user, assistantToolMessage("msg_assistant_1", "call_1", 2)],
+    questions: [],
+    pending: new Map(),
+  }
+  const previous = createSessionView(info, state, false)
+  const current = createSessionView(
+    info,
+    {
+      ...state,
+      messages: [...state.messages, assistantToolMessage("msg_assistant_2", "call_2", 5)],
+    },
+    false,
+    previous,
+  )
+  const tools = current.graph.nodes.find((node) => node.kind === "round-tools")
+
+  expect(tools?.kind === "round-tools" ? tools.roundTools.calls : []).toHaveLength(2)
 })
