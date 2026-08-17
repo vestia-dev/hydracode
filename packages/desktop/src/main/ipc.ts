@@ -24,7 +24,6 @@ import {
   ReplyQuestionCommand,
   SubmitPromptCommand,
   SessionInboxCommand,
-  ProjectSessionCommand,
   SessionCommand,
 } from "../shared/project"
 import { MainRuntime } from "./runtime"
@@ -218,11 +217,9 @@ export function registerDesktopIpc() {
     return result(ProjectRegistry.use((registry) => registry.close(command.location)))
   })
   ipcMain.handle(DesktopChannels.selectSession, (_event, input: unknown) => {
-    const command = Schema.decodeUnknownSync(ProjectSessionCommand)(input)
+    const command = Schema.decodeUnknownSync(SessionCommand)(input)
     return MainRuntime.runPromise(
-      ProjectRegistry.use((registry) =>
-        registry.selectSession(command.location, command.sessionID),
-      ),
+      ProjectRegistry.use((registry) => registry.selectSession(command.sessionID)),
     )
       .then((timing) => ({ _tag: "Success" as const, timing }))
       .catch((cause) => ({ _tag: "Failure" as const, message: failureMessage(cause) }))

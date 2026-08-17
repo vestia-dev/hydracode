@@ -17,7 +17,6 @@ import {
   type SessionInboxCommand,
   type ReplyQuestionCommand,
   type QuestionCommand,
-  type ProjectSessionCommand,
   type SessionCommand,
   UpdateState,
   OpenCodeDiagnosticsResult,
@@ -70,9 +69,7 @@ interface DesktopBridgeShape {
   ) => Effect.Effect<ReadonlyArray<Session.Info>, DesktopBridgeError>
   readonly listActiveSessions: Effect.Effect<ReadonlyArray<Session.ID>, DesktopBridgeError>
   readonly closeProject: (command: CloseProjectCommand) => Effect.Effect<void, DesktopBridgeError>
-  readonly selectSession: (
-    command: ProjectSessionCommand,
-  ) => Effect.Effect<void, DesktopBridgeError>
+  readonly selectSession: (command: SessionCommand) => Effect.Effect<void, DesktopBridgeError>
   readonly createSession: (
     command: CreateSessionCommand,
   ) => Effect.Effect<Exclude<CreateSessionResult, { readonly _tag: "Failure" }>, DesktopBridgeError>

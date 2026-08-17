@@ -1,6 +1,6 @@
 import { startTransition, useCallback, useEffect, useRef, useState } from "react"
-import { Effect, Fiber, Option } from "effect"
-import { AbsolutePath, Location, Project, type Question } from "@opencode-ai/client/effect"
+import { Effect, Fiber, Option, Schema } from "effect"
+import { AbsolutePath, Location, Project, Session, type Question } from "@opencode-ai/client/effect"
 import { AppRuntime } from "../runtime"
 import { DesktopBridge, DesktopBridgeError } from "../services/DesktopBridge"
 import type { ProjectView, SessionView } from "../services/OpenCodeGateway"
@@ -383,14 +383,13 @@ export function useProjectController() {
   const selectSession = useCallback(
     (locationKeyValue: string, sessionID: string) =>
       Effect.gen(function* () {
-        const location = locationsRef.current.get(locationKeyValue)?.location
-        if (location === undefined)
+        if (!locationsRef.current.has(locationKeyValue))
           return yield* new DesktopBridgeError({
             message: "HydraCode could not find this project location.",
             cause: locationKeyValue,
           })
         return yield* DesktopBridge.use((desktop) =>
-          desktop.selectSession({ location, sessionID }),
+          desktop.selectSession({ sessionID: Schema.decodeUnknownSync(Session.ID)(sessionID) }),
         ).pipe(
           Effect.tap(() =>
             Effect.sync(() =>

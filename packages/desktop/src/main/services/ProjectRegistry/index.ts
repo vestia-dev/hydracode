@@ -69,10 +69,7 @@ interface ProjectRegistryShape {
     notify: (location: Location.Ref, update: ProjectUpdate) => void,
   ) => Effect.Effect<Project.ID, unknown>
   readonly close: (location: Location.Ref) => Effect.Effect<void, unknown>
-  readonly selectSession: (
-    location: Location.Ref,
-    sessionID: string,
-  ) => Effect.Effect<SessionSelectionTiming, unknown>
+  readonly selectSession: (sessionID: Session.ID) => Effect.Effect<SessionSelectionTiming, unknown>
   readonly createSession: (location: Location.Ref) => Effect.Effect<CreateSessionResult, unknown>
   readonly replyQuestion: (
     sessionID: string,
@@ -597,38 +594,32 @@ export const ProjectRegistryLive = Layer.effect(
         const [key] = found
         entries.delete(key)
       })
-    const selectSession = (
-      location: Location.Ref,
-      sessionID: string,
-    ): Effect.Effect<SessionSelectionTiming, unknown> =>
+    const selectSession = (sessionID: Session.ID): Effect.Effect<SessionSelectionTiming, unknown> =>
       Effect.gen(function* () {
         const started = performance.now()
-        let sessionGetDuration = 0
         const loadTimings: Array<SessionLoadTiming> = []
-        const entry = Array.from(entries.values()).find((candidate) =>
-          locationsEqual(candidate.location, location),
+        const client = yield* openCode.client
+        const sessionGetStarted = performance.now()
+        const target = yield* client.session.get({ sessionID })
+        const sessionGetDuration = performance.now() - sessionGetStarted
+        const entry = Array.from(entries.values()).find(
+          (candidate) =>
+            candidate.project.id === target.projectID &&
+            locationsEqual(candidate.location, target.location),
         )
         if (entry === undefined)
           return yield* Effect.fail(
-            new ProjectRegistryError({ message: "Project location is closed" }),
+            new ProjectRegistryError({ message: "Session location is closed" }),
           )
         const [page, active] = yield* Effect.all(
-          [listSessions(entry, location), entry.client.session.active()],
+          [listSessions(entry, target.location), entry.client.session.active()],
           { concurrency: "unbounded" },
         )
         entry.active.clear()
         for (const id of Object.keys(active))
           entry.active.add(Schema.decodeUnknownSync(Session.ID)(id))
         for (const info of page.data) setSessionInfo(entry, info)
-        let target = entry.sessions.get(sessionID)?.info
-        if (target === undefined) {
-          const sessionGetStarted = performance.now()
-          target = yield* entry.client.session.get({
-            sessionID: Schema.decodeUnknownSync(Session.ID)(sessionID),
-          })
-          sessionGetDuration = performance.now() - sessionGetStarted
-          setSessionInfo(entry, target)
-        }
+        setSessionInfo(entry, target)
         const infoByID = sessionInfo(entry)
         const rootID = sessionRootID(target, infoByID)
         entry.selectedRootIDs.add(rootID)

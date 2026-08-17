@@ -31,7 +31,6 @@ import {
   QuestionCommand,
   ProjectCommandResult,
   SelectSessionResult,
-  ProjectSessionCommand,
   SessionCommand,
   ProjectUpdate,
   ProjectUpdateEnvelope,
@@ -86,7 +85,6 @@ export {
   QuestionCommand,
   ProjectCommandResult,
   SelectSessionResult,
-  ProjectSessionCommand,
   SessionCommand,
   ProjectUpdate,
   ProjectUpdateEnvelope,
@@ -102,7 +100,6 @@ export type {
   SessionInboxCommand as SessionInboxCommandType,
   ReplyQuestionCommand as ReplyQuestionCommandType,
   QuestionCommand as QuestionCommandType,
-  ProjectSessionCommand as ProjectSessionCommandType,
   SessionCommand as SessionCommandType,
   SetBundledThemeCommand as SetBundledThemeCommandType,
 }
@@ -122,7 +119,7 @@ export interface HydraCodeDesktopApi {
   ) => Promise<ListProjectSessionsResult>
   readonly listActiveSessions: () => Promise<ActiveSessionsResult>
   readonly closeProject: (command: CloseProjectCommand) => Promise<ProjectCommandResult>
-  readonly selectSession: (command: ProjectSessionCommand) => Promise<SelectSessionResult>
+  readonly selectSession: (command: SessionCommand) => Promise<SelectSessionResult>
   readonly createSession: (command: CreateSessionCommand) => Promise<CreateSessionResult>
   readonly submitPrompt: (command: SubmitPromptCommand) => Promise<ProjectCommandResult>
   readonly updateSessionInbox: (command: SessionInboxCommand) => Promise<ProjectCommandResult>
