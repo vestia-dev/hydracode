@@ -1,5 +1,5 @@
 import { startTransition, useCallback, useEffect, useRef, useState } from "react"
-import { Effect, Fiber, Option, Schema } from "effect"
+import { DateTime, Effect, Fiber, Option, Schema } from "effect"
 import { AbsolutePath, Location, Project, Session, type Question } from "@opencode-ai/client/effect"
 import { AppRuntime } from "../runtime"
 import { DesktopBridge, DesktopBridgeError } from "../services/DesktopBridge"
@@ -17,7 +17,6 @@ import type {
 } from "../../../shared/project"
 import {
   applyProjectUpdate as reduceProjectUpdate,
-  createSessionView,
   openProjectState,
   type OpenLocationState,
 } from "../domain/projectLocationState"
@@ -462,7 +461,18 @@ export function useProjectController() {
             }),
           ),
         )
-        const session = createSessionView(result.session, undefined, [prompt])
+        const session = withPrompts(
+          {
+            ...provisionalBase,
+            id: result.session.id,
+            ...(result.session.parentID === undefined ? {} : { parentID: result.session.parentID }),
+            location: result.session.location,
+            created: DateTime.toEpochMillis(result.session.time.created),
+            title: result.session.title ?? "Untitled session",
+            provisional: false,
+          },
+          [prompt],
+        )
         yield* Effect.sync(() => {
           selectCreated?.(session.id)
           updateProject(locationKeyValue, (current) =>
@@ -486,6 +496,9 @@ export function useProjectController() {
             })),
           )
         })
+        yield* DesktopBridge.use((desktop) =>
+          desktop.selectSession({ sessionID: result.session.id }),
+        )
         return yield* DesktopBridge.use((desktop) =>
           desktop.submitPrompt({
             sessionID: session.id,

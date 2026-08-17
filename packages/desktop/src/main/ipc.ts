@@ -227,9 +227,13 @@ export function registerDesktopIpc() {
   ipcMain.handle(DesktopChannels.createSession, (_event, input: unknown) => {
     const command = Schema.decodeUnknownSync(CreateSessionCommand)(input)
     return MainRuntime.runPromise(
-      ProjectRegistry.use((registry) => registry.createSession(command.location)),
+      OpenCodeService.use((service) =>
+        service.client.pipe(
+          Effect.flatMap((client) => client.session.create({ location: command.location })),
+        ),
+      ),
     )
-      .then((value) => Schema.encodeSync(CreateSessionResult)(value))
+      .then((session) => Schema.encodeSync(CreateSessionResult)({ _tag: "Success", session }))
       .catch((cause) => ({ _tag: "Failure" as const, message: failureMessage(cause) }))
   })
   ipcMain.handle(DesktopChannels.submitPrompt, (_event, input: unknown) => {

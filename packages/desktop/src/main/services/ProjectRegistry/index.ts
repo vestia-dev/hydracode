@@ -27,7 +27,6 @@ import type {
   SessionLoadTiming,
   SessionSelectionTiming,
 } from "../../../shared/project"
-import type { CreateSessionResult } from "../../../shared/project"
 import {
   availableProjects,
   projectName,
@@ -70,7 +69,6 @@ interface ProjectRegistryShape {
   ) => Effect.Effect<Project.ID, unknown>
   readonly close: (location: Location.Ref) => Effect.Effect<void, unknown>
   readonly selectSession: (sessionID: Session.ID) => Effect.Effect<SessionSelectionTiming, unknown>
-  readonly createSession: (location: Location.Ref) => Effect.Effect<CreateSessionResult, unknown>
   readonly replyQuestion: (
     sessionID: string,
     requestID: string,
@@ -642,29 +640,6 @@ export const ProjectRegistryLive = Layer.effect(
           sessions: loadTimings,
         }
       })
-    const createSession = (location: Location.Ref): Effect.Effect<CreateSessionResult, unknown> =>
-      Effect.gen(function* () {
-        const entry = Array.from(entries.values()).find((candidate) =>
-          locationsEqual(candidate.location, location),
-        )
-        if (entry === undefined)
-          return yield* Effect.fail(
-            new ProjectRegistryError({ message: "Project location is closed" }),
-          )
-        const info = yield* entry.client.session.create({
-          location,
-        })
-        setSessionInfo(entry, info)
-        entry.selectedRootIDs.add(info.id)
-        yield* loadSessionState(entry, info)
-        const record = entry.sessions.get(info.id)
-        if (record?._tag !== "Loaded")
-          return yield* Effect.fail(
-            new ProjectRegistryError({ message: "The new session could not be projected." }),
-          )
-        const session = sessionView(entry, record)
-        return { _tag: "Success", session } as const
-      })
     const replyQuestion = (
       sessionID: string,
       requestID: string,
@@ -741,7 +716,6 @@ export const ProjectRegistryLive = Layer.effect(
       open,
       close,
       selectSession,
-      createSession,
       replyQuestion,
       rejectQuestion,
     })

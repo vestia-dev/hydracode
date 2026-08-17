@@ -167,7 +167,7 @@ export const CreateSessionCommand = Schema.Struct({
 export type CreateSessionCommand = typeof CreateSessionCommand.Type
 
 export const CreateSessionResult = Schema.Union([
-  Schema.Struct({ _tag: Schema.Literal("Success"), session: ProjectSession }),
+  Schema.Struct({ _tag: Schema.Literal("Success"), session: Session.Info }),
   Schema.Struct({ _tag: Schema.Literal("Failure"), message: Schema.String }),
 ])
 export type CreateSessionResult = typeof CreateSessionResult.Type
