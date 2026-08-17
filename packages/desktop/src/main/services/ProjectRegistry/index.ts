@@ -46,10 +46,11 @@ interface Entry {
 }
 
 interface ProjectRegistryShape {
-  readonly open: (
-    location: Location.Ref | undefined,
+  readonly watch: (
+    projectID: Project.ID,
+    location: Location.Ref,
     notify: (location: Location.Ref, update: ProjectUpdate) => void,
-  ) => Effect.Effect<Project.ID, unknown>
+  ) => Effect.Effect<void, unknown>
   readonly selectSession: (sessionID: Session.ID) => Effect.Effect<SessionSelectionTiming, unknown>
 }
 
@@ -474,42 +475,25 @@ export const ProjectRegistryLive = Layer.effect(
       )
     }
 
-    const open = (
-      location: Location.Ref | undefined,
+    const watch = (
+      projectID: Project.ID,
+      location: Location.Ref,
       notify: (location: Location.Ref, update: ProjectUpdate) => void,
-    ): Effect.Effect<Project.ID, unknown> =>
+    ): Effect.Effect<void, unknown> =>
       Effect.gen(function* () {
-        const client = yield* openCode.client
         yield* openCodeEvents.subscribe(processEvents)
-        const current = yield* client.project.current(
-          location === undefined
-            ? undefined
-            : {
-                location: {
-                  directory: location.directory,
-                  ...(location.workspaceID === undefined
-                    ? {}
-                    : { workspace: location.workspaceID }),
-                },
-              },
-        )
-        const resolvedLocation = Location.Ref.make({
-          directory: location?.directory ?? current.directory,
-          ...(location?.workspaceID === undefined ? {} : { workspaceID: location.workspaceID }),
-        })
-        const key = `${current.id}:${locationKey(resolvedLocation)}`
+        const key = `${projectID}:${locationKey(location)}`
         let entry = entries.get(key)
         if (entry === undefined) {
           entry = {
-            projectID: current.id,
-            location: resolvedLocation,
-            notify: (update) => notify(resolvedLocation, update),
+            projectID,
+            location,
+            notify: (update) => notify(location, update),
           }
         } else {
-          entry.notify = (update) => notify(resolvedLocation, update)
+          entry.notify = (update) => notify(location, update)
         }
         entries.set(key, entry)
-        return current.id
       })
     const selectSession = (sessionID: Session.ID): Effect.Effect<SessionSelectionTiming, unknown> =>
       Effect.gen(function* () {
@@ -560,7 +544,7 @@ export const ProjectRegistryLive = Layer.effect(
         }
       })
     return ProjectRegistry.of({
-      open,
+      watch,
       selectSession,
     })
   }),

@@ -204,12 +204,37 @@ export function registerDesktopIpc() {
   ipcMain.handle(DesktopChannels.openProject, (event, input: unknown) => {
     const command = Schema.decodeUnknownSync(OpenProjectCommand)(input)
     return MainRuntime.runPromise(
-      ProjectRegistry.use((registry) =>
-        registry.open(command.location, (location, update) => {
-          const envelope = Schema.encodeSync(ProjectUpdateEnvelope)({ location, update })
+      Effect.gen(function* () {
+        const service = yield* OpenCodeService
+        const registry = yield* ProjectRegistry
+        const client = yield* service.client
+        const current = yield* client.project.current(
+          command.location === undefined
+            ? undefined
+            : {
+                location: {
+                  directory: command.location.directory,
+                  ...(command.location.workspaceID === undefined
+                    ? {}
+                    : { workspace: command.location.workspaceID }),
+                },
+              },
+        )
+        const location = Location.Ref.make({
+          directory: command.location?.directory ?? current.directory,
+          ...(command.location?.workspaceID === undefined
+            ? {}
+            : { workspaceID: command.location.workspaceID }),
+        })
+        yield* registry.watch(current.id, location, (updateLocation, update) => {
+          const envelope = Schema.encodeSync(ProjectUpdateEnvelope)({
+            location: updateLocation,
+            update,
+          })
           event.sender.send(DesktopChannels.projectUpdate, envelope)
-        }),
-      ),
+        })
+        return current.id
+      }),
     )
       .then((projectID) => Schema.encodeSync(OpenProjectResult)({ _tag: "Success", projectID }))
       .catch((cause) => ({ _tag: "Failure" as const, message: failureMessage(cause) }))
