@@ -28,7 +28,7 @@ import { DesktopService } from "./services/DesktopService"
 import { ThemeService } from "./services/ThemeService"
 import { UpdateService } from "./services/UpdateService"
 import { ProjectRegistry } from "./services/ProjectRegistry"
-import { OpenCodeService } from "./services/OpenCodeService"
+import { OpenCodeService, OpenCodeServiceError } from "./services/OpenCodeService"
 import {
   ApplicationStateResult,
   ProjectSelectionState,
@@ -199,13 +199,24 @@ export function registerDesktopIpc() {
   ipcMain.handle(DesktopChannels.submitPrompt, (_event, input: unknown) => {
     const command = Schema.decodeUnknownSync(SubmitPromptCommand)(input)
     return result(
-      ProjectRegistry.use((registry) =>
-        registry.submitPrompt(
-          command.subscriptionID,
-          command.sessionID,
-          command.text,
-          command.delivery,
-        ),
+      OpenCodeService.use((service) =>
+        command.text.trim() === ""
+          ? Effect.fail(
+              new OpenCodeServiceError({
+                message: "Enter a prompt before sending.",
+                cause: command.text,
+              }),
+            )
+          : service.client.pipe(
+              Effect.flatMap((client) =>
+                client.session.prompt({
+                  sessionID: command.sessionID,
+                  text: command.text.trim(),
+                  delivery: command.delivery,
+                }),
+              ),
+              Effect.asVoid,
+            ),
       ),
     )
   })

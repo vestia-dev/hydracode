@@ -7,7 +7,6 @@ import {
   type OpenCodeClient,
   type OpenCodeEvent,
 } from "@opencode-ai/client/effect"
-import type { SessionInbox } from "@opencode-ai/schema/session-inbox"
 import { Context, DateTime, Effect, Fiber, Layer, Queue, Scope, Stream } from "effect"
 import { Schema } from "effect"
 import { performance } from "node:perf_hooks"
@@ -86,12 +85,6 @@ interface ProjectRegistryShape {
     sessionID: string,
   ) => Effect.Effect<SessionSelectionTiming, unknown>
   readonly createSession: (subscriptionID: string) => Effect.Effect<CreateSessionResult, unknown>
-  readonly submitPrompt: (
-    subscriptionID: string,
-    sessionID: string,
-    text: string,
-    delivery?: SessionInbox.Delivery,
-  ) => Effect.Effect<void, unknown>
   readonly updateInbox: (
     subscriptionID: string,
     sessionID: string,
@@ -726,28 +719,6 @@ export const ProjectRegistryLive = Layer.effect(
         const session = sessionView(entry, record)
         return { _tag: "Success", session } as const
       })
-    const submitPrompt = (
-      subscriptionID: string,
-      sessionID: string,
-      text: string,
-      delivery?: SessionInbox.Delivery,
-    ): Effect.Effect<void, unknown> =>
-      Effect.gen(function* () {
-        const subscription = subscriptions.get(subscriptionID)
-        if (subscription === undefined)
-          return yield* Effect.fail(
-            new ProjectRegistryError({ message: "Project subscription is closed" }),
-          )
-        if (text.trim() === "")
-          return yield* Effect.fail(
-            new ProjectRegistryError({ message: "Enter a prompt before sending." }),
-          )
-        return yield* openCode.submitPrompt(
-          Schema.decodeUnknownSync(Session.ID)(sessionID),
-          text.trim(),
-          delivery,
-        )
-      })
     const updateInbox = (
       subscriptionID: string,
       sessionID: string,
@@ -850,7 +821,6 @@ export const ProjectRegistryLive = Layer.effect(
       close,
       selectSession,
       createSession,
-      submitPrompt,
       updateInbox,
       replyQuestion,
       rejectQuestion,

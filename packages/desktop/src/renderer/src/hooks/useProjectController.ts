@@ -331,58 +331,55 @@ export function useProjectController() {
       text: string,
       delivery?: "queue" | "steer",
     ) =>
-      withProjectSubscription(locationKeyValue, sessionID, (subscriptionID) =>
-        Effect.gen(function* () {
-          const session = locationsRef.current
-            .get(locationKeyValue)
-            ?.snapshot?.sessions.find((item) => item.id === sessionID)
-          if (session === undefined)
-            return yield* new DesktopBridgeError({
-              message: "HydraCode could not find this session.",
-              cause: sessionID,
-            })
-          const prompt = pendingPrompt(session, text.trim())
-          yield* Effect.sync(() =>
-            updateProject(locationKeyValue, (current) =>
-              mapLocationSnapshot(current, (snapshot) => ({
-                ...snapshot,
-                sessions: snapshot.sessions.map((item) =>
-                  item.id === sessionID
-                    ? withPrompts(item, [...item.optimisticPrompts, prompt])
-                    : item,
-                ),
-              })),
-            ),
-          )
-          return yield* DesktopBridge.use((desktop) =>
-            desktop.submitPrompt({
-              subscriptionID,
-              sessionID,
-              text: prompt.text,
-              delivery,
-            }),
-          ).pipe(
-            Effect.tapError(() =>
-              Effect.sync(() =>
-                updateProject(locationKeyValue, (current) =>
-                  mapLocationSnapshot(current, (snapshot) => ({
-                    ...snapshot,
-                    sessions: snapshot.sessions.map((item) =>
-                      item.id === sessionID
-                        ? withPrompts(
-                            item,
-                            item.optimisticPrompts.filter((pending) => pending.id !== prompt.id),
-                          )
-                        : item,
-                    ),
-                  })),
-                ),
+      Effect.gen(function* () {
+        const session = locationsRef.current
+          .get(locationKeyValue)
+          ?.snapshot?.sessions.find((item) => item.id === sessionID)
+        if (session === undefined)
+          return yield* new DesktopBridgeError({
+            message: "HydraCode could not find this session.",
+            cause: sessionID,
+          })
+        const prompt = pendingPrompt(session, text.trim())
+        yield* Effect.sync(() =>
+          updateProject(locationKeyValue, (current) =>
+            mapLocationSnapshot(current, (snapshot) => ({
+              ...snapshot,
+              sessions: snapshot.sessions.map((item) =>
+                item.id === sessionID
+                  ? withPrompts(item, [...item.optimisticPrompts, prompt])
+                  : item,
+              ),
+            })),
+          ),
+        )
+        return yield* DesktopBridge.use((desktop) =>
+          desktop.submitPrompt({
+            sessionID,
+            text: prompt.text,
+            delivery,
+          }),
+        ).pipe(
+          Effect.tapError(() =>
+            Effect.sync(() =>
+              updateProject(locationKeyValue, (current) =>
+                mapLocationSnapshot(current, (snapshot) => ({
+                  ...snapshot,
+                  sessions: snapshot.sessions.map((item) =>
+                    item.id === sessionID
+                      ? withPrompts(
+                          item,
+                          item.optimisticPrompts.filter((pending) => pending.id !== prompt.id),
+                        )
+                      : item,
+                  ),
+                })),
               ),
             ),
-          )
-        }),
-      ),
-    [updateProject, withProjectSubscription],
+          ),
+        )
+      }),
+    [updateProject],
   )
 
   const updateSessionInbox = useCallback(
@@ -502,7 +499,6 @@ export function useProjectController() {
           })
           return yield* DesktopBridge.use((desktop) =>
             desktop.submitPrompt({
-              subscriptionID,
               sessionID: session.id,
               text: promptText,
             }),

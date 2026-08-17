@@ -132,8 +132,7 @@ export const SessionCommand = Schema.Struct({ sessionID: Session.ID })
 export type SessionCommand = typeof SessionCommand.Type
 
 export const SubmitPromptCommand = Schema.Struct({
-  subscriptionID: Schema.String,
-  sessionID: Schema.String,
+  sessionID: Session.ID,
   text: Schema.String,
   delivery: Schema.optional(SessionInbox.Delivery),
 })
