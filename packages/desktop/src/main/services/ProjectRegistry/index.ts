@@ -18,19 +18,12 @@ import {
 } from "../../../shared/domain/sessionLog"
 import type {
   ProjectDetails,
-  ProjectCatalogEntry,
   ProjectSession,
   ProjectUpdate,
   SessionLoadTiming,
   SessionSelectionTiming,
 } from "../../../shared/project"
-import {
-  availableProjects,
-  projectName,
-  locationsEqual,
-  locationKey,
-  sessionRootID,
-} from "../../../shared/domain/projectCatalog"
+import { locationsEqual, locationKey, sessionRootID } from "../../../shared/domain/projectCatalog"
 import { OpenCodeService } from "../OpenCodeService"
 
 export class ProjectRegistryError extends Schema.TaggedErrorClass<ProjectRegistryError>()(
@@ -55,8 +48,6 @@ interface Entry {
 }
 
 interface ProjectRegistryShape {
-  readonly list: Effect.Effect<ReadonlyArray<ProjectCatalogEntry>, unknown>
-  readonly resolve: (location: Location.Ref) => Effect.Effect<ProjectCatalogEntry, unknown>
   readonly open: (
     location: Location.Ref | undefined,
     notify: (location: Location.Ref, update: ProjectUpdate) => void,
@@ -169,57 +160,6 @@ export const ProjectRegistryLive = Layer.effect(
         projectID: entry.project.id,
         sessions: sessionMetadata(entry, sessions),
         activeSessionIDs: Array.from(activeSessionIDs),
-      })
-
-    const list: Effect.Effect<ReadonlyArray<ProjectCatalogEntry>, unknown> = Effect.gen(
-      function* () {
-        const client = yield* openCode.client
-        const projects = yield* client.project.list()
-        const locations = new Map<
-          Project.ID,
-          ReadonlyArray<import("../../../shared/project").ProjectLocation>
-        >()
-        yield* Effect.forEach(
-          projects,
-          (project) =>
-            client.worktree.list({ projectID: project.id }).pipe(
-              Effect.map((worktrees) =>
-                locations.set(
-                  project.id,
-                  worktrees.map((worktree) => ({
-                    ref: Location.Ref.make({ directory: worktree.directory }),
-                    kind: "worktree" as const,
-                  })),
-                ),
-              ),
-            ),
-          { concurrency: "unbounded" },
-        )
-        return availableProjects(projects, locations)
-      },
-    )
-
-    const resolve = (location: Location.Ref) =>
-      Effect.gen(function* () {
-        const client = yield* openCode.client
-        const current = yield* client.project.current({
-          location: {
-            directory: location.directory,
-            ...(location.workspaceID === undefined ? {} : { workspace: location.workspaceID }),
-          },
-        })
-        const projects = yield* client.project.list()
-        const info = projects.find((project) => project.id === current.id)
-        return {
-          project: {
-            id: current.id,
-            canonical: info?.canonical ?? current.canonical,
-            ...projectName(info?.name),
-            ...(info?.icon === undefined ? {} : { icon: info.icon }),
-          },
-          locations: [{ ref: location, kind: "selected" as const }],
-          updated: info?.time.updated ?? Date.now(),
-        }
       })
 
     const removeSession = (entry: Entry, sessionID: string, removeActive = false) =>
@@ -676,8 +616,6 @@ export const ProjectRegistryLive = Layer.effect(
         }
       })
     return ProjectRegistry.of({
-      list,
-      resolve,
       open,
       close,
       selectSession,

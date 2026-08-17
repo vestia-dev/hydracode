@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect"
 import { ipcMain } from "electron"
-import { Location, Session } from "@opencode-ai/client/effect"
+import { Location, Project, Session } from "@opencode-ai/client/effect"
 import { DesktopChannels } from "../shared/desktopChannels"
 import { SetBundledThemeCommand } from "../shared/theme"
 import {
@@ -25,6 +25,7 @@ import {
   SubmitPromptCommand,
   SessionInboxCommand,
   SessionCommand,
+  type ProjectLocation,
 } from "../shared/project"
 import { MainRuntime } from "./runtime"
 import { DesktopService } from "./services/DesktopService"
@@ -40,6 +41,7 @@ import {
 } from "../shared/applicationState"
 import { ApplicationStateService } from "./services/ApplicationStateService"
 import { questionFormAnswer, questionFormID } from "../shared/domain/sessionLog"
+import { availableProjects, projectName } from "../shared/domain/projectCatalog"
 
 const updateSubscriptions = new Map<number, () => void>()
 
@@ -93,11 +95,24 @@ export function registerDesktopIpc() {
     MainRuntime.runPromise(
       Effect.gen(function* () {
         const desktop = yield* DesktopService
-        const registry = yield* ProjectRegistry
         const directory = yield* desktop.selectProject
         if (directory === null) return { _tag: "Success" as const, project: null }
         const location = Schema.decodeUnknownSync(Location.Ref)({ directory })
-        const project = yield* registry.resolve(location)
+        const service = yield* OpenCodeService
+        const client = yield* service.client
+        const current = yield* client.project.current({ location: { directory } })
+        const projects = yield* client.project.list()
+        const info = projects.find((project) => project.id === current.id)
+        const project = {
+          project: {
+            id: current.id,
+            canonical: info?.canonical ?? current.canonical,
+            ...projectName(info?.name),
+            ...(info?.icon === undefined ? {} : { icon: info.icon }),
+          },
+          locations: [{ ref: location, kind: "selected" as const }],
+          updated: info?.time.updated ?? Date.now(),
+        }
         return { _tag: "Success" as const, project }
       }).pipe(
         Effect.catch((error) =>
@@ -107,7 +122,32 @@ export function registerDesktopIpc() {
     ).catch((cause) => ({ _tag: "Failure", message: failureMessage(cause) })),
   )
   ipcMain.handle(DesktopChannels.listProjects, () =>
-    MainRuntime.runPromise(ProjectRegistry.use((registry) => registry.list))
+    MainRuntime.runPromise(
+      OpenCodeService.use((service) =>
+        Effect.gen(function* () {
+          const client = yield* service.client
+          const projects = yield* client.project.list()
+          const locations = new Map<Project.ID, ReadonlyArray<ProjectLocation>>()
+          yield* Effect.forEach(
+            projects,
+            (project) =>
+              client.worktree.list({ projectID: project.id }).pipe(
+                Effect.map((worktrees) =>
+                  locations.set(
+                    project.id,
+                    worktrees.map((worktree) => ({
+                      ref: Location.Ref.make({ directory: worktree.directory }),
+                      kind: "worktree" as const,
+                    })),
+                  ),
+                ),
+              ),
+            { concurrency: "unbounded" },
+          )
+          return availableProjects(projects, locations)
+        }),
+      ),
+    )
       .then((projects) =>
         Schema.encodeSync(ListProjectsResult)({ _tag: "Success" as const, projects }),
       )
