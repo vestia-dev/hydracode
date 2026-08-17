@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { AbsolutePath, Location, Project, Question } from "@opencode-ai/client/effect"
+import { AbsolutePath, Location, Project, Question, Session } from "@opencode-ai/client/effect"
 import { SessionMessage } from "@opencode-ai/schema/session-message"
 import { SessionInbox } from "@opencode-ai/schema/session-inbox"
 
@@ -127,6 +127,9 @@ export const ProjectSessionCommand = Schema.Struct({
   sessionID: Schema.String,
 })
 export type ProjectSessionCommand = typeof ProjectSessionCommand.Type
+
+export const SessionCommand = Schema.Struct({ sessionID: Session.ID })
+export type SessionCommand = typeof SessionCommand.Type
 
 export const SubmitPromptCommand = Schema.Struct({
   subscriptionID: Schema.String,

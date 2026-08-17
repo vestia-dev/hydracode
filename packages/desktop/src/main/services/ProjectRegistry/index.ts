@@ -109,11 +109,6 @@ interface ProjectRegistryShape {
     sessionID: string,
     requestID: string,
   ) => Effect.Effect<void, unknown>
-  readonly backgroundSession: (
-    subscriptionID: string,
-    sessionID: string,
-  ) => Effect.Effect<void, unknown>
-  readonly interrupt: (subscriptionID: string, sessionID: string) => Effect.Effect<void, unknown>
 }
 
 export class ProjectRegistry extends Context.Service<ProjectRegistry, ProjectRegistryShape>()(
@@ -771,33 +766,6 @@ export const ProjectRegistryLive = Layer.effect(
         }
         return yield* subscription.entry.client.session.inbox[action](input)
       })
-    const interrupt = (subscriptionID: string, sessionID: string): Effect.Effect<void, unknown> =>
-      Effect.gen(function* () {
-        const subscription = subscriptions.get(subscriptionID)
-        if (subscription === undefined)
-          return yield* Effect.fail(
-            new ProjectRegistryError({ message: "Project subscription is closed" }),
-          )
-        const { entry } = subscription
-        return yield* entry.client.session.interrupt({
-          sessionID: Schema.decodeUnknownSync(Session.ID)(sessionID),
-        })
-      })
-    const backgroundSession = (
-      subscriptionID: string,
-      sessionID: string,
-    ): Effect.Effect<void, unknown> =>
-      Effect.gen(function* () {
-        const subscription = subscriptions.get(subscriptionID)
-        if (subscription === undefined)
-          return yield* Effect.fail(
-            new ProjectRegistryError({ message: "Project subscription is closed" }),
-          )
-        const { entry } = subscription
-        return yield* entry.client.session.background({
-          sessionID: Schema.decodeUnknownSync(Session.ID)(sessionID),
-        })
-      })
     const replyQuestion = (
       subscriptionID: string,
       sessionID: string,
@@ -886,8 +854,6 @@ export const ProjectRegistryLive = Layer.effect(
       updateInbox,
       replyQuestion,
       rejectQuestion,
-      backgroundSession,
-      interrupt,
     })
   }),
 )

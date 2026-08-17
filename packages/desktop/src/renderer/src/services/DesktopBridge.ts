@@ -13,6 +13,7 @@ import {
   type ReplyQuestionCommand,
   type QuestionCommand,
   type ProjectSessionCommand,
+  type SessionCommand,
   UpdateState,
   OpenCodeDiagnosticsResult,
 } from "../../../shared/ipc"
@@ -69,10 +70,8 @@ interface DesktopBridgeShape {
   ) => Effect.Effect<void, DesktopBridgeError>
   readonly replyQuestion: (command: ReplyQuestionCommand) => Effect.Effect<void, DesktopBridgeError>
   readonly rejectQuestion: (command: QuestionCommand) => Effect.Effect<void, DesktopBridgeError>
-  readonly backgroundSession: (
-    command: ProjectSessionCommand,
-  ) => Effect.Effect<void, DesktopBridgeError>
-  readonly interrupt: (command: ProjectSessionCommand) => Effect.Effect<void, DesktopBridgeError>
+  readonly backgroundSession: (command: SessionCommand) => Effect.Effect<void, DesktopBridgeError>
+  readonly interrupt: (command: SessionCommand) => Effect.Effect<void, DesktopBridgeError>
   readonly checkForUpdates: Effect.Effect<UpdateState, DesktopBridgeError>
   readonly installUpdate: Effect.Effect<void, DesktopBridgeError>
   readonly restartForUpdate: Effect.Effect<void, DesktopBridgeError>

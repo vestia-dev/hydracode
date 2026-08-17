@@ -577,19 +577,15 @@ export function useProjectController() {
   )
 
   const interruptSession = useCallback(
-    (locationKeyValue: string, sessionID: SessionView["id"]) =>
-      withProjectSubscription(locationKeyValue, sessionID, (subscriptionID) =>
-        DesktopBridge.use((desktop) => desktop.interrupt({ subscriptionID, sessionID })),
-      ),
-    [withProjectSubscription],
+    (_locationKeyValue: string, sessionID: SessionView["id"]) =>
+      DesktopBridge.use((desktop) => desktop.interrupt({ sessionID })),
+    [],
   )
 
   const backgroundSession = useCallback(
-    (locationKeyValue: string, sessionID: SessionView["id"]) =>
-      withProjectSubscription(locationKeyValue, sessionID, (subscriptionID) =>
-        DesktopBridge.use((desktop) => desktop.backgroundSession({ subscriptionID, sessionID })),
-      ),
-    [withProjectSubscription],
+    (_locationKeyValue: string, sessionID: SessionView["id"]) =>
+      DesktopBridge.use((desktop) => desktop.backgroundSession({ sessionID })),
+    [],
   )
 
   const replyQuestion = useCallback(

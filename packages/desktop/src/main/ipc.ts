@@ -21,6 +21,7 @@ import {
   SubmitPromptCommand,
   SessionInboxCommand,
   ProjectSessionCommand,
+  SessionCommand,
 } from "../shared/project"
 import { MainRuntime } from "./runtime"
 import { DesktopService } from "./services/DesktopService"
@@ -43,11 +44,9 @@ function failureMessage(cause: unknown) {
     ? cause.message
     : "The HydraCode desktop runtime failed unexpectedly."
 }
-const result = (
-  effect: Effect.Effect<void, unknown, ProjectRegistry>,
-): Promise<ProjectCommandResultType> =>
+const result = <R>(effect: Effect.Effect<void, unknown, R>): Promise<ProjectCommandResultType> =>
   MainRuntime.runPromise(
-    // ManagedRuntime supplies ProjectRegistry; its public type does not erase the service identifier here.
+    // ManagedRuntime supplies application services; its public type does not erase service identifiers here.
     // oxlint-disable-next-line no-unsafe-type-assertion
     (effect as Effect.Effect<void, unknown>).pipe(
       Effect.map(() => ({ _tag: "Success" as const })),
@@ -245,18 +244,22 @@ export function registerDesktopIpc() {
     )
   })
   ipcMain.handle(DesktopChannels.backgroundSession, (_event, input: unknown) => {
-    const command = Schema.decodeUnknownSync(ProjectSessionCommand)(input)
+    const command = Schema.decodeUnknownSync(SessionCommand)(input)
     return result(
-      ProjectRegistry.use((registry) =>
-        registry.backgroundSession(command.subscriptionID, command.sessionID),
+      OpenCodeService.use((service) =>
+        service.client.pipe(
+          Effect.flatMap((client) => client.session.background({ sessionID: command.sessionID })),
+        ),
       ),
     )
   })
   ipcMain.handle(DesktopChannels.interrupt, (_event, input: unknown) => {
-    const command = Schema.decodeUnknownSync(ProjectSessionCommand)(input)
+    const command = Schema.decodeUnknownSync(SessionCommand)(input)
     return result(
-      ProjectRegistry.use((registry) =>
-        registry.interrupt(command.subscriptionID, command.sessionID),
+      OpenCodeService.use((service) =>
+        service.client.pipe(
+          Effect.flatMap((client) => client.session.interrupt({ sessionID: command.sessionID })),
+        ),
       ),
     )
   })
