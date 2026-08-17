@@ -7,6 +7,8 @@ export const DesktopChannels = {
   saveProjectSelection: "hydracode:save-project-selection",
   saveProjectUIState: "hydracode:save-project-ui-state",
   openProject: "hydracode:open-project",
+  listProjectSessions: "hydracode:list-project-sessions",
+  listActiveSessions: "hydracode:list-active-sessions",
   closeProject: "hydracode:close-project",
   projectUpdate: "hydracode:project-update",
   selectSession: "hydracode:select-session",

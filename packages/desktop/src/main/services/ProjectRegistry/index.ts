@@ -23,7 +23,6 @@ import type {
   ProjectDetails,
   ProjectCatalogEntry,
   ProjectSession,
-  OpenedProject,
   ProjectUpdate,
   SessionLoadTiming,
   SessionSelectionTiming,
@@ -61,6 +60,7 @@ interface Entry {
   notify: (update: ProjectUpdate) => void
   readonly events: Queue.Queue<OpenCodeEvent>
   readonly selectedRootIDs: Set<string>
+  connected: boolean
   ready: boolean
   readonly fibers: Array<Fiber.Fiber<never, unknown>>
 }
@@ -71,7 +71,7 @@ interface ProjectRegistryShape {
   readonly open: (
     location: Location.Ref | undefined,
     notify: (location: Location.Ref, update: ProjectUpdate) => void,
-  ) => Effect.Effect<OpenedProject, unknown>
+  ) => Effect.Effect<Project.ID, unknown>
   readonly close: (location: Location.Ref) => Effect.Effect<void, unknown>
   readonly selectSession: (
     location: Location.Ref,
@@ -109,12 +109,6 @@ const sessionMetadata = (entry: Entry) =>
     .map((record) => record.info)
     .filter((info) => locationsEqual(info.location, entry.location))
 
-const openedProject = (entry: Entry): OpenedProject => ({
-  project: entry.project,
-  location: entry.location,
-  sessions: sessionMetadata(entry),
-  activeSessionIDs: Array.from(entry.active),
-})
 const sessionView = (
   entry: Entry,
   { info, state }: Extract<SessionRecord, { readonly _tag: "Loaded" }>,
@@ -338,7 +332,13 @@ export const ProjectRegistryLive = Layer.effect(
           if (info.projectID !== entry.project.id) return removeSession(entry, info.id)
           setSessionInfo(entry, info)
           if (!isSelected(entry, info)) {
-            if (entry.ready) emitSessions(entry)
+            if (entry.ready)
+              emit(entry, {
+                _tag: "Info",
+                projectID: entry.project.id,
+                session: info,
+                active: entry.active.has(info.id),
+              })
             return Effect.void
           }
           const record = entry.sessions.get(info.id)
@@ -443,6 +443,10 @@ export const ProjectRegistryLive = Layer.effect(
     ): Effect.Effect<void, ProjectRegistryError> =>
       Effect.gen(function* () {
         if (event.type === "server.connected") {
+          if (!entry.connected) {
+            entry.connected = true
+            return
+          }
           yield* reconcileSessions(entry)
           return
         }
@@ -530,7 +534,7 @@ export const ProjectRegistryLive = Layer.effect(
     const open = (
       location: Location.Ref | undefined,
       notify: (location: Location.Ref, update: ProjectUpdate) => void,
-    ): Effect.Effect<OpenedProject, unknown> =>
+    ): Effect.Effect<Project.ID, unknown> =>
       Effect.gen(function* () {
         const client = yield* openCode.client
         const current = yield* client.project.current(
@@ -545,23 +549,15 @@ export const ProjectRegistryLive = Layer.effect(
                 },
               },
         )
-        const [projects, directories] = yield* Effect.all(
-          [client.project.list(), client.worktree.list({ projectID: current.id })],
-          { concurrency: "unbounded" },
-        )
-        const projectInfo = projects.find((project) => project.id === current.id)
         const project: ProjectDetails = {
           id: current.id,
-          canonical: projectInfo?.canonical ?? current.canonical,
-          ...projectName(projectInfo?.name),
-          ...(projectInfo?.icon === undefined ? {} : { icon: projectInfo.icon }),
+          canonical: current.canonical,
         }
         const resolvedLocation = Location.Ref.make({
           directory: location?.directory ?? current.directory,
           ...(location?.workspaceID === undefined ? {} : { workspaceID: location.workspaceID }),
         })
-        const knownDirectories = new Set(directories.map((item) => item.directory))
-        knownDirectories.add(resolvedLocation.directory)
+        const knownDirectories = new Set([resolvedLocation.directory])
         const key = `${current.id}:${locationKey(resolvedLocation)}`
         let entry = entries.get(key)
         if (entry === undefined) {
@@ -574,6 +570,7 @@ export const ProjectRegistryLive = Layer.effect(
             sessions: new Map(),
             active: new Set(),
             selectedRootIDs: new Set(),
+            connected: false,
             notify: (update) => notify(resolvedLocation, update),
             events,
             ready: false,
@@ -588,17 +585,10 @@ export const ProjectRegistryLive = Layer.effect(
         if (!entry.ready) {
           entry.fibers.push(yield* Effect.forkIn(watchProject(entry), scope))
           yield* Effect.yieldNow
-          const [page, active] = yield* Effect.all(
-            [listSessions(entry, entry.location), entry.client.session.active()],
-            { concurrency: "unbounded" },
-          )
-          for (const id of Object.keys(active))
-            entry.active.add(Schema.decodeUnknownSync(Session.ID)(id))
-          for (const info of page.data) setSessionInfo(entry, info)
           entry.ready = true
           entry.fibers.push(yield* Effect.forkIn(processEvents(entry), scope))
         }
-        return openedProject(entry)
+        return current.id
       })
     const close = (location: Location.Ref): Effect.Effect<void, unknown> =>
       Effect.gen(function* () {
@@ -625,6 +615,14 @@ export const ProjectRegistryLive = Layer.effect(
           return yield* Effect.fail(
             new ProjectRegistryError({ message: "Project location is closed" }),
           )
+        const [page, active] = yield* Effect.all(
+          [listSessions(entry, location), entry.client.session.active()],
+          { concurrency: "unbounded" },
+        )
+        entry.active.clear()
+        for (const id of Object.keys(active))
+          entry.active.add(Schema.decodeUnknownSync(Session.ID)(id))
+        for (const info of page.data) setSessionInfo(entry, info)
         let target = entry.sessions.get(sessionID)?.info
         if (target === undefined) {
           const sessionGetStarted = performance.now()
@@ -671,7 +669,6 @@ export const ProjectRegistryLive = Layer.effect(
         setSessionInfo(entry, info)
         entry.selectedRootIDs.add(info.id)
         yield* loadSessionState(entry, info)
-        emitSessions(entry)
         const record = entry.sessions.get(info.id)
         if (record?._tag !== "Loaded")
           return yield* Effect.fail(

@@ -1,6 +1,6 @@
 import { DateTime, Schema } from "effect"
 import { Location, Project, Session } from "@opencode-ai/client/effect"
-import type { OpenedProject, ProjectSession, ProjectUpdate } from "../../../shared/project"
+import type { ProjectDetails, ProjectSession, ProjectUpdate } from "../../../shared/project"
 import type { ProjectView, SessionView } from "../services/OpenCodeGateway"
 import { buildSessionGraph } from "./sessionGraph"
 import type { SemanticGraph } from "./graph"
@@ -105,8 +105,8 @@ export function preserveCompletedGraph(current: SemanticGraph, previous?: Semant
 }
 
 function sessionSummaries(
-  sessions: OpenedProject["sessions"],
-  activeSessionIDs: OpenedProject["activeSessionIDs"],
+  sessions: ReadonlyArray<Session.Info>,
+  activeSessionIDs: ReadonlyArray<Session.ID>,
 ) {
   const active = new Set(activeSessionIDs)
   return createSessionSummaries(
@@ -127,17 +127,20 @@ function sessionSummaries(
 
 export function openProjectState(
   current: OpenLocationState,
-  opened: OpenedProject,
+  project: ProjectDetails,
+  projectID: Project.ID,
+  sessions: ReadonlyArray<Session.Info>,
+  activeSessionIDs: ReadonlyArray<Session.ID>,
 ): OpenLocationState {
-  if (opened.project.id !== current.projectID) return current
   return {
     ...current,
+    projectID,
     status: "ready",
     snapshot: {
-      project: opened.project,
-      location: opened.location,
+      project: { ...project, id: projectID },
+      location: current.location,
       sessions: current.snapshot?.sessions ?? [],
-      recentSessions: sessionSummaries(opened.sessions, opened.activeSessionIDs),
+      recentSessions: sessionSummaries(sessions, activeSessionIDs),
     },
     error: undefined,
   }
@@ -160,6 +163,25 @@ export function applyProjectUpdate(
   }
   if (update._tag === "Error") return { ...current, status: "error", error: update.message }
   if (current.snapshot === undefined || update.projectID !== projectID) return current
+  if (update._tag === "Info") {
+    if (update.session.parentID != null) return current
+    const summary = {
+      id: update.session.id,
+      created: DateTime.toEpochMillis(update.session.time.created),
+      title: update.session.title ?? "Untitled session",
+      active: update.active,
+    }
+    return {
+      ...current,
+      snapshot: {
+        ...current.snapshot,
+        recentSessions: [
+          summary,
+          ...current.snapshot.recentSessions.filter((item) => item.id !== summary.id),
+        ].toSorted((left, right) => right.created - left.created),
+      },
+    }
+  }
   if (update._tag === "Removed") {
     return {
       ...current,

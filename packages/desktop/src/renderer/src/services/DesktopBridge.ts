@@ -7,7 +7,10 @@ import {
   ProjectCommandResult,
   SelectSessionResult,
   OpenProjectResult,
+  ListProjectSessionsResult,
+  ActiveSessionsResult,
   type OpenProjectCommand,
+  type ListProjectSessionsCommand,
   type CloseProjectCommand,
   type CreateSessionCommand,
   type SubmitPromptCommand,
@@ -23,7 +26,7 @@ import { recordStartupDuration, recordStartupMeasure } from "../startupTiming"
 import { ThemeResult, ProjectSelectionResult } from "../../../shared/ipc"
 import type { BundledThemeID, Theme } from "../../../shared/theme"
 import type { ProjectCatalogEntry } from "../../../shared/project"
-import type { OpenedProject } from "../../../shared/project"
+import type { Project, Session } from "@opencode-ai/client/effect"
 import {
   ApplicationStateResult,
   ProjectUIStateResult,
@@ -61,7 +64,11 @@ interface DesktopBridgeShape {
   readonly installOpenCode: Effect.Effect<void, DesktopBridgeError>
   readonly openProject: (
     command: OpenProjectCommand,
-  ) => Effect.Effect<OpenedProject, DesktopBridgeError>
+  ) => Effect.Effect<Project.ID, DesktopBridgeError>
+  readonly listProjectSessions: (
+    command: ListProjectSessionsCommand,
+  ) => Effect.Effect<ReadonlyArray<Session.Info>, DesktopBridgeError>
+  readonly listActiveSessions: Effect.Effect<ReadonlyArray<Session.ID>, DesktopBridgeError>
   readonly closeProject: (command: CloseProjectCommand) => Effect.Effect<void, DesktopBridgeError>
   readonly selectSession: (
     command: ProjectSessionCommand,
@@ -221,10 +228,28 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
       invoke(() => window.hydracode.openProject(request), OpenProjectResult).pipe(
         Effect.flatMap((result) =>
           result._tag === "Success"
-            ? Effect.succeed(result.opened)
+            ? Effect.succeed(result.projectID)
             : Effect.fail(new DesktopBridgeError({ message: result.message, cause: result })),
         ),
       ),
+    listProjectSessions: (request) =>
+      invoke(() => window.hydracode.listProjectSessions(request), ListProjectSessionsResult).pipe(
+        Effect.flatMap((result) =>
+          result._tag === "Success"
+            ? Effect.succeed(result.sessions)
+            : Effect.fail(new DesktopBridgeError({ message: result.message, cause: result })),
+        ),
+      ),
+    listActiveSessions: invoke(
+      () => window.hydracode.listActiveSessions(),
+      ActiveSessionsResult,
+    ).pipe(
+      Effect.flatMap((result) =>
+        result._tag === "Success"
+          ? Effect.succeed(result.sessionIDs)
+          : Effect.fail(new DesktopBridgeError({ message: result.message, cause: result })),
+      ),
+    ),
     closeProject: (request) => command(() => window.hydracode.closeProject(request)),
     selectSession: (request) =>
       Effect.suspend(() => {

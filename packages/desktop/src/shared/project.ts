@@ -69,14 +69,6 @@ export const ListProjectsResult = Schema.Union([
 ])
 export type ListProjectsResult = typeof ListProjectsResult.Type
 
-export const OpenedProject = Schema.Struct({
-  project: ProjectDetails,
-  location: Location.Ref,
-  sessions: Schema.Array(Session.Info),
-  activeSessionIDs: Schema.Array(Session.ID),
-})
-export type OpenedProject = typeof OpenedProject.Type
-
 export const ProjectUpdate = Schema.Union([
   Schema.Struct({
     _tag: Schema.Literal("Sessions"),
@@ -88,6 +80,12 @@ export const ProjectUpdate = Schema.Union([
     _tag: Schema.Literal("Session"),
     projectID: Project.ID,
     session: ProjectSession,
+  }),
+  Schema.Struct({
+    _tag: Schema.Literal("Info"),
+    projectID: Project.ID,
+    session: Session.Info,
+    active: Schema.Boolean,
   }),
   Schema.Struct({
     _tag: Schema.Literal("Removed"),
@@ -108,10 +106,28 @@ export const OpenProjectCommand = Schema.Struct({ location: Schema.optional(Loca
 export type OpenProjectCommand = typeof OpenProjectCommand.Type
 
 export const OpenProjectResult = Schema.Union([
-  Schema.Struct({ _tag: Schema.Literal("Success"), opened: OpenedProject }),
+  Schema.Struct({ _tag: Schema.Literal("Success"), projectID: Project.ID }),
   Schema.Struct({ _tag: Schema.Literal("Failure"), message: Schema.String }),
 ])
 export type OpenProjectResult = typeof OpenProjectResult.Type
+
+export const ListProjectSessionsCommand = Schema.Struct({
+  projectID: Project.ID,
+  location: Location.Ref,
+})
+export type ListProjectSessionsCommand = typeof ListProjectSessionsCommand.Type
+
+export const ListProjectSessionsResult = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal("Success"), sessions: Schema.Array(Session.Info) }),
+  Schema.Struct({ _tag: Schema.Literal("Failure"), message: Schema.String }),
+])
+export type ListProjectSessionsResult = typeof ListProjectSessionsResult.Type
+
+export const ActiveSessionsResult = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal("Success"), sessionIDs: Schema.Array(Session.ID) }),
+  Schema.Struct({ _tag: Schema.Literal("Failure"), message: Schema.String }),
+])
+export type ActiveSessionsResult = typeof ActiveSessionsResult.Type
 
 export const CloseProjectCommand = Schema.Struct({ location: Location.Ref })
 export type CloseProjectCommand = typeof CloseProjectCommand.Type

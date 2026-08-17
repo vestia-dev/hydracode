@@ -150,29 +150,48 @@ export function useProjectController() {
   const startLocationConnection = useCallback(
     (
       key: string,
+      project: ProjectCatalogEntry["project"],
       location: Location.Ref,
       onUpdate: (update: ProjectUpdate) => void,
       onConnected?: () => void,
     ) => {
       const connectionID = crypto.randomUUID()
+      const pendingUpdates: Array<ProjectUpdate> = []
+      let ready = false
       const program = DesktopBridge.use((desktop) =>
         Effect.scoped(
-          Effect.acquireRelease(desktop.subscribeProject(location, onUpdate), (remove) =>
-            Effect.sync(remove).pipe(
-              Effect.andThen(desktop.closeProject({ location })),
-              Effect.ignore,
-            ),
+          Effect.acquireRelease(
+            desktop.subscribeProject(location, (update) => {
+              if (ready) onUpdate(update)
+              else pendingUpdates.push(update)
+            }),
+            (remove) =>
+              Effect.sync(remove).pipe(
+                Effect.andThen(desktop.closeProject({ location })),
+                Effect.ignore,
+              ),
           ).pipe(
             Effect.flatMap(() => desktop.openProject({ location })),
-            Effect.tap((opened) =>
+            Effect.flatMap((projectID) =>
+              Effect.all({
+                projectID: Effect.succeed(projectID),
+                sessions: desktop.listProjectSessions({ projectID, location }),
+                activeSessionIDs: desktop.listActiveSessions,
+              }),
+            ),
+            Effect.tap(({ projectID, sessions, activeSessionIDs }) =>
               Effect.sync(() => {
                 const started = performance.now()
                 if (key === startupLocationKey.current)
-                  markStartup("project-open-received", { sessions: opened.sessions.length })
-                updateProject(key, (current) => openProjectState(current, opened))
+                  markStartup("project-open-received", { sessions: sessions.length })
+                updateProject(key, (current) =>
+                  openProjectState(current, project, projectID, sessions, activeSessionIDs),
+                )
+                ready = true
+                for (const update of pendingUpdates) onUpdate(update)
                 recordStartupMeasure("project-open-projection", started, {
                   locationKey: key,
-                  sessions: opened.sessions.length,
+                  sessions: sessions.length,
                 })
                 if (key === startupLocationKey.current) markStartup("project-open-projected")
                 onConnected?.()
@@ -246,6 +265,7 @@ export function useProjectController() {
         )
       startLocationConnection(
         key,
+        project.project,
         location,
         (update) => AppRuntime.runFork(applyProjectUpdate(key, update)),
         () => {
@@ -523,6 +543,7 @@ export function useProjectController() {
       setLandingError(null)
       startLocationConnection(
         key,
+        { id: projectID, canonical: AbsolutePath.make("/") },
         location,
         (update) => {
           AppRuntime.runFork(applyProjectUpdate(key, update))

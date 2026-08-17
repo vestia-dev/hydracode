@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect"
 import { ipcMain } from "electron"
-import { Location } from "@opencode-ai/client/effect"
+import { Location, Session } from "@opencode-ai/client/effect"
 import { DesktopChannels } from "../shared/desktopChannels"
 import { SetBundledThemeCommand } from "../shared/theme"
 import {
@@ -17,6 +17,9 @@ import {
   ListProjectsResult,
   OpenProjectCommand,
   OpenProjectResult,
+  ListProjectSessionsCommand,
+  ListProjectSessionsResult,
+  ActiveSessionsResult,
   QuestionCommand,
   ReplyQuestionCommand,
   SubmitPromptCommand,
@@ -169,9 +172,47 @@ export function registerDesktopIpc() {
         }),
       ),
     )
-      .then((opened) => Schema.encodeSync(OpenProjectResult)({ _tag: "Success", opened }))
+      .then((projectID) => Schema.encodeSync(OpenProjectResult)({ _tag: "Success", projectID }))
       .catch((cause) => ({ _tag: "Failure" as const, message: failureMessage(cause) }))
   })
+  ipcMain.handle(DesktopChannels.listProjectSessions, (_event, input: unknown) => {
+    const command = Schema.decodeUnknownSync(ListProjectSessionsCommand)(input)
+    return MainRuntime.runPromise(
+      OpenCodeService.use((service) =>
+        service.client.pipe(
+          Effect.flatMap((client) =>
+            client.session.list({
+              project: command.projectID,
+              directory: command.location.directory,
+              ...(command.location.workspaceID === undefined
+                ? {}
+                : { workspace: command.location.workspaceID }),
+              limit: 50,
+              order: "desc",
+            }),
+          ),
+        ),
+      ),
+    )
+      .then((page) =>
+        Schema.encodeSync(ListProjectSessionsResult)({ _tag: "Success", sessions: page.data }),
+      )
+      .catch((cause) => ({ _tag: "Failure" as const, message: failureMessage(cause) }))
+  })
+  ipcMain.handle(DesktopChannels.listActiveSessions, () =>
+    MainRuntime.runPromise(
+      OpenCodeService.use((service) =>
+        service.client.pipe(Effect.flatMap((client) => client.session.active())),
+      ),
+    )
+      .then((active) =>
+        Schema.encodeSync(ActiveSessionsResult)({
+          _tag: "Success",
+          sessionIDs: Object.keys(active).map((id) => Schema.decodeUnknownSync(Session.ID)(id)),
+        }),
+      )
+      .catch((cause) => ({ _tag: "Failure" as const, message: failureMessage(cause) })),
+  )
   ipcMain.handle(DesktopChannels.closeProject, (_event, input: unknown) => {
     const command = Schema.decodeUnknownSync(CloseProjectCommand)(input)
     return result(ProjectRegistry.use((registry) => registry.close(command.location)))

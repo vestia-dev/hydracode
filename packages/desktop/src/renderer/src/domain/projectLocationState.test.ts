@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest"
 import { Schema } from "effect"
-import { AbsolutePath, Location, Project, SessionMessage } from "@opencode-ai/client/effect"
+import {
+  AbsolutePath,
+  Location,
+  Project,
+  Session,
+  SessionMessage,
+} from "@opencode-ai/client/effect"
 import type { ProjectUpdate } from "../../../shared/project"
 import type { OpenLocationState } from "./projectLocationState"
 import type { SemanticGraph, SemanticGraphNode } from "./graph"
@@ -55,23 +61,26 @@ function opening(projectID: Project.ID): OpenLocationState {
 describe("applyProjectUpdate", () => {
   it("opens only the owning location state", () => {
     const state = opening(projectA)
-    const foreign = {
-      project: { id: projectB, canonical: AbsolutePath.make("/tmp/project-b") },
-      location,
-      sessions: [],
-      activeSessionIDs: [],
-    }
+    const next = openProjectState(
+      state,
+      { id: projectA, canonical: AbsolutePath.make("/tmp/project-a") },
+      projectB,
+      [],
+      [],
+    )
 
-    expect(openProjectState(state, foreign)).toBe(state)
+    expect(next.projectID).toBe(projectB)
+    expect(next.snapshot?.project.id).toBe(projectB)
   })
 
   it("keeps another project's session updates isolated", () => {
-    const ready = openProjectState(opening(projectA), {
-      project: { id: projectA, canonical: AbsolutePath.make("/tmp/project-a") },
-      location,
-      sessions: [],
-      activeSessionIDs: [],
-    })
+    const ready = openProjectState(
+      opening(projectA),
+      { id: projectA, canonical: AbsolutePath.make("/tmp/project-a") },
+      projectA,
+      [],
+      [],
+    )
     const foreign: ProjectUpdate = {
       _tag: "Session",
       projectID: projectB,
@@ -92,12 +101,13 @@ describe("applyProjectUpdate", () => {
   })
 
   it("still removes sessions through explicit removal updates", () => {
-    const opened = openProjectState(opening(projectA), {
-      project: { id: projectA, canonical: AbsolutePath.make("/tmp/project-a") },
-      location,
-      sessions: [],
-      activeSessionIDs: [],
-    })
+    const opened = openProjectState(
+      opening(projectA),
+      { id: projectA, canonical: AbsolutePath.make("/tmp/project-a") },
+      projectA,
+      [],
+      [],
+    )
     const ready = applyProjectUpdate(projectA, opened, {
       _tag: "Session",
       projectID: projectA,
@@ -123,6 +133,36 @@ describe("applyProjectUpdate", () => {
 
     expect(removed.snapshot?.sessions).toEqual([])
     expect(removed.snapshot?.recentSessions).toEqual([])
+  })
+
+  it("adds root session metadata to the recent sessions", () => {
+    const ready = openProjectState(
+      opening(projectA),
+      { id: projectA, canonical: AbsolutePath.make("/tmp/project-a") },
+      projectA,
+      [],
+      [],
+    )
+    const info = Schema.decodeUnknownSync(Session.Info)({
+      id: "session-a",
+      projectID: "project-a",
+      cost: 0,
+      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      time: { created: 1, updated: 1 },
+      title: "New session",
+      location: { directory: "/tmp/project-a" },
+    })
+
+    const updated = applyProjectUpdate(projectA, ready, {
+      _tag: "Info",
+      projectID: projectA,
+      session: info,
+      active: true,
+    })
+
+    expect(updated.snapshot?.recentSessions).toMatchObject([
+      { id: "session-a", title: "New session", active: true },
+    ])
   })
 })
 
