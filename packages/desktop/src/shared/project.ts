@@ -26,7 +26,7 @@ export type ProjectPendingPrompt = typeof ProjectPendingPrompt.Type
 export const ProjectSession = Schema.Struct({
   id: Session.ID,
   parentID: Schema.optional(Session.ID),
-  location: Schema.optional(Location.Ref),
+  location: Location.Ref,
   created: Schema.Number,
   title: Schema.String,
   active: Schema.Boolean,

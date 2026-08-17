@@ -7,7 +7,7 @@ import type { AbsolutePath, Location, Project } from "@opencode-ai/client/effect
 export interface SessionView {
   readonly id: Session.ID
   readonly parentID?: Session.ID
-  readonly location?: Location.Ref
+  readonly location: Location.Ref
   readonly created: number
   readonly title: string
   readonly active: boolean

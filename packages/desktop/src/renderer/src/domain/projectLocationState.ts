@@ -70,7 +70,7 @@ export function createSessionView(
     ...(value.parentID === undefined
       ? {}
       : { parentID: Schema.decodeUnknownSync(Session.ID)(value.parentID) }),
-    ...(value.location === undefined ? {} : { location: value.location }),
+    location: value.location,
     created: value.created,
     title: value.title,
     active: value.active,
