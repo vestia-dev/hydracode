@@ -1,6 +1,5 @@
 import {
   Location,
-  Question,
   Session,
   SessionMessage,
   Project,
@@ -13,8 +12,6 @@ import { performance } from "node:perf_hooks"
 import {
   reduceSessionLog,
   initializeSessionLogState,
-  questionFormAnswer,
-  questionFormID,
   questionFromForm,
   sessionIDFromEvent,
   type SessionLogState,
@@ -66,12 +63,6 @@ interface ProjectRegistryShape {
   ) => Effect.Effect<Project.ID, unknown>
   readonly close: (location: Location.Ref) => Effect.Effect<void, unknown>
   readonly selectSession: (sessionID: Session.ID) => Effect.Effect<SessionSelectionTiming, unknown>
-  readonly replyQuestion: (
-    sessionID: string,
-    requestID: string,
-    answers: ReadonlyArray<Question.Answer>,
-  ) => Effect.Effect<void, unknown>
-  readonly rejectQuestion: (sessionID: string, requestID: string) => Effect.Effect<void, unknown>
 }
 
 export class ProjectRegistry extends Context.Service<ProjectRegistry, ProjectRegistryShape>()(
@@ -684,92 +675,12 @@ export const ProjectRegistryLive = Layer.effect(
           sessions: loadTimings,
         }
       })
-    const replyQuestion = (
-      sessionID: string,
-      requestID: string,
-      answers: ReadonlyArray<Question.Answer>,
-    ): Effect.Effect<void, unknown> =>
-      Effect.gen(function* () {
-        const decodedSessionID = Schema.decodeUnknownSync(Session.ID)(sessionID)
-        const info = sessions.get(decodedSessionID)?.info
-        const entry = Array.from(entries.values()).find(
-          (candidate) =>
-            candidate.project.id === info?.projectID &&
-            info !== undefined &&
-            locationsEqual(candidate.location, info.location),
-        )
-        if (entry === undefined)
-          return yield* Effect.fail(new ProjectRegistryError({ message: "Session is not open" }))
-        const formID = questionFormID(requestID)
-        const decodedRequestID = Schema.decodeUnknownSync(Question.ID)(requestID)
-        if (formID === undefined) {
-          yield* entry.client.question.reply({
-            sessionID: decodedSessionID,
-            requestID: decodedRequestID,
-            answers,
-          })
-        } else {
-          const form = yield* entry.client.form.get({ sessionID: decodedSessionID, formID })
-          yield* entry.client.form.reply({
-            sessionID: decodedSessionID,
-            formID,
-            answer: questionFormAnswer(form, answers),
-          })
-        }
-        const record = sessions.get(decodedSessionID)
-        if (record?._tag !== "Loaded") return yield* Effect.void
-        sessions.set(decodedSessionID, {
-          ...record,
-          state: {
-            ...record.state,
-            questions: record.state.questions.filter((request) => request.id !== decodedRequestID),
-          },
-        })
-        publish(entry, decodedSessionID)
-        return yield* Effect.void
-      })
-    const rejectQuestion = (sessionID: string, requestID: string): Effect.Effect<void, unknown> =>
-      Effect.gen(function* () {
-        const decodedSessionID = Schema.decodeUnknownSync(Session.ID)(sessionID)
-        const info = sessions.get(decodedSessionID)?.info
-        const entry = Array.from(entries.values()).find(
-          (candidate) =>
-            candidate.project.id === info?.projectID &&
-            info !== undefined &&
-            locationsEqual(candidate.location, info.location),
-        )
-        if (entry === undefined)
-          return yield* Effect.fail(new ProjectRegistryError({ message: "Session is not open" }))
-        const formID = questionFormID(requestID)
-        const decodedRequestID = Schema.decodeUnknownSync(Question.ID)(requestID)
-        if (formID === undefined) {
-          yield* entry.client.question.reject({
-            sessionID: decodedSessionID,
-            requestID: decodedRequestID,
-          })
-        } else {
-          yield* entry.client.form.cancel({ sessionID: decodedSessionID, formID })
-        }
-        const record = sessions.get(decodedSessionID)
-        if (record?._tag !== "Loaded") return yield* Effect.void
-        sessions.set(decodedSessionID, {
-          ...record,
-          state: {
-            ...record.state,
-            questions: record.state.questions.filter((request) => request.id !== decodedRequestID),
-          },
-        })
-        publish(entry, decodedSessionID)
-        return yield* Effect.void
-      })
     return ProjectRegistry.of({
       list,
       resolve,
       open,
       close,
       selectSession,
-      replyQuestion,
-      rejectQuestion,
     })
   }),
 )

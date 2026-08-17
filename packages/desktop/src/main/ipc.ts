@@ -39,6 +39,7 @@ import {
   ProjectUIStateResult,
 } from "../shared/applicationState"
 import { ApplicationStateService } from "./services/ApplicationStateService"
+import { questionFormAnswer, questionFormID } from "../shared/domain/sessionLog"
 
 const updateSubscriptions = new Map<number, () => void>()
 
@@ -278,16 +279,52 @@ export function registerDesktopIpc() {
   ipcMain.handle(DesktopChannels.replyQuestion, (_event, input: unknown) => {
     const command = Schema.decodeUnknownSync(ReplyQuestionCommand)(input)
     return result(
-      ProjectRegistry.use((registry) =>
-        registry.replyQuestion(command.sessionID, command.requestID, command.answers),
+      OpenCodeService.use((service) =>
+        service.client.pipe(
+          Effect.flatMap((client) =>
+            Effect.gen(function* () {
+              const formID = questionFormID(command.requestID)
+              if (formID === undefined) {
+                yield* client.question.reply({
+                  sessionID: command.sessionID,
+                  requestID: command.requestID,
+                  answers: command.answers,
+                })
+                return
+              }
+              const form = yield* client.form.get({ sessionID: command.sessionID, formID })
+              yield* client.form.reply({
+                sessionID: command.sessionID,
+                formID,
+                answer: questionFormAnswer(form, command.answers),
+              })
+            }),
+          ),
+          Effect.asVoid,
+        ),
       ),
     )
   })
   ipcMain.handle(DesktopChannels.rejectQuestion, (_event, input: unknown) => {
     const command = Schema.decodeUnknownSync(QuestionCommand)(input)
     return result(
-      ProjectRegistry.use((registry) =>
-        registry.rejectQuestion(command.sessionID, command.requestID),
+      OpenCodeService.use((service) =>
+        service.client.pipe(
+          Effect.flatMap((client) =>
+            Effect.gen(function* () {
+              const formID = questionFormID(command.requestID)
+              if (formID === undefined) {
+                yield* client.question.reject({
+                  sessionID: command.sessionID,
+                  requestID: command.requestID,
+                })
+                return
+              }
+              yield* client.form.cancel({ sessionID: command.sessionID, formID })
+            }),
+          ),
+          Effect.asVoid,
+        ),
       ),
     )
   })
