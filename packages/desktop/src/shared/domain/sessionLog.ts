@@ -22,7 +22,6 @@ export interface SessionLogState {
   readonly sessionID: string
   readonly messages: ReadonlyArray<SessionMessage.Info>
   readonly durableSeq?: number
-  readonly synchronized: boolean
   readonly execution: SessionExecutionState
   readonly pending: ReadonlyMap<string, InboxItem>
   readonly questions: ReadonlyArray<Question.Request>
@@ -73,7 +72,6 @@ export function createSessionLogState(
   return {
     sessionID,
     messages,
-    synchronized: false,
     execution: { _tag: "Idle" },
     pending: new Map(),
     questions: [],
@@ -92,7 +90,6 @@ export function initializeSessionLogState(
     ...(durableSeq === undefined ? {} : { durableSeq }),
     questions: questions.toSorted((left, right) => left.id.localeCompare(right.id)),
     pending,
-    synchronized: true,
   }
 }
 
@@ -164,11 +161,11 @@ export function reduceSessionLog(
       event.seq === undefined ||
       (state.durableSeq !== undefined && event.seq <= state.durableSeq)
     ) {
-      return { status: "applied", state: { ...state, synchronized: true }, touched: [] }
+      return { status: "applied", state, touched: [] }
     }
     return {
       status: "applied",
-      state: { ...state, durableSeq: event.seq, synchronized: true },
+      state: { ...state, durableSeq: event.seq },
       touched: [],
     }
   }

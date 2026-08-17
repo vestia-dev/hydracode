@@ -170,7 +170,6 @@ const sessionView = (
       state.execution._tag === "Running" ||
       state.execution._tag === "Retrying" ||
       entry.active.has(info.id),
-    synchronized: state.synchronized,
     execution: state.execution,
     messages: state.messages,
     pendingPrompts: Array.from(state.pending, ([id, item]) =>

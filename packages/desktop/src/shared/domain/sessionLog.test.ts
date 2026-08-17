@@ -62,7 +62,6 @@ it.effect("uses log.synced as the replay watermark", () =>
     )
 
     expect(synced.state.durableSeq).toBe(7)
-    expect(synced.state.synchronized).toBe(true)
     expect(next.status).toBe("applied")
     expect(
       reduceSessionLog(
@@ -132,7 +131,6 @@ it.effect("initializes existing context at the captured durable watermark", () =
 
     expect(state).toMatchObject({
       durableSeq: 307,
-      synchronized: true,
       messages: [{ id: "message-1", text: "existing" }],
     })
   }),

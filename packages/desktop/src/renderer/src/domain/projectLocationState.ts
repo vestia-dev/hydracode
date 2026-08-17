@@ -76,7 +76,6 @@ export function createSessionView(
     created: value.created,
     title: value.title,
     active: value.active,
-    synchronized: value.synchronized,
     execution: value.execution,
     questions: value.questions,
     pendingPrompts: value.pendingPrompts,

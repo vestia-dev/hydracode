@@ -12,7 +12,6 @@ export interface SessionView {
   readonly created: number
   readonly title: string
   readonly active: boolean
-  readonly synchronized: boolean
   readonly execution: ProjectSessionExecution
   readonly questions: ReadonlyArray<Question.Request>
   readonly pendingPrompts: ReadonlyArray<ProjectPendingPrompt>

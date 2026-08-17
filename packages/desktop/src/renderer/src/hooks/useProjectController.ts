@@ -440,7 +440,6 @@ export function useProjectController() {
             created: Date.now(),
             title: "New session",
             active: false,
-            synchronized: true,
             execution: { _tag: "Idle" },
             questions: [],
             pendingPrompts: [],

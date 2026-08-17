@@ -86,7 +86,6 @@ describe("applyProjectUpdate", () => {
         created: 1,
         title: "Foreign session",
         active: true,
-        synchronized: true,
         execution: { _tag: "Running" },
         messages: [],
         pendingPrompts: [],
@@ -110,7 +109,6 @@ describe("applyProjectUpdate", () => {
             created: 1,
             title: "Hydrated session",
             active: false,
-            synchronized: true,
             execution: { _tag: "Idle" },
             messages: [],
             pendingPrompts: [],
@@ -148,7 +146,6 @@ it("reconciles an optimistic prompt when OpenCode admits it to the inbox", () =>
       created: 1,
       title: "Session",
       active: true,
-      synchronized: true,
       execution: { _tag: "Running" },
       messages: [],
       pendingPrompts: [

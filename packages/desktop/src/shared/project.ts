@@ -30,7 +30,6 @@ export const ProjectSession = Schema.Struct({
   created: Schema.Number,
   title: Schema.String,
   active: Schema.Boolean,
-  synchronized: Schema.Boolean,
   execution: ProjectSessionExecution,
   messages: Schema.Array(SessionMessage.Info),
   pendingPrompts: Schema.Array(ProjectPendingPrompt),
