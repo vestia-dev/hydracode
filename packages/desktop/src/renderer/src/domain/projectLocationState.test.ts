@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest"
 import { Schema } from "effect"
-import { AbsolutePath, Location, Project } from "@opencode-ai/client/effect"
+import { AbsolutePath, Location, Project, SessionMessage } from "@opencode-ai/client/effect"
 import type { ProjectUpdate } from "../../../shared/project"
 import type { OpenLocationState } from "./projectLocationState"
 import type { SemanticGraph, SemanticGraphNode } from "./graph"
-import { applyProjectUpdate, preserveCompletedGraph } from "./projectLocationState"
+import {
+  applyProjectUpdate,
+  createSessionView,
+  preserveCompletedGraph,
+} from "./projectLocationState"
 
 const projectA = Schema.decodeUnknownSync(Project.ID)("project-a")
 const projectB = Schema.decodeUnknownSync(Project.ID)("project-b")
@@ -85,6 +89,7 @@ describe("applyProjectUpdate", () => {
         synchronized: true,
         execution: { _tag: "Running" },
         messages: [],
+        pendingPrompts: [],
         questions: [],
       },
     }
@@ -108,6 +113,7 @@ describe("applyProjectUpdate", () => {
             synchronized: true,
             execution: { _tag: "Idle" },
             messages: [],
+            pendingPrompts: [],
             questions: [],
           },
         ],
@@ -132,6 +138,41 @@ describe("applyProjectUpdate", () => {
     expect(removed.snapshot?.sessions).toEqual([])
     expect(removed.snapshot?.recentSessions).toEqual([])
   })
+})
+
+it("reconciles an optimistic prompt when OpenCode admits it to the inbox", () => {
+  const view = createSessionView(
+    {
+      id: "session-a",
+      location,
+      created: 1,
+      title: "Session",
+      active: true,
+      synchronized: true,
+      execution: { _tag: "Running" },
+      messages: [],
+      pendingPrompts: [
+        {
+          id: Schema.decodeUnknownSync(SessionMessage.ID)("msg_pending"),
+          text: "Queue this",
+          delivery: "queue",
+        },
+      ],
+      questions: [],
+    },
+    undefined,
+    [
+      {
+        id: "optimistic-prompt:1",
+        text: "Queue this",
+        created: 1,
+        baselineMessageIDs: [],
+      },
+    ],
+  )
+
+  expect(view.optimisticPrompts).toEqual([])
+  expect(view.pendingPrompts).toMatchObject([{ text: "Queue this", delivery: "queue" }])
 })
 
 describe("preserveCompletedGraph", () => {

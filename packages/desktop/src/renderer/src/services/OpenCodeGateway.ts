@@ -2,7 +2,7 @@ import type { Question, Session } from "@opencode-ai/client/effect"
 import { Schema } from "effect"
 import type { SemanticGraph } from "../domain/graph"
 import type { OptimisticPrompt } from "../domain/optimisticPrompts"
-import type { ProjectSessionExecution } from "../../../shared/project"
+import type { ProjectPendingPrompt, ProjectSessionExecution } from "../../../shared/project"
 import type { AbsolutePath, Location, Project } from "@opencode-ai/client/effect"
 
 export interface SessionView {
@@ -15,6 +15,7 @@ export interface SessionView {
   readonly synchronized: boolean
   readonly execution: ProjectSessionExecution
   readonly questions: ReadonlyArray<Question.Request>
+  readonly pendingPrompts: ReadonlyArray<ProjectPendingPrompt>
   readonly provisional: boolean
   readonly authoritativeGraph: SemanticGraph
   readonly optimisticPrompts: ReadonlyArray<OptimisticPrompt>

@@ -63,6 +63,7 @@ const desktopApi: HydraCodeDesktopApi = {
   selectSession: (command) => ipcRenderer.invoke(DesktopChannels.selectSession, command),
   createSession: (command) => ipcRenderer.invoke(DesktopChannels.createSession, command),
   submitPrompt: (command) => ipcRenderer.invoke(DesktopChannels.submitPrompt, command),
+  updateSessionInbox: (command) => ipcRenderer.invoke(DesktopChannels.updateSessionInbox, command),
   replyQuestion: (command) => ipcRenderer.invoke(DesktopChannels.replyQuestion, command),
   rejectQuestion: (command) => ipcRenderer.invoke(DesktopChannels.rejectQuestion, command),
   backgroundSession: (command) => ipcRenderer.invoke(DesktopChannels.backgroundSession, command),

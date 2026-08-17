@@ -57,6 +57,13 @@ interface ProjectContainerProps {
     locationKey: string,
     sessionID: SessionView["id"],
     text: string,
+    delivery?: "queue" | "steer",
+  ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
+  readonly updateSessionInbox: (
+    locationKey: string,
+    sessionID: SessionView["id"],
+    inboxID: SessionView["pendingPrompts"][number]["id"],
+    action: "cancel" | "queue" | "steer",
   ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
   readonly replyQuestion: (
     locationKey: string,
@@ -325,6 +332,7 @@ export const ProjectContainer = forwardRef<ProjectContainerHandle, ProjectContai
             selectSession={props.selectSession}
             createSession={props.createSession}
             submitPrompt={props.submitPrompt}
+            updateSessionInbox={props.updateSessionInbox}
             replyQuestion={props.replyQuestion}
             rejectQuestion={props.rejectQuestion}
             backgroundSession={props.backgroundSession}

@@ -62,6 +62,7 @@ export function App() {
     selectSession,
     createSession,
     submitPrompt,
+    updateSessionInbox,
     replyQuestion,
     rejectQuestion,
     backgroundSession,
@@ -638,6 +639,7 @@ export function App() {
                     selectSession={selectSession}
                     createSession={createSession}
                     submitPrompt={submitPrompt}
+                    updateSessionInbox={updateSessionInbox}
                     replyQuestion={replyQuestion}
                     rejectQuestion={rejectQuestion}
                     backgroundSession={backgroundSession}

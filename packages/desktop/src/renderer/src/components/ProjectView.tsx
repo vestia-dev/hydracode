@@ -43,6 +43,13 @@ interface ProjectViewProps {
     locationKey: string,
     sessionID: SessionView["id"],
     text: string,
+    delivery?: "queue" | "steer",
+  ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
+  readonly updateSessionInbox: (
+    locationKey: string,
+    sessionID: SessionView["id"],
+    inboxID: SessionView["pendingPrompts"][number]["id"],
+    action: "cancel" | "queue" | "steer",
   ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
   readonly replyQuestion: (
     locationKey: string,
@@ -282,7 +289,12 @@ export function ProjectView(props: ProjectViewProps) {
             session={family.root}
             descendants={family.descendants}
             directory={(family.root.location ?? snapshot.location).directory}
-            submitPrompt={(sessionID, text) => props.submitPrompt(paneLocationKey, sessionID, text)}
+            submitPrompt={(sessionID, text, delivery) =>
+              props.submitPrompt(paneLocationKey, sessionID, text, delivery)
+            }
+            updateSessionInbox={(sessionID, inboxID, action) =>
+              props.updateSessionInbox(paneLocationKey, sessionID, inboxID, action)
+            }
             replyQuestion={(request, answers) =>
               props.replyQuestion(paneLocationKey, request, answers)
             }

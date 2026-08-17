@@ -91,6 +91,37 @@ it.effect("advances the durable cursor when delivered input needs targeted loadi
   }),
 )
 
+it.effect("updates and removes pending inbox input from durable events", () =>
+  Effect.sync(() => {
+    const enqueued = reduceSessionLog(
+      createSessionLogState("session-1"),
+      durable("session.inbox.enqueued", 1, {
+        sessionID: "session-1",
+        inboxID: "input-1",
+        item: { type: "user", payload: { text: "hello" }, delivery: "queue" },
+      }),
+    )
+    const steered = reduceSessionLog(
+      enqueued.state,
+      durable("session.inbox.delivery.changed", 2, {
+        sessionID: "session-1",
+        inboxID: "input-1",
+        delivery: "steer",
+      }),
+    )
+    const cancelled = reduceSessionLog(
+      steered.state,
+      durable("session.inbox.cancelled", 3, {
+        sessionID: "session-1",
+        inboxID: "input-1",
+      }),
+    )
+
+    expect(steered.state.pending.get("input-1")).toMatchObject({ delivery: "steer" })
+    expect(cancelled.state.pending.size).toBe(0)
+  }),
+)
+
 it.effect("initializes existing context at the captured durable watermark", () =>
   Effect.sync(() => {
     const existing = { id: "message-1", type: "system", text: "existing", time: { created: 1000 } }

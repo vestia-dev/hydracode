@@ -1,5 +1,6 @@
 import { Service as LocalOpenCodeService } from "@opencode-ai/client/effect/service"
 import { OpenCode, type OpenCodeClient } from "@opencode-ai/client/effect"
+import { SessionInbox } from "@opencode-ai/schema/session-inbox"
 import { Context, Effect, FileSystem, Layer, Schema } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { FetchHttpClient } from "effect/unstable/http"
@@ -27,6 +28,7 @@ interface OpenCodeServiceShape {
   readonly submitPrompt: (
     sessionID: string,
     text: string,
+    delivery?: SessionInbox.Delivery,
   ) => Effect.Effect<void, OpenCodeServiceError>
   readonly diagnostics: Effect.Effect<OpenCodeDiagnostics>
   readonly install: Effect.Effect<void, OpenCodeServiceError>
@@ -62,11 +64,16 @@ const PromptSubmissionResponse = Schema.Struct({
     timeCreated: Schema.Number,
     type: Schema.Literal("user"),
     payload: Schema.Struct({ text: Schema.String }),
-    delivery: Schema.String,
+    delivery: SessionInbox.Delivery,
   }),
 })
 
-const submitPromptWith = (connection: OpenCodeConnection, sessionID: string, text: string) =>
+const submitPromptWith = (
+  connection: OpenCodeConnection,
+  sessionID: string,
+  text: string,
+  delivery?: SessionInbox.Delivery,
+) =>
   Effect.gen(function* () {
     const base = yield* HttpClient.HttpClient
     const httpClient =
@@ -79,7 +86,7 @@ const submitPromptWith = (connection: OpenCodeConnection, sessionID: string, tex
           )
     const request = yield* HttpClientRequest.post(
       `${connection.url.replace(/\/$/, "")}/api/session/${encodeURIComponent(sessionID)}/prompt`,
-    ).pipe(HttpClientRequest.bodyJson({ text }))
+    ).pipe(HttpClientRequest.bodyJson({ text, ...(delivery === undefined ? {} : { delivery }) }))
     yield* httpClient
       .execute(request)
       .pipe(
@@ -144,9 +151,9 @@ export const OpenCodeServiceLive = Layer.effect(
       cachedConnection.pipe(Effect.flatMap(clientFor)),
       "5 minutes",
     )
-    const submitPrompt = (sessionID: string, text: string) =>
+    const submitPrompt = (sessionID: string, text: string, delivery?: SessionInbox.Delivery) =>
       cachedConnection.pipe(
-        Effect.flatMap((endpoint) => submitPromptWith(endpoint, sessionID, text)),
+        Effect.flatMap((endpoint) => submitPromptWith(endpoint, sessionID, text, delivery)),
         Effect.mapError(
           (cause) =>
             new OpenCodeServiceError({

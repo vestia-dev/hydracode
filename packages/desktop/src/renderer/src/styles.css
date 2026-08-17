@@ -1492,9 +1492,7 @@ html[data-platform="macos"] .project-header {
 
 .agent-node {
   position: relative;
-  width: fit-content;
-  min-width: 220px;
-  max-width: 420px;
+  width: 420px;
   min-height: 92px;
   padding: 12px;
 }
@@ -2187,7 +2185,7 @@ html[data-platform="macos"] .project-header {
 
 .prompt-node__input {
   width: 100%;
-  min-height: 48px;
+  min-height: 76px;
   padding: 10px 42px 10px 11px;
   overflow: hidden;
   resize: none;
@@ -2213,6 +2211,60 @@ html[data-platform="macos"] .project-header {
   position: absolute;
   top: 10px;
   right: 11px;
+}
+
+.prompt-node__queue {
+  position: absolute;
+  top: 40px;
+  right: 11px;
+}
+
+.prompt-node__inbox-item button {
+  min-height: 26px;
+  padding: 4px 7px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  color: var(--color-text);
+  background: var(--color-surfaceMuted);
+  font: 11px/1.2 var(--typography-uiFontFamily);
+}
+
+.prompt-node__inbox-item button:hover {
+  border-color: var(--color-accent);
+}
+
+.prompt-node__inbox {
+  display: grid;
+  gap: 5px;
+  max-height: 180px;
+  margin-bottom: 8px;
+  overflow-y: auto;
+}
+
+.prompt-node__inbox-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 5px;
+  align-items: center;
+  padding: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface);
+}
+
+.prompt-node__inbox-text {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  color: var(--color-text);
+  font: 11px/1.35 var(--typography-uiFontFamily);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prompt-node__inbox-mode {
+  color: var(--color-textMuted);
+  font: 10px/1 var(--typography-uiFontFamily);
+  text-transform: uppercase;
 }
 
 .question-node {

@@ -9,6 +9,7 @@ import {
   type OpenProjectCommand,
   type CreateSessionCommand,
   type SubmitPromptCommand,
+  type SessionInboxCommand,
   type ReplyQuestionCommand,
   type QuestionCommand,
   type ProjectSessionCommand,
@@ -63,6 +64,9 @@ interface DesktopBridgeShape {
     command: CreateSessionCommand,
   ) => Effect.Effect<Exclude<CreateSessionResult, { readonly _tag: "Failure" }>, DesktopBridgeError>
   readonly submitPrompt: (command: SubmitPromptCommand) => Effect.Effect<void, DesktopBridgeError>
+  readonly updateSessionInbox: (
+    command: SessionInboxCommand,
+  ) => Effect.Effect<void, DesktopBridgeError>
   readonly replyQuestion: (command: ReplyQuestionCommand) => Effect.Effect<void, DesktopBridgeError>
   readonly rejectQuestion: (command: QuestionCommand) => Effect.Effect<void, DesktopBridgeError>
   readonly backgroundSession: (
@@ -297,6 +301,7 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
         ),
       ),
     submitPrompt: (request) => command(() => window.hydracode.submitPrompt(request)),
+    updateSessionInbox: (request) => command(() => window.hydracode.updateSessionInbox(request)),
     replyQuestion: (request) => command(() => window.hydracode.replyQuestion(request)),
     rejectQuestion: (request) => command(() => window.hydracode.rejectQuestion(request)),
     backgroundSession: (request) => command(() => window.hydracode.backgroundSession(request)),

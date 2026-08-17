@@ -1,6 +1,7 @@
 import { Schema } from "effect"
 import { AbsolutePath, Location, Project, Question } from "@opencode-ai/client/effect"
 import { SessionMessage } from "@opencode-ai/schema/session-message"
+import { SessionInbox } from "@opencode-ai/schema/session-inbox"
 
 export const ProjectSessionExecution = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Idle") }),
@@ -15,6 +16,13 @@ export const ProjectSessionExecution = Schema.Union([
 ])
 export type ProjectSessionExecution = typeof ProjectSessionExecution.Type
 
+export const ProjectPendingPrompt = Schema.Struct({
+  id: SessionMessage.ID,
+  text: Schema.String,
+  delivery: SessionInbox.Delivery,
+})
+export type ProjectPendingPrompt = typeof ProjectPendingPrompt.Type
+
 export const ProjectSession = Schema.Struct({
   id: Schema.String,
   parentID: Schema.optional(Schema.String),
@@ -25,6 +33,7 @@ export const ProjectSession = Schema.Struct({
   synchronized: Schema.Boolean,
   execution: ProjectSessionExecution,
   messages: Schema.Array(SessionMessage.Info),
+  pendingPrompts: Schema.Array(ProjectPendingPrompt),
   questions: Schema.Array(Question.Request),
 })
 export type ProjectSession = typeof ProjectSession.Type
@@ -124,8 +133,16 @@ export const SubmitPromptCommand = Schema.Struct({
   subscriptionID: Schema.String,
   sessionID: Schema.String,
   text: Schema.String,
+  delivery: Schema.optional(SessionInbox.Delivery),
 })
 export type SubmitPromptCommand = typeof SubmitPromptCommand.Type
+
+export const SessionInboxCommand = Schema.Struct({
+  ...ProjectSessionCommand.fields,
+  inboxID: SessionMessage.ID,
+  action: Schema.Literals(["cancel", "queue", "steer"]),
+})
+export type SessionInboxCommand = typeof SessionInboxCommand.Type
 
 export const QuestionCommand = Schema.Struct({
   subscriptionID: Schema.String,

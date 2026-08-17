@@ -7,6 +7,7 @@ import {
   type OpenCodeClient,
   type OpenCodeEvent,
 } from "@opencode-ai/client/effect"
+import type { SessionInbox } from "@opencode-ai/schema/session-inbox"
 import { Context, DateTime, Effect, Fiber, Layer, Queue, Scope, Stream } from "effect"
 import { Schema } from "effect"
 import { performance } from "node:perf_hooks"
@@ -89,6 +90,13 @@ interface ProjectRegistryShape {
     subscriptionID: string,
     sessionID: string,
     text: string,
+    delivery?: SessionInbox.Delivery,
+  ) => Effect.Effect<void, unknown>
+  readonly updateInbox: (
+    subscriptionID: string,
+    sessionID: string,
+    inboxID: string,
+    action: "cancel" | "queue" | "steer",
   ) => Effect.Effect<void, unknown>
   readonly replyQuestion: (
     subscriptionID: string,
@@ -165,6 +173,17 @@ const sessionView = (
     synchronized: state.synchronized,
     execution: state.execution,
     messages: state.messages,
+    pendingPrompts: Array.from(state.pending, ([id, item]) =>
+      item.type === "user"
+        ? [
+            {
+              id: Schema.decodeUnknownSync(SessionMessage.ID)(id),
+              text: item.payload.text,
+              delivery: item.delivery,
+            },
+          ]
+        : [],
+    ).flat(),
     questions: state.questions,
   }
 }
@@ -295,7 +314,7 @@ export const ProjectRegistryLive = Layer.effect(
         const contextStarted = performance.now()
         const questionsStarted = performance.now()
         const formsStarted = performance.now()
-        const [messages, questions, forms] = yield* Effect.all(
+        const [messages, questions, forms, inbox] = yield* Effect.all(
           [
             entry.client.session.context({ sessionID: info.id }).pipe(
               Effect.tap(() =>
@@ -318,6 +337,7 @@ export const ProjectRegistryLive = Layer.effect(
                 }),
               ),
             ),
+            entry.client.session.inbox.list({ sessionID: info.id }),
           ],
           { concurrency: "unbounded" },
         )
@@ -329,10 +349,13 @@ export const ProjectRegistryLive = Layer.effect(
         entry.sessions.set(info.id, {
           _tag: "Loaded",
           info,
-          state: initializeSessionLogState(info.id, messages, sequence, [
-            ...questions,
-            ...formQuestions,
-          ]),
+          state: initializeSessionLogState(
+            info.id,
+            messages,
+            sequence,
+            [...questions, ...formQuestions],
+            new Map(inbox.map((item) => [item.id, item])),
+          ),
         })
         publish(entry, info.id)
         const stateBuildDuration = performance.now() - stateBuildStarted
@@ -713,6 +736,7 @@ export const ProjectRegistryLive = Layer.effect(
       subscriptionID: string,
       sessionID: string,
       text: string,
+      delivery?: SessionInbox.Delivery,
     ): Effect.Effect<void, unknown> =>
       Effect.gen(function* () {
         const subscription = subscriptions.get(subscriptionID)
@@ -727,7 +751,26 @@ export const ProjectRegistryLive = Layer.effect(
         return yield* openCode.submitPrompt(
           Schema.decodeUnknownSync(Session.ID)(sessionID),
           text.trim(),
+          delivery,
         )
+      })
+    const updateInbox = (
+      subscriptionID: string,
+      sessionID: string,
+      inboxID: string,
+      action: "cancel" | "queue" | "steer",
+    ): Effect.Effect<void, unknown> =>
+      Effect.gen(function* () {
+        const subscription = subscriptions.get(subscriptionID)
+        if (subscription === undefined)
+          return yield* Effect.fail(
+            new ProjectRegistryError({ message: "Project subscription is closed" }),
+          )
+        const input = {
+          sessionID: Schema.decodeUnknownSync(Session.ID)(sessionID),
+          inboxID: Schema.decodeUnknownSync(SessionMessage.ID)(inboxID),
+        }
+        return yield* subscription.entry.client.session.inbox[action](input)
       })
     const interrupt = (subscriptionID: string, sessionID: string): Effect.Effect<void, unknown> =>
       Effect.gen(function* () {
@@ -841,6 +884,7 @@ export const ProjectRegistryLive = Layer.effect(
       selectSession,
       createSession,
       submitPrompt,
+      updateInbox,
       replyQuestion,
       rejectQuestion,
       backgroundSession,

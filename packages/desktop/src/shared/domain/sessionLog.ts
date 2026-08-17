@@ -85,11 +85,13 @@ export function initializeSessionLogState(
   messages: ReadonlyArray<SessionMessage.Info>,
   durableSeq?: number,
   questions: ReadonlyArray<Question.Request> = [],
+  pending: ReadonlyMap<string, InboxItem> = new Map(),
 ): SessionLogState {
   return {
     ...createSessionLogState(sessionID, messages),
     ...(durableSeq === undefined ? {} : { durableSeq }),
     questions: questions.toSorted((left, right) => left.id.localeCompare(right.id)),
+    pending,
     synchronized: true,
   }
 }
@@ -284,6 +286,19 @@ function applyEvent(
       pending.set(event.data.inboxID, event.data.item)
       return result(state.messages, [], pending)
     }
+    case "session.inbox.cancelled": {
+      if (!state.pending.has(event.data.inboxID)) return result(state.messages)
+      const pending = new Map(state.pending)
+      pending.delete(event.data.inboxID)
+      return result(state.messages, [], pending)
+    }
+    case "session.inbox.delivery.changed": {
+      const input = state.pending.get(event.data.inboxID)
+      if (input === undefined) return result(state.messages)
+      const pending = new Map(state.pending)
+      pending.set(event.data.inboxID, { ...input, delivery: event.data.delivery })
+      return result(state.messages, [], pending)
+    }
     case "session.inbox.delivered": {
       const input = state.pending.get(event.data.inboxID)
       if (input === undefined)
@@ -323,11 +338,6 @@ function applyEvent(
         [message.id],
         pending,
       )
-    }
-    case "session.inbox.cancelled": {
-      const pending = new Map(state.pending)
-      pending.delete(event.data.inboxID)
-      return result(state.messages, [], pending)
     }
     case "session.execution.started":
       return {

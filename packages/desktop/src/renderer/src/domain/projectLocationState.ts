@@ -58,7 +58,15 @@ export function createSessionView(
     buildSessionGraph(value.messages, value.active),
     previous?.authoritativeGraph,
   )
-  const reconciled = reconcileOptimisticPrompts(optimisticPrompts, value.messages)
+  const pendingTexts = value.pendingPrompts.map((prompt) => prompt.text)
+  const reconciled = reconcileOptimisticPrompts(optimisticPrompts, value.messages).filter(
+    (prompt) => {
+      const index = pendingTexts.indexOf(prompt.text)
+      if (index === -1) return true
+      pendingTexts.splice(index, 1)
+      return false
+    },
+  )
   const view = {
     id: Schema.decodeUnknownSync(Session.ID)(value.id),
     ...(value.parentID === undefined
@@ -71,6 +79,7 @@ export function createSessionView(
     synchronized: value.synchronized,
     execution: value.execution,
     questions: value.questions,
+    pendingPrompts: value.pendingPrompts,
     provisional: false,
     authoritativeGraph,
     optimisticPrompts: reconciled,

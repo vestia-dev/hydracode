@@ -12,6 +12,7 @@ export const DesktopChannels = {
   selectSession: "hydracode:select-session",
   createSession: "hydracode:create-session",
   submitPrompt: "hydracode:submit-prompt",
+  updateSessionInbox: "hydracode:update-session-inbox",
   replyQuestion: "hydracode:reply-question",
   rejectQuestion: "hydracode:reject-question",
   backgroundSession: "hydracode:background-session",

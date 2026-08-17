@@ -19,6 +19,7 @@ import {
   QuestionCommand,
   ReplyQuestionCommand,
   SubmitPromptCommand,
+  SessionInboxCommand,
   ProjectSessionCommand,
 } from "../shared/project"
 import { MainRuntime } from "./runtime"
@@ -200,7 +201,25 @@ export function registerDesktopIpc() {
     const command = Schema.decodeUnknownSync(SubmitPromptCommand)(input)
     return result(
       ProjectRegistry.use((registry) =>
-        registry.submitPrompt(command.subscriptionID, command.sessionID, command.text),
+        registry.submitPrompt(
+          command.subscriptionID,
+          command.sessionID,
+          command.text,
+          command.delivery,
+        ),
+      ),
+    )
+  })
+  ipcMain.handle(DesktopChannels.updateSessionInbox, (_event, input: unknown) => {
+    const command = Schema.decodeUnknownSync(SessionInboxCommand)(input)
+    return result(
+      ProjectRegistry.use((registry) =>
+        registry.updateInbox(
+          command.subscriptionID,
+          command.sessionID,
+          command.inboxID,
+          command.action,
+        ),
       ),
     )
   })

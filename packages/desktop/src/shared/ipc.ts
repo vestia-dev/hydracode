@@ -22,6 +22,7 @@ import {
   OpenProjectCommand,
   OpenProjectResult,
   SubmitPromptCommand,
+  SessionInboxCommand,
   ReplyQuestionCommand,
   QuestionCommand,
   ProjectCommandResult,
@@ -72,6 +73,7 @@ export {
   OpenProjectCommand,
   OpenProjectResult,
   SubmitPromptCommand,
+  SessionInboxCommand,
   ReplyQuestionCommand,
   QuestionCommand,
   ProjectCommandResult,
@@ -87,6 +89,7 @@ export type {
   CreateSessionCommand as CreateSessionCommandType,
   OpenProjectCommand as OpenProjectCommandType,
   SubmitPromptCommand as SubmitPromptCommandType,
+  SessionInboxCommand as SessionInboxCommandType,
   ReplyQuestionCommand as ReplyQuestionCommandType,
   QuestionCommand as QuestionCommandType,
   ProjectSessionCommand as ProjectSessionCommandType,
@@ -107,6 +110,7 @@ export interface HydraCodeDesktopApi {
   readonly selectSession: (command: ProjectSessionCommand) => Promise<SelectSessionResult>
   readonly createSession: (command: CreateSessionCommand) => Promise<CreateSessionResult>
   readonly submitPrompt: (command: SubmitPromptCommand) => Promise<ProjectCommandResult>
+  readonly updateSessionInbox: (command: SessionInboxCommand) => Promise<ProjectCommandResult>
   readonly replyQuestion: (command: ReplyQuestionCommand) => Promise<ProjectCommandResult>
   readonly rejectQuestion: (command: QuestionCommand) => Promise<ProjectCommandResult>
   readonly backgroundSession: (command: ProjectSessionCommand) => Promise<ProjectCommandResult>

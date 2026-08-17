@@ -105,7 +105,7 @@ it("accepts the current V2 prompt acknowledgement", async () => {
             timeCreated: 1,
             type: "user",
             payload: { text: "Hello" },
-            delivery: "steer",
+            delivery: "queue",
           },
         }),
       )
@@ -120,13 +120,15 @@ it("accepts the current V2 prompt acknowledgement", async () => {
 
   try {
     await Effect.runPromise(
-      OpenCodeService.use((service) => service.submitPrompt("ses_test", "Hello")).pipe(
+      OpenCodeService.use((service) => service.submitPrompt("ses_test", "Hello", "queue")).pipe(
         Effect.provide(OpenCodeServiceLive),
         Effect.provide(NodeFileSystem.layer),
       ),
     )
 
-    expect(requests).toEqual([{ url: "/api/session/ses_test/prompt", body: { text: "Hello" } }])
+    expect(requests).toEqual([
+      { url: "/api/session/ses_test/prompt", body: { text: "Hello", delivery: "queue" } },
+    ])
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error === undefined ? resolve() : reject(error))),

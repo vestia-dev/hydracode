@@ -16,6 +16,7 @@ import {
 import type {
   OpenProjectCommand,
   ProjectCatalogEntry,
+  ProjectPendingPrompt,
   ProjectUpdate,
 } from "../../../shared/project"
 import {
@@ -324,7 +325,12 @@ export function useProjectController() {
   )
 
   const submitPrompt = useCallback(
-    (locationKeyValue: string, sessionID: SessionView["id"], text: string) =>
+    (
+      locationKeyValue: string,
+      sessionID: SessionView["id"],
+      text: string,
+      delivery?: "queue" | "steer",
+    ) =>
       withProjectSubscription(locationKeyValue, sessionID, (subscriptionID) =>
         Effect.gen(function* () {
           const session = locationsRef.current
@@ -353,6 +359,7 @@ export function useProjectController() {
               subscriptionID,
               sessionID,
               text: prompt.text,
+              delivery,
             }),
           ).pipe(
             Effect.tapError(() =>
@@ -376,6 +383,21 @@ export function useProjectController() {
         }),
       ),
     [updateProject, withProjectSubscription],
+  )
+
+  const updateSessionInbox = useCallback(
+    (
+      locationKeyValue: string,
+      sessionID: SessionView["id"],
+      inboxID: ProjectPendingPrompt["id"],
+      action: "cancel" | "queue" | "steer",
+    ) =>
+      withProjectSubscription(locationKeyValue, sessionID, (subscriptionID) =>
+        DesktopBridge.use((desktop) =>
+          desktop.updateSessionInbox({ subscriptionID, sessionID, inboxID, action }),
+        ),
+      ),
+    [withProjectSubscription],
   )
 
   const selectSession = useCallback(
@@ -421,6 +443,7 @@ export function useProjectController() {
             synchronized: true,
             execution: { _tag: "Idle" },
             questions: [],
+            pendingPrompts: [],
             provisional: true,
             authoritativeGraph,
             optimisticPrompts: [],
@@ -705,6 +728,7 @@ export function useProjectController() {
     selectSession,
     createSession,
     submitPrompt,
+    updateSessionInbox,
     replyQuestion,
     rejectQuestion,
     backgroundSession,

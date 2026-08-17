@@ -74,6 +74,12 @@ interface SessionPaneProps {
   readonly submitPrompt: (
     sessionID: SessionView["id"],
     text: string,
+    delivery?: "queue" | "steer",
+  ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
+  readonly updateSessionInbox: (
+    sessionID: SessionView["id"],
+    inboxID: SessionView["pendingPrompts"][number]["id"],
+    action: "cancel" | "queue" | "steer",
   ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>
   readonly interruptSession: (
     sessionID: SessionView["id"],
@@ -295,8 +301,15 @@ function promptFlowNode(
   id: string,
   position: { readonly x: number; readonly y: number },
   agentRunning: boolean,
-  promptPending: boolean,
-  submitPrompt: (text: string) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>,
+  submitPrompt: (
+    text: string,
+    delivery?: "queue" | "steer",
+  ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>,
+  pendingPrompts: SessionView["pendingPrompts"],
+  updatePendingPrompt: (
+    inboxID: SessionView["pendingPrompts"][number]["id"],
+    action: "cancel" | "queue" | "steer",
+  ) => Effect.Effect<void, DesktopBridgeError, DesktopBridge>,
   retryPrompt: { readonly text: string; readonly message: string } | undefined,
   focusRequest: number | undefined,
   draft: string,
@@ -308,8 +321,9 @@ function promptFlowNode(
     position,
     data: {
       agentRunning,
-      promptPending,
       submitPrompt,
+      pendingPrompts,
+      updatePendingPrompt,
       draft,
       setDraft,
       ...(retryPrompt === undefined ? {} : { retryPrompt }),
@@ -348,6 +362,7 @@ function SessionCanvas({
   stopFamily,
   stopFollowing,
   submitPrompt,
+  updateSessionInbox,
   backgroundSession,
   interruptSession,
   replyQuestion,
@@ -431,30 +446,6 @@ function SessionCanvas({
       return next
     })
   }, [])
-  const retainMeasuredNodeSizes = useCallback(
-    (changes: Array<NodeChange<FlowNode>>) => {
-      let measured = 0
-      for (const change of changes) {
-        if (change.type === "dimensions" && change.dimensions !== undefined) {
-          measuredNodeSizes.current.set(change.id, change.dimensions)
-          measured += 1
-        }
-      }
-      if (measured > 0 && !recordedNodeMeasurement.current) {
-        recordedNodeMeasurement.current = true
-        recordStartupMeasure(
-          "session-flow-time-to-node-measurement",
-          initialFlowRenderStarted.current,
-          {
-            sessionID: session.id,
-            nodes: measured,
-          },
-        )
-      }
-    },
-    [session.id],
-  )
-
   const flow = useMemo(() => {
     const started = performance.now()
     const sessions = [session, ...descendants]
@@ -944,8 +935,9 @@ function SessionCanvas({
             composer.id,
             composerPosition,
             sessions.some((current) => current.active),
-            sessions.some((current) => current.optimisticPrompts.length > 0),
-            (text) => submitPrompt(session.id, text),
+            (text, delivery) => submitPrompt(session.id, text, delivery),
+            session.pendingPrompts,
+            (inboxID, action) => updateSessionInbox(session.id, inboxID, action),
             retryPrompt,
             focusPromptRequest,
             uiState?.draft ?? "",
@@ -1087,6 +1079,7 @@ function SessionCanvas({
     sideNodeSizes,
     stopFamily,
     submitPrompt,
+    updateSessionInbox,
     toggleRound,
     toggleSubagent,
   ])
@@ -1094,6 +1087,7 @@ function SessionCanvas({
   const reactFlow = useReactFlow<FlowNode>()
   const paneWidth = useStore((state) => state.width)
   const paneHeight = useStore((state) => state.height)
+  const recenterFrame = useRef<number | undefined>(undefined)
   const centerLatest = useCallback(
     (duration: number) => {
       if (!reactFlow.viewportInitialized || flow.focusNodeID === undefined) return
@@ -1106,6 +1100,43 @@ function SessionCanvas({
       })
     },
     [flow.focusNodeID, reactFlow],
+  )
+  const retainMeasuredNodeSizes = useCallback(
+    (changes: Array<NodeChange<FlowNode>>) => {
+      let measured = 0
+      for (const change of changes) {
+        if (change.type === "dimensions" && change.dimensions !== undefined) {
+          measuredNodeSizes.current.set(change.id, change.dimensions)
+          measured += 1
+        }
+      }
+      if (measured > 0 && !recordedNodeMeasurement.current) {
+        recordedNodeMeasurement.current = true
+        recordStartupMeasure(
+          "session-flow-time-to-node-measurement",
+          initialFlowRenderStarted.current,
+          {
+            sessionID: session.id,
+            nodes: measured,
+          },
+        )
+      }
+      if (followLatest && measured > 0) {
+        if (recenterFrame.current !== undefined) window.cancelAnimationFrame(recenterFrame.current)
+        recenterFrame.current = window.requestAnimationFrame(() => {
+          recenterFrame.current = undefined
+          centerLatest(220)
+        })
+      }
+    },
+    [centerLatest, followLatest, session.id],
+  )
+
+  useEffect(
+    () => () => {
+      if (recenterFrame.current !== undefined) window.cancelAnimationFrame(recenterFrame.current)
+    },
+    [],
   )
 
   useEffect(() => {
@@ -1189,6 +1220,7 @@ export function SessionPane({
   descendants,
   directory,
   submitPrompt,
+  updateSessionInbox,
   replyQuestion,
   rejectQuestion,
   backgroundSession,
@@ -1207,10 +1239,10 @@ export function SessionPane({
     updateUIState({ followLatest: false })
   }, [updateUIState])
   const submitPromptAndFollow = useCallback(
-    (sessionID: SessionView["id"], text: string) => {
+    (sessionID: SessionView["id"], text: string, delivery?: "queue" | "steer") => {
       setFollowLatest(true)
       updateUIState({ followLatest: true })
-      return submitPrompt(sessionID, text)
+      return submitPrompt(sessionID, text, delivery)
     },
     [submitPrompt, updateUIState],
   )
@@ -1268,6 +1300,7 @@ export function SessionPane({
           stopFamily={stopFamily}
           stopFollowing={stopFollowing}
           submitPrompt={submitPromptAndFollow}
+          updateSessionInbox={updateSessionInbox}
           backgroundSession={backgroundSession}
           interruptSession={interruptSession}
           replyQuestion={replyQuestion}
