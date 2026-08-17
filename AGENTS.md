@@ -1,28 +1,24 @@
-# HydraCode Engineering Guardrails
-
 ## Dependency policy
 
 - Do not add, remove, or update a dependency without explicit user approval.
 - Before requesting approval, state the exact version, whether it is a runtime or development dependency, its purpose, and why existing dependencies are insufficient.
 - Prefer capabilities already provided by Effect and the platform.
 
-## Effect architecture
+## Code architecture quality and style
 
-- Effect is the application architecture in Electron main, preload adapters, and the renderer.
-- Keep `Effect.run*` calls at runtime boundaries only.
-- Model expected failures with typed errors; do not throw them.
-- Validate external, persisted, and IPC data with Effect Schema.
-- Put side effects and external integrations behind Effect services and Layers.
-- Acquire long-lived resources with scopes and release them deterministically.
-- Use Effect concurrency primitives for background work and streaming.
-- Keep projections from OpenCode events to domain state deterministic and replay-testable.
+- OpenCode has a split client and server architecture. HydraCode is the client side of this. Existing clients already exist like the OpenCode TUI and OpenCode Desktop application. We can use these to help us make decisions.
+- We must treat the OpenCode API as the source of truth for naming, architecture guidance and authority. This includes using the OpenCode client packages types instead of making our own.
+- We must do our best to not invent new concepts at all. This often leads to wrappers of existing OpenCode functionality.
+
+## Your explanation style
+
+- You should explain things like you are talking to a junior engineer. Use simple terminology but don't overlook or skip anything. Avoid jargon without sacrificing detail and nuance. Avoid metaphors.
 
 ## Desktop boundaries
 
 - Electron renderers must use context isolation, sandboxing, and no Node integration.
 - Expose the smallest possible typed preload API.
 - Keep process management, filesystem access, credentials, and native capabilities in the main process.
-- Treat OpenCode as the authority for agent history and HydraCode as a projection of it.
 
 ## Verification
 
