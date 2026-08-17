@@ -1,5 +1,4 @@
 import type { Question, Session } from "@opencode-ai/client/effect"
-import { Schema } from "effect"
 import type { SemanticGraph } from "../domain/graph"
 import type { OptimisticPrompt } from "../domain/optimisticPrompts"
 import type { ProjectPendingPrompt, ProjectSessionExecution } from "../../../shared/project"
@@ -38,12 +37,4 @@ export interface ProjectSnapshot {
   readonly location: Location.Ref
   readonly sessions: ReadonlyArray<SessionView>
   readonly recentSessions: ReadonlyArray<SessionSummary>
-}
-
-export class OpenCodeGatewayError extends Schema.TaggedErrorClass<OpenCodeGatewayError>()(
-  "OpenCodeGatewayError",
-  { message: Schema.String, cause: Schema.Defect() },
-) {}
-export interface OpenCodeGateway {
-  readonly submitPrompt: never
 }
