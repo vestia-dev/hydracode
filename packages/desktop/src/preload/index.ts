@@ -1,9 +1,10 @@
 import { contextBridge, ipcRenderer } from "electron"
-import { Schema } from "effect"
 import { DesktopChannels } from "../shared/desktopChannels"
 import type { HydraCodeDesktopApi } from "../shared/ipc"
-import { ProjectUpdateEnvelope } from "../shared/project"
-import { makeProjectUpdateSubscriptions } from "./projectUpdateSubscriptions"
+import {
+  makeProjectUpdateSubscriptions,
+  readProjectUpdateEnvelope,
+} from "./projectUpdateSubscriptions"
 
 const projectUpdates = makeProjectUpdateSubscriptions<unknown>()
 const updateListeners = new Set<(state: unknown) => void>()
@@ -19,7 +20,8 @@ ipcRenderer.on(DesktopChannels.updateState, (_event, state: unknown) => {
 })
 
 ipcRenderer.on(DesktopChannels.projectUpdate, (_event, input: unknown) => {
-  const envelope = Schema.decodeUnknownSync(ProjectUpdateEnvelope)(input)
+  const envelope = readProjectUpdateEnvelope(input)
+  if (envelope === undefined) return
   projectUpdates.publish(envelope.subscriptionID, envelope.update)
 })
 

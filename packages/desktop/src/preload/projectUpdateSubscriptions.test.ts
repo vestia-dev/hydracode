@@ -1,5 +1,23 @@
 import { describe, expect, it, vi } from "vitest"
-import { makeProjectUpdateSubscriptions } from "./projectUpdateSubscriptions"
+import {
+  makeProjectUpdateSubscriptions,
+  readProjectUpdateEnvelope,
+} from "./projectUpdateSubscriptions"
+
+describe("project update envelopes", () => {
+  it("reads the routing fields without loading renderer schema dependencies", () => {
+    expect(
+      readProjectUpdateEnvelope({ subscriptionID: "project", update: { _tag: "Snapshot" } }),
+    ).toEqual({ subscriptionID: "project", update: { _tag: "Snapshot" } })
+  })
+
+  it.each([undefined, null, {}, { subscriptionID: 1, update: {} }, { subscriptionID: "project" }])(
+    "ignores malformed envelopes: %j",
+    (input) => {
+      expect(readProjectUpdateEnvelope(input)).toBeUndefined()
+    },
+  )
+})
 
 describe("project update subscriptions", () => {
   it("routes interleaved updates to the matching subscription", () => {

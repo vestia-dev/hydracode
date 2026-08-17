@@ -1,3 +1,20 @@
+export interface ProjectUpdateEnvelopeInput {
+  readonly subscriptionID: string
+  readonly update: unknown
+}
+
+export function readProjectUpdateEnvelope(input: unknown): ProjectUpdateEnvelopeInput | undefined {
+  if (
+    typeof input !== "object" ||
+    input === null ||
+    !("subscriptionID" in input) ||
+    typeof input.subscriptionID !== "string" ||
+    !("update" in input)
+  )
+    return undefined
+  return { subscriptionID: input.subscriptionID, update: input.update }
+}
+
 export function makeProjectUpdateSubscriptions<A>(maxPending = 512) {
   const listeners = new Map<string, Set<(update: A) => void>>()
   const pending = new Map<string, Array<A>>()
