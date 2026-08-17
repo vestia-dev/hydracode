@@ -41,6 +41,7 @@ import {
   PaneSplitCommand,
   type PaneSplitCommand as PaneSplitCommandType,
 } from "../../../shared/pane"
+import { SavedPromptsResult, type SavedPrompt } from "../../../shared/savedPrompt"
 
 export class DesktopBridgeError extends Schema.TaggedErrorClass<DesktopBridgeError>()(
   "DesktopBridgeError",
@@ -59,6 +60,9 @@ interface DesktopBridgeShape {
   readonly saveProjectUIState: (
     state: ProjectUIState,
   ) => Effect.Effect<ProjectUIState, DesktopBridgeError>
+  readonly listSavedPrompts: Effect.Effect<ReadonlyArray<SavedPrompt>, DesktopBridgeError>
+  readonly savePrompt: (text: string) => Effect.Effect<void, DesktopBridgeError>
+  readonly copyPrompt: (text: string) => Effect.Effect<void, DesktopBridgeError>
   readonly getOpenCodeDiagnostics: Effect.Effect<OpenCodeDiagnostics, DesktopBridgeError>
   readonly installOpenCode: Effect.Effect<void, DesktopBridgeError>
   readonly openProject: (
@@ -213,6 +217,15 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
               ),
         ),
       ),
+    listSavedPrompts: invoke(() => window.hydracode.listSavedPrompts(), SavedPromptsResult).pipe(
+      Effect.flatMap((result) =>
+        result._tag === "Success"
+          ? Effect.succeed(result.prompts)
+          : Effect.fail(new DesktopBridgeError({ message: result.message, cause: result })),
+      ),
+    ),
+    savePrompt: (text) => command(() => window.hydracode.savePrompt({ text })),
+    copyPrompt: (text) => command(() => window.hydracode.copyPrompt({ text })),
     getOpenCodeDiagnostics: invoke(
       () => window.hydracode.getOpenCodeDiagnostics(),
       OpenCodeDiagnosticsResult,

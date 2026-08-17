@@ -7,6 +7,8 @@ it.effect("lists every current application command once", () =>
     expect(CommandMenuDefinitions.map(({ id }) => id)).toEqual([
       "new-session",
       "open-project",
+      "save-prompt",
+      "view-saved-prompts",
       "toggle-settings",
       "split-pane-right",
       "split-pane-down",
@@ -36,6 +38,9 @@ it.effect("searches command titles, categories, and aliases across multiple term
     ])
     expect(filterCommandMenuDefinitions("appearance").map(({ id }) => id)).toEqual([
       "toggle-settings",
+    ])
+    expect(filterCommandMenuDefinitions("clipboard").map(({ id }) => id)).toEqual([
+      "view-saved-prompts",
     ])
     expect(filterCommandMenuDefinitions("  ")).toBe(CommandMenuDefinitions)
   }),

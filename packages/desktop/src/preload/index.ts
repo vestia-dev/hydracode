@@ -49,6 +49,9 @@ const desktopApi: HydraCodeDesktopApi = {
   loadApplicationState: () => ipcRenderer.invoke(DesktopChannels.loadApplicationState),
   saveProjectSelection: (state) => ipcRenderer.invoke(DesktopChannels.saveProjectSelection, state),
   saveProjectUIState: (state) => ipcRenderer.invoke(DesktopChannels.saveProjectUIState, state),
+  listSavedPrompts: () => ipcRenderer.invoke(DesktopChannels.listSavedPrompts),
+  savePrompt: (command) => ipcRenderer.invoke(DesktopChannels.savePrompt, command),
+  copyPrompt: (command) => ipcRenderer.invoke(DesktopChannels.copyPrompt, command),
   openProject: (command) => ipcRenderer.invoke(DesktopChannels.openProject, command),
   listProjectSessions: (command) =>
     ipcRenderer.invoke(DesktopChannels.listProjectSessions, command),

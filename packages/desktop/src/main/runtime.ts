@@ -7,6 +7,7 @@ import { ThemeServiceLive } from "./services/ThemeService"
 import { UpdateServiceLive } from "./services/UpdateService"
 import { ApplicationStateServiceLive } from "./services/ApplicationStateService"
 import { OpenCodeEventServiceLive } from "./services/OpenCodeEventService"
+import { SavedPromptsServiceLive } from "./services/SavedPromptsService"
 
 const OpenCodeLayer = OpenCodeServiceLive.pipe(
   Layer.provide(NodeFileSystem.layer),
@@ -14,6 +15,7 @@ const OpenCodeLayer = OpenCodeServiceLive.pipe(
 )
 const ThemeLayer = ThemeServiceLive.pipe(Layer.provide(NodeFileSystem.layer))
 const ApplicationStateLayer = ApplicationStateServiceLive.pipe(Layer.provide(NodeFileSystem.layer))
+const SavedPromptsLayer = SavedPromptsServiceLive.pipe(Layer.provide(NodeFileSystem.layer))
 const OpenCodeEventLayer = OpenCodeEventServiceLive.pipe(Layer.provide(OpenCodeLayer))
 const MainLayer = Layer.mergeAll(
   DesktopServiceLive,
@@ -21,6 +23,7 @@ const MainLayer = Layer.mergeAll(
   OpenCodeEventLayer,
   ThemeLayer,
   ApplicationStateLayer,
+  SavedPromptsLayer,
   UpdateServiceLive,
 )
 

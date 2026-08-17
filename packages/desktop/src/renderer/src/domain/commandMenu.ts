@@ -1,6 +1,8 @@
 export type CommandMenuCommandID =
   | "new-session"
   | "open-project"
+  | "save-prompt"
+  | "view-saved-prompts"
   | "toggle-settings"
   | "split-pane-right"
   | "split-pane-down"
@@ -17,7 +19,7 @@ export type CommandMenuCommandID =
 export interface CommandMenuDefinition {
   readonly id: CommandMenuCommandID
   readonly title: string
-  readonly category: "Application" | "Layout" | "Pane" | "Navigation"
+  readonly category: "Application" | "Prompts" | "Layout" | "Pane" | "Navigation"
   readonly shortcut?: string
   readonly keywords: ReadonlyArray<string>
 }
@@ -34,6 +36,18 @@ export const CommandMenuDefinitions: ReadonlyArray<CommandMenuDefinition> = [
     title: "Open Project",
     category: "Application",
     keywords: ["open", "choose", "folder", "project list"],
+  },
+  {
+    id: "save-prompt",
+    title: "Save a Prompt",
+    category: "Prompts",
+    keywords: ["remember", "store", "later"],
+  },
+  {
+    id: "view-saved-prompts",
+    title: "View Saved Prompts",
+    category: "Prompts",
+    keywords: ["search", "browse", "copy", "clipboard"],
   },
   {
     id: "toggle-settings",

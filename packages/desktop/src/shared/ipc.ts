@@ -14,6 +14,7 @@ import type {
   ProjectUIState,
   ProjectUIStateResult,
 } from "./applicationState"
+import type { CopyPromptCommand, SavePromptCommand, SavedPromptsResult } from "./savedPrompt"
 import {
   ProjectCatalogEntry,
   CreateSessionCommand,
@@ -111,6 +112,9 @@ export interface HydraCodeDesktopApi {
   readonly loadApplicationState: () => Promise<ApplicationStateResult>
   readonly saveProjectSelection: (state: ProjectSelectionState) => Promise<ApplicationStateResult>
   readonly saveProjectUIState: (state: ProjectUIState) => Promise<ProjectUIStateResult>
+  readonly listSavedPrompts: () => Promise<SavedPromptsResult>
+  readonly savePrompt: (command: SavePromptCommand) => Promise<ProjectCommandResult>
+  readonly copyPrompt: (command: CopyPromptCommand) => Promise<ProjectCommandResult>
   readonly openProject: (command: OpenProjectCommand) => Promise<OpenProjectResult>
   readonly listProjectSessions: (
     command: ListProjectSessionsCommand,

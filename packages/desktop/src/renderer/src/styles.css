@@ -468,7 +468,8 @@ html[data-platform="macos"] .project-header {
   stroke-width: 1.5;
 }
 
-.command-menu__search-wrap input {
+.command-menu__search-wrap input,
+.command-menu__prompt-editor textarea {
   width: 100%;
   padding: 0;
   border: 0;
@@ -478,7 +479,32 @@ html[data-platform="macos"] .project-header {
   font-size: 15px;
 }
 
-.command-menu__search-wrap input::placeholder {
+.command-menu__prompt-editor textarea {
+  min-height: 104px;
+  line-height: 1.5;
+  resize: none;
+}
+
+.command-menu__page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.command-menu__page-header strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.command-menu__prompt-editor {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.command-menu__search-wrap input::placeholder,
+.command-menu__prompt-editor textarea::placeholder {
   color: var(--color-textMuted);
 }
 
@@ -583,6 +609,21 @@ html[data-platform="macos"] .project-header {
   color: var(--color-textMuted);
   font-size: 12px;
   text-align: center;
+}
+
+.command-menu__results--prompt {
+  min-height: 0;
+  padding: 0;
+}
+
+.command-menu__prompt-error {
+  padding: 10px 16px;
+  color: var(--color-danger);
+  font-size: 11px;
+}
+
+.command-menu__prompt-item {
+  padding-block: 11px;
 }
 
 .command-menu__footer {

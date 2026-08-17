@@ -5,6 +5,7 @@ import { filterCommandMenuDefinitions, type CommandMenuCommandID } from "../doma
 import type { ProjectCatalogEntry } from "../../../shared/project"
 import { projectCatalogMatches } from "../../../shared/domain/projectCatalog"
 import { projectDisplayName, projectInitial } from "../domain/projectPresentation"
+import type { SavedPrompt } from "../../../shared/savedPrompt"
 
 export interface CommandMenuCommand {
   readonly id: CommandMenuCommandID
@@ -24,7 +25,12 @@ interface CommandMenuProps {
     persist?: boolean,
     location?: Location.Ref,
   ) => void
+  readonly listSavedPrompts: () => Promise<ReadonlyArray<SavedPrompt>>
+  readonly savePrompt: (text: string) => Promise<void>
+  readonly copyPrompt: (text: string) => Promise<void>
 }
+
+type CommandMenuView = "commands" | "projects" | "save-prompt" | "saved-prompts"
 
 function shortcutLabel(shortcut: string) {
   const macOS = document.documentElement.dataset.platform === "macos"
@@ -45,16 +51,22 @@ export function CommandMenu({
   projectsError,
   chooseFolder,
   openProject,
+  listSavedPrompts,
+  savePrompt,
+  copyPrompt,
 }: CommandMenuProps) {
   const dialogRef = useRef<HTMLElement>(null)
-  const searchRef = useRef<HTMLInputElement>(null)
+  const searchRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null)
   const returnFocus = useRef(
     document.activeElement instanceof HTMLElement ? document.activeElement : null,
   )
   const titleID = useId()
   const [query, setQuery] = useState("")
   const [activeIndex, setActiveIndex] = useState(0)
-  const [view, setView] = useState<"commands" | "projects">("commands")
+  const [view, setView] = useState<CommandMenuView>("commands")
+  const [savedPrompts, setSavedPrompts] = useState<ReadonlyArray<SavedPrompt>>([])
+  const [operationPending, setOperationPending] = useState(false)
+  const [operationError, setOperationError] = useState<string>()
   const definitions = filterCommandMenuDefinitions(query)
   const availableDefinitions = definitions.filter(
     ({ id }) => !commands.find((command) => command.id === id)?.disabled,
@@ -66,13 +78,19 @@ export function CommandMenu({
     ...filteredProjects.filter((project) => project.project.id === Project.ID.global),
   ]
   const projectOptionCount = orderedProjects.length + 1
+  const filteredPrompts = savedPrompts.filter((prompt) =>
+    prompt.text.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
+  )
 
   useEffect(() => {
-    searchRef.current?.focus()
     return () => {
       if (returnFocus.current?.isConnected) returnFocus.current.focus()
     }
   }, [])
+
+  useEffect(() => {
+    searchRef.current?.focus()
+  }, [view])
 
   useEffect(() => {
     setActiveIndex(0)
@@ -90,10 +108,78 @@ export function CommandMenu({
       setQuery("")
       return
     }
+    if (id === "save-prompt") {
+      setView("save-prompt")
+      setQuery("")
+      setOperationError(undefined)
+      return
+    }
+    if (id === "view-saved-prompts") {
+      setView("saved-prompts")
+      setQuery("")
+      setOperationError(undefined)
+      setOperationPending(true)
+      void listSavedPrompts().then(
+        (prompts) => {
+          setSavedPrompts(prompts)
+          setOperationPending(false)
+        },
+        (cause: unknown) => {
+          setOperationError(
+            cause instanceof Error ? cause.message : "Saved prompts could not load.",
+          )
+          setOperationPending(false)
+        },
+      )
+      return
+    }
     const command = commands.find((candidate) => candidate.id === id)
     if (command === undefined || command.disabled) return
     close()
     command.run()
+  }
+
+  const submitSavedPrompt = () => {
+    if (operationPending || query.trim() === "") return
+    setOperationPending(true)
+    setOperationError(undefined)
+    void savePrompt(query).then(
+      () => {
+        setView("saved-prompts")
+        setQuery("")
+        void listSavedPrompts().then(
+          (prompts) => {
+            setSavedPrompts(prompts)
+            setOperationPending(false)
+          },
+          (cause: unknown) => {
+            setOperationError(
+              cause instanceof Error ? cause.message : "Saved prompts could not load.",
+            )
+            setOperationPending(false)
+          },
+        )
+      },
+      (cause: unknown) => {
+        setOperationError(cause instanceof Error ? cause.message : "The prompt could not be saved.")
+        setOperationPending(false)
+      },
+    )
+  }
+
+  const copySavedPrompt = (prompt: SavedPrompt) => {
+    if (operationPending) return
+    setOperationPending(true)
+    setOperationError(undefined)
+    void copyPrompt(prompt.text).then(
+      () => close(),
+      (cause: unknown) => {
+        setOperationError(
+          cause instanceof Error ? cause.message : "The prompt could not be copied.",
+        )
+        setOperationPending(false)
+      },
+    )
   }
 
   return createPortal(
@@ -112,9 +198,10 @@ export function CommandMenu({
         onKeyDown={(event) => {
           if (event.key === "Escape") {
             event.preventDefault()
-            if (view === "projects") {
+            if (view !== "commands") {
               setView("commands")
               setQuery("")
+              setOperationError(undefined)
             } else close()
           } else if (event.key === "ArrowDown" && view === "projects") {
             event.preventDefault()
@@ -134,22 +221,58 @@ export function CommandMenu({
                 openProject(project, true)
               }
             }
-          } else if (event.key === "ArrowDown" && availableDefinitions.length > 0) {
+          } else if (
+            event.key === "ArrowDown" &&
+            view === "saved-prompts" &&
+            filteredPrompts.length > 0
+          ) {
+            event.preventDefault()
+            setActiveIndex((current) => (current + 1) % filteredPrompts.length)
+          } else if (
+            event.key === "ArrowUp" &&
+            view === "saved-prompts" &&
+            filteredPrompts.length > 0
+          ) {
+            event.preventDefault()
+            setActiveIndex(
+              (current) => (current - 1 + filteredPrompts.length) % filteredPrompts.length,
+            )
+          } else if (event.key === "Enter" && view === "saved-prompts") {
+            event.preventDefault()
+            const prompt = filteredPrompts[activeIndex]
+            if (prompt !== undefined) copySavedPrompt(prompt)
+          } else if (
+            event.key === "Enter" &&
+            view === "save-prompt" &&
+            !event.shiftKey &&
+            !event.nativeEvent.isComposing
+          ) {
+            event.preventDefault()
+            submitSavedPrompt()
+          } else if (
+            event.key === "ArrowDown" &&
+            view === "commands" &&
+            availableDefinitions.length > 0
+          ) {
             event.preventDefault()
             setActiveIndex((current) => (current + 1) % availableDefinitions.length)
-          } else if (event.key === "ArrowUp" && availableDefinitions.length > 0) {
+          } else if (
+            event.key === "ArrowUp" &&
+            view === "commands" &&
+            availableDefinitions.length > 0
+          ) {
             event.preventDefault()
             setActiveIndex(
               (current) =>
                 (current - 1 + availableDefinitions.length) % availableDefinitions.length,
             )
-          } else if (event.key === "Enter" && activeID !== undefined) {
+          } else if (event.key === "Enter" && view === "commands" && activeID !== undefined) {
             event.preventDefault()
             execute(activeID)
           } else if (event.key === "Tab") {
             const focusable = Array.from(
               event.currentTarget.querySelectorAll<HTMLElement>(
-                'input:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+                'input:not([disabled]), textarea:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])',
               ),
             )
             const first = focusable[0]
@@ -165,29 +288,80 @@ export function CommandMenu({
         }}
       >
         <h1 id={titleID} className="command-menu__title">
-          {view === "projects" ? "Open project" : "Command menu"}
+          {view === "projects"
+            ? "Open project"
+            : view === "save-prompt"
+              ? "Save a prompt"
+              : view === "saved-prompts"
+                ? "Saved prompts"
+                : "Command menu"}
         </h1>
-        <div className="command-menu__search-wrap">
-          <svg viewBox="0 0 20 20" aria-hidden="true">
-            <circle cx="8.5" cy="8.5" r="5.25" />
-            <path d="m12.5 12.5 4 4" />
-          </svg>
-          <input
-            ref={searchRef}
-            type="search"
-            value={query}
-            placeholder={view === "projects" ? "Search projects" : "Search commands"}
-            aria-label={view === "projects" ? "Search projects" : "Search commands"}
-            autoComplete="off"
-            spellCheck={false}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-          <kbd>esc</kbd>
-        </div>
+        {view === "save-prompt" ? (
+          <div className="command-menu__prompt-entry">
+            <div className="command-menu__page-header">
+              <strong>Save a prompt</strong>
+              <kbd>esc</kbd>
+            </div>
+            <div className="command-menu__prompt-editor">
+              <textarea
+                ref={(element) => {
+                  searchRef.current = element
+                }}
+                value={query}
+                placeholder="Write a prompt to save"
+                aria-label="Prompt to save"
+                autoComplete="off"
+                spellCheck={true}
+                rows={5}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="command-menu__search-wrap">
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <circle cx="8.5" cy="8.5" r="5.25" />
+              <path d="m12.5 12.5 4 4" />
+            </svg>
+            <input
+              ref={(element) => {
+                searchRef.current = element
+              }}
+              type="search"
+              value={query}
+              placeholder={
+                view === "projects"
+                  ? "Search projects"
+                  : view === "saved-prompts"
+                    ? "Search saved prompts"
+                    : "Search commands"
+              }
+              aria-label={
+                view === "projects"
+                  ? "Search projects"
+                  : view === "saved-prompts"
+                    ? "Search saved prompts"
+                    : "Search commands"
+              }
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+            <kbd>esc</kbd>
+          </div>
+        )}
         <div
-          className="command-menu__results"
-          role="listbox"
-          aria-label={view === "projects" ? "Projects" : "Commands"}
+          className={`command-menu__results${view === "save-prompt" ? " command-menu__results--prompt" : ""}`}
+          role={view === "save-prompt" ? undefined : "listbox"}
+          aria-label={
+            view === "save-prompt"
+              ? undefined
+              : view === "projects"
+                ? "Projects"
+                : view === "saved-prompts"
+                  ? "Saved prompts"
+                  : "Commands"
+          }
         >
           {view === "projects" ? (
             <>
@@ -260,6 +434,40 @@ export function CommandMenu({
                 })
               )}
             </>
+          ) : view === "save-prompt" ? (
+            operationError === undefined ? null : (
+              <div className="command-menu__prompt-error">{operationError}</div>
+            )
+          ) : view === "saved-prompts" ? (
+            operationPending && savedPrompts.length === 0 ? (
+              <div className="command-menu__empty">Loading saved prompts...</div>
+            ) : operationError !== undefined ? (
+              <div className="command-menu__empty">{operationError}</div>
+            ) : filteredPrompts.length === 0 ? (
+              <div className="command-menu__empty">
+                {savedPrompts.length === 0 ? "No saved prompts yet" : "No matching prompts"}
+              </div>
+            ) : (
+              filteredPrompts.map((prompt, index) => {
+                const active = activeIndex === index
+                return (
+                  <button
+                    key={prompt.id}
+                    type="button"
+                    role="option"
+                    aria-selected={active}
+                    className={`command-menu__item command-menu__prompt-item${active ? " command-menu__item--active" : ""}`}
+                    onMouseMove={() => setActiveIndex(index)}
+                    onClick={() => copySavedPrompt(prompt)}
+                  >
+                    <span className="command-menu__item-copy">
+                      <strong>{prompt.text}</strong>
+                      <small>Copy to clipboard</small>
+                    </span>
+                  </button>
+                )
+              })
+            )
           ) : definitions.length === 0 ? (
             <div className="command-menu__empty">No matching commands</div>
           ) : (
@@ -294,12 +502,19 @@ export function CommandMenu({
           )}
         </div>
         <footer className="command-menu__footer">
+          {view === "save-prompt" ? (
+            <span>
+              <kbd>⇧↵</kbd> New line
+            </span>
+          ) : (
+            <span>
+              <kbd>↑</kbd>
+              <kbd>↓</kbd> Navigate
+            </span>
+          )}
           <span>
-            <kbd>↑</kbd>
-            <kbd>↓</kbd> Navigate
-          </span>
-          <span>
-            <kbd>↵</kbd> Run
+            <kbd>↵</kbd>{" "}
+            {view === "saved-prompts" ? "Copy" : view === "save-prompt" ? "Save and view" : "Run"}
           </span>
         </footer>
       </section>

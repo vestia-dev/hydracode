@@ -1,5 +1,5 @@
 import { Effect, Schema, Stream } from "effect"
-import { ipcMain } from "electron"
+import { clipboard, ipcMain } from "electron"
 import { Event, Location, Project, Session } from "@opencode-ai/client/effect"
 import { DesktopChannels } from "../shared/desktopChannels"
 import { SetBundledThemeCommand } from "../shared/theme"
@@ -45,6 +45,8 @@ import { availableProjects, projectName } from "../shared/domain/projectCatalog"
 import { OpenCodeEvent as OpenCodeEventSchema } from "@opencode-ai/protocol/groups/event"
 import { OpenCodeEventService } from "./services/OpenCodeEventService"
 import { listAllSessionMessages } from "../shared/domain/sessionMessages"
+import { CopyPromptCommand, SavePromptCommand, SavedPromptsResult } from "../shared/savedPrompt"
+import { SavedPromptsService } from "./services/SavedPromptsService"
 
 const updateSubscriptions = new Map<number, () => void>()
 const openCodeEventSubscriptions = new Map<number, () => void>()
@@ -186,6 +188,21 @@ export function registerDesktopIpc() {
         Schema.encodeSync(ProjectUIStateResult)({ _tag: "Success" as const, state: saved }),
       )
       .catch((cause) => ({ _tag: "Failure" as const, message: failureMessage(cause) }))
+  })
+  ipcMain.handle(DesktopChannels.listSavedPrompts, () =>
+    MainRuntime.runPromise(SavedPromptsService.use((service) => service.list))
+      .then((prompts) => Schema.encodeSync(SavedPromptsResult)({ _tag: "Success", prompts }))
+      .catch((cause) => ({ _tag: "Failure" as const, message: failureMessage(cause) })),
+  )
+  ipcMain.handle(DesktopChannels.savePrompt, (_event, input: unknown) => {
+    const command = Schema.decodeUnknownSync(SavePromptCommand)(input)
+    return result(
+      SavedPromptsService.use((service) => service.save(command.text).pipe(Effect.asVoid)),
+    )
+  })
+  ipcMain.handle(DesktopChannels.copyPrompt, (_event, input: unknown) => {
+    const command = Schema.decodeUnknownSync(CopyPromptCommand)(input)
+    return result(Effect.sync(() => clipboard.writeText(command.text)))
   })
   ipcMain.handle(DesktopChannels.openCodeDiagnostics, () =>
     MainRuntime.runPromise(OpenCodeService.use((service) => service.diagnostics))

@@ -380,6 +380,14 @@ export function App() {
       run: () => undefined,
     },
     {
+      id: "save-prompt",
+      run: () => undefined,
+    },
+    {
+      id: "view-saved-prompts",
+      run: () => undefined,
+    },
+    {
       id: "toggle-settings",
       run: () => {
         settingsReturnFocusRef.current = commandMenuReturnFocusRef.current
@@ -425,6 +433,15 @@ export function App() {
           projectsError={availableProjects._tag === "Error" ? availableProjects.message : undefined}
           chooseFolder={newProject}
           openProject={selectProject}
+          listSavedPrompts={() =>
+            AppRuntime.runPromise(DesktopBridge.use((desktop) => desktop.listSavedPrompts))
+          }
+          savePrompt={(text) =>
+            AppRuntime.runPromise(DesktopBridge.use((desktop) => desktop.savePrompt(text)))
+          }
+          copyPrompt={(text) =>
+            AppRuntime.runPromise(DesktopBridge.use((desktop) => desktop.copyPrompt(text)))
+          }
         />
       ) : null}
       <header className="project-header">
