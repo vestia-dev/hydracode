@@ -53,9 +53,7 @@ interface Entry {
   project: ProjectDetails
   readonly location: Location.Ref
   readonly client: OpenCodeClient
-  readonly sessions: Map<string, SessionRecord>
   notify: (update: ProjectUpdate) => void
-  readonly selectedRootIDs: Set<string>
   ready: boolean
 }
 
@@ -83,21 +81,24 @@ export class ProjectRegistry extends Context.Service<ProjectRegistry, ProjectReg
 const emit = (entry: Entry, update: ProjectUpdate) => {
   entry.notify(update)
 }
-const sessionInfo = (entry: Entry) =>
-  new Map(Array.from(entry.sessions, ([id, record]) => [id, record.info] as const))
-const setSessionInfo = (entry: Entry, info: Session.Info) => {
-  const current = entry.sessions.get(info.id)
-  entry.sessions.set(
+const sessionInfo = (sessions: ReadonlyMap<string, SessionRecord>) =>
+  new Map(Array.from(sessions, ([id, record]) => [id, record.info] as const))
+const setSessionInfo = (sessions: Map<string, SessionRecord>, info: Session.Info) => {
+  const current = sessions.get(info.id)
+  sessions.set(
     info.id,
     current?._tag === "Loaded"
       ? { _tag: "Loaded", info, state: current.state }
       : { _tag: "Metadata", info },
   )
 }
-const sessionMetadata = (entry: Entry) =>
-  Array.from(entry.sessions.values())
+const sessionMetadata = (entry: Entry, sessions: ReadonlyMap<string, SessionRecord>) =>
+  Array.from(sessions.values())
     .map((record) => record.info)
-    .filter((info) => locationsEqual(info.location, entry.location))
+    .filter(
+      (info) =>
+        info.projectID === entry.project.id && locationsEqual(info.location, entry.location),
+    )
 
 const sessionView = (
   { info, state }: Extract<SessionRecord, { readonly _tag: "Loaded" }>,
@@ -129,8 +130,11 @@ const sessionView = (
     questions: state.questions,
   }
 }
-const isSelected = (entry: Entry, session: Session.Info) =>
-  entry.selectedRootIDs.has(sessionRootID(session, sessionInfo(entry)))
+const isSelected = (
+  session: Session.Info,
+  sessions: ReadonlyMap<string, SessionRecord>,
+  selectedRootIDs: ReadonlySet<string>,
+) => selectedRootIDs.has(sessionRootID(session, sessionInfo(sessions)))
 
 const captureWatermark = (client: OpenCodeClient, sessionID: Session.ID) => {
   let current: number | undefined
@@ -161,7 +165,9 @@ export const ProjectRegistryLive = Layer.effect(
     const openCode = yield* OpenCodeService
     const scope = yield* Scope.Scope
     const entries = new Map<string, Entry>()
+    const sessions = new Map<string, SessionRecord>()
     const activeSessionIDs = new Set<Session.ID>()
+    const selectedRootIDs = new Set<string>()
     const events = yield* Queue.unbounded<OpenCodeEvent>()
     const eventStreamLock = yield* Semaphore.make(1)
     let eventStreamStarted = false
@@ -170,7 +176,7 @@ export const ProjectRegistryLive = Layer.effect(
       emit(entry, {
         _tag: "Sessions",
         projectID: entry.project.id,
-        sessions: sessionMetadata(entry),
+        sessions: sessionMetadata(entry, sessions),
         activeSessionIDs: Array.from(activeSessionIDs),
       })
 
@@ -227,7 +233,7 @@ export const ProjectRegistryLive = Layer.effect(
 
     const removeSession = (entry: Entry, sessionID: string, removeActive = false) =>
       Effect.sync(() => {
-        entry.sessions.delete(sessionID)
+        sessions.delete(sessionID)
         if (removeActive) activeSessionIDs.delete(Schema.decodeUnknownSync(Session.ID)(sessionID))
         if (entry.ready) {
           emit(entry, { _tag: "Removed", projectID: entry.project.id, sessionID })
@@ -235,7 +241,7 @@ export const ProjectRegistryLive = Layer.effect(
       })
 
     const publish = (entry: Entry, sessionID: string) => {
-      const record = entry.sessions.get(sessionID)
+      const record = sessions.get(sessionID)
       if (record?._tag !== "Loaded") return
       const next = sessionView(record, activeSessionIDs)
       if (entry.ready) emit(entry, { _tag: "Session", projectID: entry.project.id, session: next })
@@ -249,7 +255,7 @@ export const ProjectRegistryLive = Layer.effect(
     ) =>
       Effect.gen(function* () {
         const started = performance.now()
-        setSessionInfo(entry, info)
+        setSessionInfo(sessions, info)
         const watermarkStarted = performance.now()
         const sequence = yield* captureWatermark(entry.client, info.id)
         const watermarkDuration = performance.now() - watermarkStarted
@@ -291,7 +297,7 @@ export const ProjectRegistryLive = Layer.effect(
           return question === undefined ? [] : [question]
         })
         const stateBuildStarted = performance.now()
-        entry.sessions.set(info.id, {
+        sessions.set(info.id, {
           _tag: "Loaded",
           info,
           state: initializeSessionLogState(
@@ -324,10 +330,25 @@ export const ProjectRegistryLive = Layer.effect(
     const refreshSession = (entry: Entry, sessionID: Session.ID) =>
       entry.client.session.get({ sessionID }).pipe(
         Effect.flatMap((info) => {
-          if (info.projectID !== entry.project.id || !locationsEqual(info.location, entry.location))
-            return entry.sessions.has(info.id) ? removeSession(entry, info.id) : Effect.void
-          setSessionInfo(entry, info)
-          if (!isSelected(entry, info)) {
+          const previous = sessions.get(info.id)?.info
+          setSessionInfo(sessions, info)
+          if (
+            info.projectID !== entry.project.id ||
+            !locationsEqual(info.location, entry.location)
+          ) {
+            if (
+              previous?.projectID === entry.project.id &&
+              locationsEqual(previous.location, entry.location) &&
+              entry.ready
+            )
+              emit(entry, {
+                _tag: "Removed",
+                projectID: entry.project.id,
+                sessionID: info.id,
+              })
+            return Effect.void
+          }
+          if (!isSelected(info, sessions, selectedRootIDs)) {
             if (entry.ready)
               emit(entry, {
                 _tag: "Info",
@@ -337,7 +358,7 @@ export const ProjectRegistryLive = Layer.effect(
               })
             return Effect.void
           }
-          const record = entry.sessions.get(info.id)
+          const record = sessions.get(info.id)
           if (record?._tag !== "Loaded") return loadSessionState(entry, info)
           const next = sessionView(record, activeSessionIDs)
           if (entry.ready) {
@@ -357,7 +378,7 @@ export const ProjectRegistryLive = Layer.effect(
         const eventSessionID = sessionIDFromEvent(event)
         if (eventSessionID === undefined) return
         const sessionID = Schema.decodeUnknownSync(Session.ID)(eventSessionID)
-        const current = entry.sessions.get(sessionID)
+        const current = sessions.get(sessionID)
         if (current?._tag !== "Loaded") {
           yield* refreshSession(entry, sessionID)
           return
@@ -389,7 +410,7 @@ export const ProjectRegistryLive = Layer.effect(
                   }),
               ),
             )
-          entry.sessions.set(sessionID, {
+          sessions.set(sessionID, {
             ...current,
             state: {
               ...reduction.state,
@@ -399,7 +420,7 @@ export const ProjectRegistryLive = Layer.effect(
               ],
             },
           })
-        } else entry.sessions.set(sessionID, { ...current, state: reduction.state })
+        } else sessions.set(sessionID, { ...current, state: reduction.state })
         publish(entry, sessionID)
       }).pipe(
         Effect.mapError((cause) =>
@@ -419,14 +440,23 @@ export const ProjectRegistryLive = Layer.effect(
         for (const id of Object.keys(active))
           activeSessionIDs.add(Schema.decodeUnknownSync(Session.ID)(id))
         const availableIDs = new Set<string>(page.data.map((info) => info.id))
-        for (const sessionID of entry.sessions.keys()) {
+        for (const rootID of selectedRootIDs) {
+          const root = sessions.get(rootID)?.info
+          if (
+            root?.projectID === entry.project.id &&
+            locationsEqual(root.location, entry.location) &&
+            !availableIDs.has(rootID)
+          )
+            selectedRootIDs.delete(rootID)
+        }
+        for (const { info } of sessions.values()) {
+          if (info.projectID !== entry.project.id || !locationsEqual(info.location, entry.location))
+            continue
+          const sessionID = info.id
           if (!availableIDs.has(sessionID)) yield* removeSession(entry, sessionID)
         }
-        for (const info of page.data) setSessionInfo(entry, info)
-        for (const rootID of entry.selectedRootIDs) {
-          if (!page.data.some((info) => info.id === rootID)) entry.selectedRootIDs.delete(rootID)
-        }
-        const selected = page.data.filter((info) => isSelected(entry, info))
+        for (const info of page.data) setSessionInfo(sessions, info)
+        const selected = page.data.filter((info) => isSelected(info, sessions, selectedRootIDs))
         yield* Effect.forEach(selected, (info) => loadSessionState(entry, info), {
           concurrency: 4,
         })
@@ -450,24 +480,8 @@ export const ProjectRegistryLive = Layer.effect(
         const eventSessionID = sessionIDFromEvent(event)
         if (eventSessionID === undefined) return
         const sessionID = Schema.decodeUnknownSync(Session.ID)(eventSessionID)
-        const known = entry.sessions.has(sessionID)
-        const belongsToLocation =
-          known ||
-          (event.location !== undefined && locationsEqual(event.location, entry.location)) ||
-          (event.location === undefined &&
-            ((event.type === "session.created" && event.data.projectID === entry.project.id) ||
-              (event.type === "session.moved" && event.data.projectID === entry.project.id)))
-        if (!belongsToLocation) return
         if (event.type === "session.deleted") {
           yield* removeSession(entry, sessionID, true)
-          return
-        }
-        if (
-          event.type === "session.moved" &&
-          event.data.projectID !== undefined &&
-          event.data.projectID !== entry.project.id
-        ) {
-          yield* removeSession(entry, sessionID)
           return
         }
         if (
@@ -478,7 +492,13 @@ export const ProjectRegistryLive = Layer.effect(
         ) {
           yield* refreshSession(entry, sessionID)
         }
-        if (entry.sessions.get(sessionID)?._tag !== "Loaded") return
+        const record = sessions.get(sessionID)
+        if (
+          record?._tag !== "Loaded" ||
+          record.info.projectID !== entry.project.id ||
+          !locationsEqual(record.info.location, entry.location)
+        )
+          return
         yield* apply(entry, event)
       }).pipe(
         Effect.mapError(
@@ -505,6 +525,33 @@ export const ProjectRegistryLive = Layer.effect(
       return loop
     }
 
+    const entriesForEvent = (event: OpenCodeEvent): ReadonlyArray<Entry> => {
+      const openEntries = Array.from(entries.values())
+      if (event.type === "server.connected" || event.type === "worktree.updated") return openEntries
+      const eventSessionID = sessionIDFromEvent(event)
+      if (eventSessionID === undefined) return []
+      const candidates = new Set<Entry>()
+      const current = sessions.get(eventSessionID)?.info
+      if (current !== undefined) {
+        const entry = openEntries.find(
+          (candidate) =>
+            candidate.project.id === current.projectID &&
+            locationsEqual(candidate.location, current.location),
+        )
+        if (entry !== undefined) candidates.add(entry)
+      }
+      if (event.location !== undefined) {
+        for (const entry of openEntries) {
+          if (locationsEqual(entry.location, event.location)) candidates.add(entry)
+        }
+      } else if (event.type === "session.created" || event.type === "session.moved") {
+        for (const entry of openEntries) {
+          if (entry.project.id === event.data.projectID) candidates.add(entry)
+        }
+      }
+      return Array.from(candidates)
+    }
+
     const processEvents = Effect.forever(
       Queue.take(events).pipe(
         Effect.flatMap((event) => {
@@ -513,7 +560,7 @@ export const ProjectRegistryLive = Layer.effect(
             return Effect.void
           }
           return Effect.forEach(
-            Array.from(entries.values()),
+            entriesForEvent(event),
             (entry) =>
               processEvent(entry, event).pipe(
                 Effect.catch((cause) =>
@@ -570,8 +617,6 @@ export const ProjectRegistryLive = Layer.effect(
             project,
             location: resolvedLocation,
             client,
-            sessions: new Map(),
-            selectedRootIDs: new Set(),
             notify: (update) => notify(resolvedLocation, update),
             ready: true,
           }
@@ -615,11 +660,11 @@ export const ProjectRegistryLive = Layer.effect(
         activeSessionIDs.clear()
         for (const id of Object.keys(active))
           activeSessionIDs.add(Schema.decodeUnknownSync(Session.ID)(id))
-        for (const info of page.data) setSessionInfo(entry, info)
-        setSessionInfo(entry, target)
-        const infoByID = sessionInfo(entry)
+        for (const info of page.data) setSessionInfo(sessions, info)
+        setSessionInfo(sessions, target)
+        const infoByID = sessionInfo(sessions)
         const rootID = sessionRootID(target, infoByID)
-        entry.selectedRootIDs.add(rootID)
+        selectedRootIDs.add(rootID)
         const family = Array.from(infoByID.values()).filter(
           (info) => sessionRootID(info, infoByID) === rootID,
         )
@@ -646,8 +691,12 @@ export const ProjectRegistryLive = Layer.effect(
     ): Effect.Effect<void, unknown> =>
       Effect.gen(function* () {
         const decodedSessionID = Schema.decodeUnknownSync(Session.ID)(sessionID)
-        const entry = Array.from(entries.values()).find((candidate) =>
-          candidate.sessions.has(decodedSessionID),
+        const info = sessions.get(decodedSessionID)?.info
+        const entry = Array.from(entries.values()).find(
+          (candidate) =>
+            candidate.project.id === info?.projectID &&
+            info !== undefined &&
+            locationsEqual(candidate.location, info.location),
         )
         if (entry === undefined)
           return yield* Effect.fail(new ProjectRegistryError({ message: "Session is not open" }))
@@ -667,9 +716,9 @@ export const ProjectRegistryLive = Layer.effect(
             answer: questionFormAnswer(form, answers),
           })
         }
-        const record = entry.sessions.get(decodedSessionID)
+        const record = sessions.get(decodedSessionID)
         if (record?._tag !== "Loaded") return yield* Effect.void
-        entry.sessions.set(decodedSessionID, {
+        sessions.set(decodedSessionID, {
           ...record,
           state: {
             ...record.state,
@@ -682,8 +731,12 @@ export const ProjectRegistryLive = Layer.effect(
     const rejectQuestion = (sessionID: string, requestID: string): Effect.Effect<void, unknown> =>
       Effect.gen(function* () {
         const decodedSessionID = Schema.decodeUnknownSync(Session.ID)(sessionID)
-        const entry = Array.from(entries.values()).find((candidate) =>
-          candidate.sessions.has(decodedSessionID),
+        const info = sessions.get(decodedSessionID)?.info
+        const entry = Array.from(entries.values()).find(
+          (candidate) =>
+            candidate.project.id === info?.projectID &&
+            info !== undefined &&
+            locationsEqual(candidate.location, info.location),
         )
         if (entry === undefined)
           return yield* Effect.fail(new ProjectRegistryError({ message: "Session is not open" }))
@@ -697,9 +750,9 @@ export const ProjectRegistryLive = Layer.effect(
         } else {
           yield* entry.client.form.cancel({ sessionID: decodedSessionID, formID })
         }
-        const record = entry.sessions.get(decodedSessionID)
+        const record = sessions.get(decodedSessionID)
         if (record?._tag !== "Loaded") return yield* Effect.void
-        entry.sessions.set(decodedSessionID, {
+        sessions.set(decodedSessionID, {
           ...record,
           state: {
             ...record.state,
