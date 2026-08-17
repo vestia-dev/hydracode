@@ -92,7 +92,6 @@ export const ProjectUpdate = Schema.Union([
     projectID: Project.ID,
     sessionID: Schema.String,
   }),
-  Schema.Struct({ _tag: Schema.Literal("Error"), message: Schema.String }),
 ])
 export type ProjectUpdate = typeof ProjectUpdate.Type
 

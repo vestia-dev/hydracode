@@ -161,7 +161,6 @@ export function applyProjectUpdate(
       },
     }
   }
-  if (update._tag === "Error") return { ...current, status: "error", error: update.message }
   if (current.snapshot === undefined || update.projectID !== projectID) return current
   if (update._tag === "Info") {
     if (update.session.parentID != null) return current
