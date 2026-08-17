@@ -25,6 +25,7 @@ import type {
 import { locationsEqual, locationKey, sessionRootID } from "../../../shared/domain/projectCatalog"
 import { OpenCodeService } from "../OpenCodeService"
 import { OpenCodeEventService } from "../OpenCodeEventService"
+import { listAllSessionMessages } from "../../../shared/domain/sessionMessages"
 
 export class ProjectRegistryError extends Schema.TaggedErrorClass<ProjectRegistryError>()(
   "ProjectRegistryError",
@@ -183,18 +184,18 @@ export const ProjectRegistryLive = Layer.effect(
         const watermarkStarted = performance.now()
         const sequence = yield* captureWatermark(client, info.id)
         const watermarkDuration = performance.now() - watermarkStarted
-        let contextDuration = 0
+        let messagesDuration = 0
         let questionsDuration = 0
         let formsDuration = 0
-        const contextStarted = performance.now()
+        const messagesStarted = performance.now()
         const questionsStarted = performance.now()
         const formsStarted = performance.now()
         const [messages, questions, forms, inbox] = yield* Effect.all(
           [
-            client.session.context({ sessionID: info.id }).pipe(
+            listAllSessionMessages(client.message.list, info.id).pipe(
               Effect.tap(() =>
                 Effect.sync(() => {
-                  contextDuration = performance.now() - contextStarted
+                  messagesDuration = performance.now() - messagesStarted
                 }),
               ),
             ),
@@ -240,7 +241,7 @@ export const ProjectRegistryLive = Layer.effect(
             offset: started - selectionStarted,
             duration: performance.now() - started,
             watermarkDuration,
-            contextDuration,
+            messagesDuration,
             questionsDuration,
             formsDuration,
             stateBuildDuration,

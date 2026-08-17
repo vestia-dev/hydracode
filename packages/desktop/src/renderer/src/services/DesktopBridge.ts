@@ -264,7 +264,7 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
               const fetchStarted = sessionStarted + session.watermarkDuration
               const stateBuildStarted =
                 fetchStarted +
-                Math.max(session.contextDuration, session.questionsDuration, session.formsDuration)
+                Math.max(session.messagesDuration, session.questionsDuration, session.formsDuration)
               const counts = {
                 sessionID: session.sessionID,
                 messages: session.messages,
@@ -279,9 +279,9 @@ export const DesktopBridgeLive = Layer.sync(DesktopBridge, () =>
                 counts,
               )
               recordStartupDuration(
-                "main-session-context",
+                "main-session-messages",
                 fetchStarted,
-                session.contextDuration,
+                session.messagesDuration,
                 counts,
               )
               recordStartupDuration(

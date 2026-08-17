@@ -179,7 +179,7 @@ export const SessionLoadTiming = Schema.Struct({
   offset: Schema.Number,
   duration: Schema.Number,
   watermarkDuration: Schema.Number,
-  contextDuration: Schema.Number,
+  messagesDuration: Schema.Number,
   questionsDuration: Schema.Number,
   formsDuration: Schema.Number,
   stateBuildDuration: Schema.Number,
